@@ -44,26 +44,24 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
 
     let orphans = find_orphans(&wt_root);
 
-    if orphans.is_empty() {
-        return Ok(());
-    }
-
-    if dry_run {
-        for orphan in &orphans {
-            println!("{}", orphan.display());
+    if !orphans.is_empty() {
+        if dry_run {
+            for orphan in &orphans {
+                println!("{}", orphan.display());
+            }
+            eprintln!(
+                "wt: would remove {} orphaned worktree(s) (dry run)",
+                orphans.len()
+            );
+        } else {
+            for orphan in &orphans {
+                fs::remove_dir_all(orphan)
+                    .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
+                eprintln!("wt: removed {}", orphan.display());
+            }
+            cleanup_empty_parents(&orphans, &wt_root);
+            eprintln!("wt: removed {} orphaned worktree(s)", orphans.len());
         }
-        eprintln!(
-            "wt: would remove {} orphaned worktree(s) (dry run)",
-            orphans.len()
-        );
-    } else {
-        for orphan in &orphans {
-            fs::remove_dir_all(orphan)
-                .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
-            eprintln!("wt: removed {}", orphan.display());
-        }
-        cleanup_empty_parents(&orphans, &wt_root);
-        eprintln!("wt: removed {} orphaned worktree(s)", orphans.len());
     }
 
     if errors > 0 {
