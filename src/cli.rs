@@ -100,8 +100,8 @@ pub enum Command {
         visible_alias = "ln",
         long_about = "Link files from the primary worktree into all linked worktrees.\n\
             Source files must exist in the primary worktree.\n\
-            Existing destinations are skipped.",
-        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env"
+            Correct symlinks are skipped. Non-symlink conflicts warn and skip unless --force is used.",
+        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force"
     )]
     Link {
         /// Files or directories to link
@@ -110,5 +110,8 @@ pub enum Command {
         /// Repository path
         #[arg(long)]
         repo: Option<PathBuf>,
+        /// Replace existing destinations that are not correct symlinks
+        #[arg(long)]
+        force: bool,
     },
 }

@@ -18,7 +18,7 @@ fn main() {
         Command::Remove { names, repo, force } => commands::rm::run(names, repo.as_deref(), *force),
         Command::Prune { dry_run } => commands::prune::run(*dry_run),
         Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
-        Command::Link { files, repo } => commands::link::run(files, repo.as_deref()),
+        Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
     };
 
     if let Err(e) = result {
