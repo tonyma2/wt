@@ -11,7 +11,7 @@ cargo test -p wt -- new::         # filter by test path
 
 ## Architecture
 
-Manages git worktrees under `~/.worktrees/<repo-name>/`.
+Worktrees live under `~/.worktrees/<repo-name>/`.
 
 - One file per subcommand in `commands/`, each exports `pub fn run(...) -> Result<(), String>`
 - All git calls go through the `Git` struct with `-C <repo>`. Exceptions: `check_ref_format` (free fn, no repo needed), `is_dirty` (runs in worktree path, not admin repo)
@@ -35,7 +35,7 @@ Manages git worktrees under `~/.worktrees/<repo-name>/`.
 
 ## Tests
 
-IMPORTANT: Every new feature, bug fix, or behavioral change MUST include tests. This project is maintained by AI agents — tests are the primary regression guard.
+IMPORTANT: Every new feature, bug fix, or behavioral change MUST include tests.
 
 **What to test:** Observable behavior — exit codes, stdout/stderr content, filesystem side effects. Cover the happy path and likely failure modes (missing args, conflicting state, dirty worktree).
 
@@ -48,3 +48,13 @@ IMPORTANT: Every new feature, bug fix, or behavioral change MUST include tests. 
 **Unit tests** inline under `#[cfg(test)] mod tests` for pure parsing/logic.
 
 Run `cargo test` after every change. All tests must pass before work is complete.
+
+## Commits & PRs
+
+**Commits:** Use conventional commits — imperative mood, lowercase, no period (`fix:`, `feat:`, `feat!:` for breaking). Include `BREAKING CHANGE: explanation` in the footer when the impact isn't obvious from the subject. The first commit's subject becomes the PR title.
+
+**Merging:** Squash merge via `gh pr merge --squash`:
+
+1. Scan all commits for `BREAKING CHANGE` footers and git trailers (`Co-Authored-By`, `Signed-off-by`, etc.)
+2. If breaking changes found, add `!` to the subject via `--subject`
+3. Collect all footers/trailers into `--body`, or pass `--body ""` if none

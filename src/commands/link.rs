@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(files: &[String], repo: Option<&Path>) -> Result<(), String> {
+pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;
@@ -32,7 +32,15 @@ pub fn run(files: &[String], repo: Option<&Path>) -> Result<(), String> {
             let dest = wt.path.join(file);
 
             if dest.symlink_metadata().is_ok() {
-                continue;
+                if is_expected_link(&dest, &source) {
+                    continue;
+                }
+                if !force {
+                    eprintln!("wt: skipped {file} ({}): already exists", wt.path.display());
+                    continue;
+                }
+                remove_dest(&dest)
+                    .map_err(|e| format!("cannot remove {} in {}: {e}", file, wt.path.display()))?;
             }
 
             if let Some(parent) = dest.parent()
@@ -65,6 +73,23 @@ fn validate_path(file: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn is_expected_link(dest: &Path, source: &Path) -> bool {
+    dest.symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+        && std::fs::read_link(dest).is_ok_and(|target| target == *source)
+}
+
+fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
+    if dest
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_dir() && !m.file_type().is_symlink())
+    {
+        std::fs::remove_dir_all(dest)
+    } else {
+        std::fs::remove_file(dest)
+    }
 }
 
 fn symlink(source: &Path, dest: &Path) -> Result<(), std::io::Error> {

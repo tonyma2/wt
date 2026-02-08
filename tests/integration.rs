@@ -777,6 +777,16 @@ mod link {
         cmd.output().unwrap()
     }
 
+    fn link_force(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
+        let mut cmd = wt_bin();
+        cmd.arg("link");
+        cmd.arg("--force");
+        cmd.args(files);
+        cmd.args(["--repo"]).arg(repo);
+        cmd.env("HOME", home);
+        cmd.output().unwrap()
+    }
+
     #[test]
     fn links_file_into_worktree() {
         let (home, repo) = setup();
@@ -820,7 +830,11 @@ mod link {
         let err2 = String::from_utf8_lossy(&out2.stderr);
         assert!(
             !err2.contains("wt: linked .env"),
-            "second run should skip existing link, got: {err2}",
+            "second run should not re-link, got: {err2}",
+        );
+        assert!(
+            !err2.contains("wt: skipped"),
+            "correct symlink should not warn, got: {err2}",
         );
         assert!(
             wt_path
@@ -934,6 +948,143 @@ mod link {
         assert!(
             stderr.contains("no linked worktrees"),
             "expected 'no linked worktrees', got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn warns_when_regular_file_exists() {
+        let (home, repo) = setup();
+        std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+        let wt_path = wt_new(home.path(), &repo, "feat-conflict");
+
+        std::fs::write(wt_path.join(".env"), "LOCAL=xyz").unwrap();
+
+        let output = wt_link(home.path(), &repo, &[".env"]);
+        assert!(output.status.success(), "should still exit 0");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("wt: skipped .env"),
+            "expected skip warning, got: {stderr}",
+        );
+        assert!(
+            stderr.contains("already exists"),
+            "expected 'already exists', got: {stderr}",
+        );
+
+        assert!(
+            !wt_path
+                .join(".env")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "should not have replaced the regular file",
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt_path.join(".env")).unwrap(),
+            "LOCAL=xyz",
+        );
+    }
+
+    #[test]
+    fn warns_when_wrong_symlink_exists() {
+        let (home, repo) = setup();
+        std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+        std::fs::write(repo.join(".other"), "OTHER").unwrap();
+        let wt_path = wt_new(home.path(), &repo, "feat-wronglink");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(repo.join(".other"), wt_path.join(".env")).unwrap();
+
+        let output = wt_link(home.path(), &repo, &[".env"]);
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("wt: skipped .env"),
+            "expected skip warning for wrong symlink, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn force_replaces_regular_file() {
+        let (home, repo) = setup();
+        std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+        let wt_path = wt_new(home.path(), &repo, "feat-force");
+
+        std::fs::write(wt_path.join(".env"), "LOCAL=xyz").unwrap();
+
+        let output = link_force(home.path(), &repo, &[".env"]);
+        assert!(
+            output.status.success(),
+            "wt link --force failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("wt: linked .env"),
+            "should report linking, got: {stderr}",
+        );
+        assert!(
+            !stderr.contains("wt: skipped"),
+            "should not warn with --force, got: {stderr}",
+        );
+
+        let link = wt_path.join(".env");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "SECRET=abc");
+    }
+
+    #[test]
+    fn force_replaces_wrong_symlink() {
+        let (home, repo) = setup();
+        std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+        std::fs::write(repo.join(".other"), "OTHER").unwrap();
+        let wt_path = wt_new(home.path(), &repo, "feat-forcelink");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(repo.join(".other"), wt_path.join(".env")).unwrap();
+
+        let output = link_force(home.path(), &repo, &[".env"]);
+        assert!(
+            output.status.success(),
+            "wt link --force failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let link = wt_path.join(".env");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let target = std::fs::read_link(&link).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&link).unwrap(),
+            "SECRET=abc",
+            "should now point to primary .env, points to: {target:?}",
+        );
+    }
+
+    #[test]
+    fn force_skips_correct_symlink() {
+        let (home, repo) = setup();
+        std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+        let wt_path = wt_new(home.path(), &repo, "feat-forceidem");
+
+        let out1 = wt_link(home.path(), &repo, &[".env"]);
+        assert!(out1.status.success());
+
+        let out2 = link_force(home.path(), &repo, &[".env"]);
+        assert!(out2.status.success());
+        let stderr = String::from_utf8_lossy(&out2.stderr);
+        assert!(
+            !stderr.contains("wt: linked"),
+            "should skip correct symlink even with --force, got: {stderr}",
+        );
+
+        assert!(
+            wt_path
+                .join(".env")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
         );
     }
 }
