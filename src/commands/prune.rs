@@ -23,7 +23,11 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
     }
 
     let repos = discover_repos(&wt_root);
+    let mut errors = 0usize;
     for repo_path in &repos {
+        if !repo_path.exists() {
+            continue;
+        }
         let git = Git::new(repo_path);
         match git.prune_worktrees(dry_run) {
             Ok(output) if !output.is_empty() => {
@@ -32,6 +36,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             }
             Err(e) => {
                 eprintln!("wt: cannot prune {}: {e}", repo_path.display());
+                errors += 1;
             }
             _ => {}
         }
@@ -59,6 +64,10 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
         }
         cleanup_empty_parents(&orphans, &wt_root);
         eprintln!("wt: removed {} orphaned worktree(s)", orphans.len());
+    }
+
+    if errors > 0 {
+        return Err(format!("cannot prune {} repo(s)", errors));
     }
 
     Ok(())
