@@ -1,12 +1,18 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
 
-pub fn run(dry_run: bool) -> Result<(), String> {
-    if let Ok(repo_root) = Git::find_repo(None) {
+pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
+    if let Some(repo_path) = repo {
+        let repo_root = Git::find_repo(Some(repo_path))?;
         let git = Git::new(&repo_root);
-        git.prune_worktrees(dry_run)?;
+        let output = git.prune_worktrees(dry_run)?;
+        if !output.is_empty() {
+            eprintln!("{output}");
+        }
+        return Ok(());
     }
 
     let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
@@ -14,6 +20,21 @@ pub fn run(dry_run: bool) -> Result<(), String> {
 
     if !wt_root.is_dir() {
         return Ok(());
+    }
+
+    let repos = discover_repos(&wt_root);
+    for repo_path in &repos {
+        let git = Git::new(repo_path);
+        match git.prune_worktrees(dry_run) {
+            Ok(output) if !output.is_empty() => {
+                eprintln!("wt: pruning {}", repo_path.display());
+                eprintln!("{output}");
+            }
+            Err(e) => {
+                eprintln!("wt: cannot prune {}: {e}", repo_path.display());
+            }
+            _ => {}
+        }
     }
 
     let orphans = find_orphans(&wt_root);
@@ -41,6 +62,57 @@ pub fn run(dry_run: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn discover_repos(wt_root: &Path) -> BTreeSet<PathBuf> {
+    let mut repos = BTreeSet::new();
+    collect_repos(wt_root, &mut repos);
+    repos
+}
+
+fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if !ft.is_dir() {
+            continue;
+        }
+
+        let path = entry.path();
+        let dot_git = path.join(".git");
+
+        if dot_git.is_file() {
+            if let Some(gitdir) = parse_gitdir(&dot_git)
+                && let Some(admin) = admin_repo_from_gitdir(&gitdir)
+            {
+                repos.insert(admin);
+            }
+        } else if !dot_git.is_dir() {
+            collect_repos(&path, repos);
+        }
+    }
+}
+
+fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
+    // gitdir is like <repo>/.git/worktrees/<name>
+    // go up 3 levels to get <repo>
+    let worktrees_dir = gitdir.parent()?;
+    if worktrees_dir.file_name()?.to_str()? != "worktrees" {
+        return None;
+    }
+    let dot_git_dir = worktrees_dir.parent()?;
+    if dot_git_dir.file_name()?.to_str()? != ".git" {
+        return None;
+    }
+    let repo = dot_git_dir.parent()?;
+    Some(repo.to_path_buf())
 }
 
 fn find_orphans(wt_root: &Path) -> Vec<PathBuf> {

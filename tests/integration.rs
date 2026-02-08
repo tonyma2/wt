@@ -937,3 +937,189 @@ mod link {
         );
     }
 }
+
+mod prune {
+    use super::*;
+
+    #[test]
+    fn prunes_stale_metadata_across_repos() {
+        let home = TempDir::new().unwrap();
+
+        let repo_a = home.path().join("repo-a");
+        std::fs::create_dir(&repo_a).unwrap();
+        init_repo(&repo_a);
+
+        let repo_b = home.path().join("repo-b");
+        std::fs::create_dir(&repo_b).unwrap();
+        init_repo(&repo_b);
+
+        // Create two worktrees per repo so discovery works after removing one
+        let wt_a1 = wt_new(home.path(), &repo_a, "branch-a1");
+        let _wt_a2 = wt_new(home.path(), &repo_a, "branch-a2");
+        let wt_b1 = wt_new(home.path(), &repo_b, "branch-b1");
+        let _wt_b2 = wt_new(home.path(), &repo_b, "branch-b2");
+
+        // Manually remove one worktree dir per repo to create stale metadata
+        std::fs::remove_dir_all(&wt_a1).unwrap();
+        std::fs::remove_dir_all(&wt_b1).unwrap();
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // Verify git metadata was cleaned: re-adding the same branch should work
+        let _wt_a1_new = wt_new(home.path(), &repo_a, "branch-a1");
+        let _wt_b1_new = wt_new(home.path(), &repo_b, "branch-b1");
+    }
+
+    #[test]
+    fn repo_flag_scopes_to_single_repo() {
+        let home = TempDir::new().unwrap();
+
+        let repo_a = home.path().join("repo-a");
+        std::fs::create_dir(&repo_a).unwrap();
+        init_repo(&repo_a);
+
+        let repo_b = home.path().join("repo-b");
+        std::fs::create_dir(&repo_b).unwrap();
+        init_repo(&repo_b);
+
+        let wt_a = wt_new(home.path(), &repo_a, "branch-a");
+        let wt_b = wt_new(home.path(), &repo_b, "branch-b");
+
+        std::fs::remove_dir_all(&wt_a).unwrap();
+        std::fs::remove_dir_all(&wt_b).unwrap();
+
+        let output = wt_bin()
+            .args(["prune", "--repo"])
+            .arg(&repo_a)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --repo should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // repo_a was pruned, so re-adding branch-a should work
+        let _wt_a2 = wt_new(home.path(), &repo_a, "branch-a");
+
+        // repo_b was NOT pruned, so its stale metadata blocks re-adding
+        let output = wt_bin()
+            .args(["new", "branch-b", "--repo"])
+            .arg(&repo_b)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "branch-b should still be blocked by stale metadata in repo-b"
+        );
+    }
+
+    #[test]
+    fn dry_run_does_not_remove() {
+        let home = TempDir::new().unwrap();
+
+        let repo = home.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+
+        let wt_path = wt_new(home.path(), &repo, "branch-dry");
+        let _wt_keep = wt_new(home.path(), &repo, "branch-keep");
+
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        let output = wt_bin()
+            .args(["prune", "--dry-run"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --dry-run should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // Stale metadata should still exist since we only did dry-run
+        // Trying to re-add should fail
+        let output = wt_bin()
+            .args(["new", "branch-dry", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "branch-dry should still be blocked by stale metadata after dry-run"
+        );
+    }
+
+    #[test]
+    fn removes_orphaned_worktree_directories() {
+        let home = TempDir::new().unwrap();
+
+        let repo = home.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+
+        let wt_path = wt_new(home.path(), &repo, "orphan-branch");
+
+        // Delete the backing repo entirely, making the worktree an orphan
+        std::fs::remove_dir_all(&repo).unwrap();
+
+        assert!(wt_path.exists(), "worktree dir should exist before prune");
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        assert!(
+            !wt_path.exists(),
+            "orphaned worktree directory should be removed"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("removed"),
+            "should report removal, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn no_worktrees_dir_succeeds_silently() {
+        let home = TempDir::new().unwrap();
+        // No ~/.worktrees/ exists
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed with no ~/.worktrees: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(output.stdout.is_empty(), "should produce no stdout");
+        assert!(
+            output.stderr.is_empty(),
+            "should produce no stderr, got: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}
