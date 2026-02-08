@@ -51,10 +51,12 @@ Run `cargo test` after every change. All tests must pass before work is complete
 
 ## Commits & PRs
 
-**Commits:** Use conventional commits — imperative mood, lowercase, no period (`fix:`, `feat:`, `feat!:` for breaking). Include `BREAKING CHANGE: explanation` in the footer when the impact isn't obvious from the subject. The first commit's subject becomes the PR title.
+**Commits:** Use conventional commits — imperative mood, lowercase, no period (`fix:`, `feat:`, `feat!:` for breaking). Include `BREAKING CHANGE: explanation` in the footer when the impact isn't obvious from the subject. The first commit's subject becomes the PR title; update it if later commits change the scope.
 
 **Merging:** Squash merge via `gh pr merge --squash`:
 
-1. Scan all commits for `BREAKING CHANGE` footers and git trailers (`Co-Authored-By`, `Signed-off-by`, etc.)
-2. If breaking changes found, add `!` to the subject via `--subject`
-3. Collect all footers/trailers into `--body`, or pass `--body ""` if none
+1. Scan all commits for breaking signals (`!` in subject or `BREAKING CHANGE` footer), the highest-impact type (`feat` > `fix` > others), and git trailers (`Co-Authored-By`, `Signed-off-by`, etc.)
+2. Build `--subject`: PR title + ` (#N)`. Promote type to highest-impact found. Add `!` before `:` if any breaking signal found
+3. Build `--body`: deduplicated trailers and `BREAKING CHANGE:` footers. If breaking but no footer exists, add one. `""` if empty
+
+`gh pr merge --rebase` may be used when every commit is a well-formed conventional commit worth preserving individually. Commits are replayed as-is — no subject/body override.
