@@ -208,19 +208,20 @@ impl Git {
         Ok(())
     }
 
-    pub fn prune_worktrees(&self, dry_run: bool) -> Result<(), String> {
+    pub fn prune_worktrees(&self, dry_run: bool) -> Result<String, String> {
         let mut cmd = self.cmd();
-        cmd.args(["worktree", "prune"]);
+        cmd.args(["worktree", "prune", "--verbose"]);
         if dry_run {
             cmd.arg("--dry-run");
         }
-        let status = cmd
-            .status()
+        let output = cmd
+            .output()
             .map_err(|e| format!("cannot run git worktree prune: {e}"))?;
-        if !status.success() {
+        if !output.status.success() {
             return Err("cannot prune worktree metadata".into());
         }
-        Ok(())
+        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(text)
     }
 
     pub fn is_dirty(&self, worktree_path: &Path) -> bool {

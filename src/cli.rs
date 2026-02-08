@@ -65,13 +65,18 @@ pub enum Command {
     #[command(
         long_about = "Remove stale worktree metadata for missing directories, \
             and remove orphaned worktree directories whose backing repository \
-            has been deleted.",
-        after_help = "Examples:\n  wt prune\n  wt prune --dry-run"
+            has been deleted.\n\n\
+            By default, discovers all repos from ~/.worktrees/ and prunes each one, \
+            then cleans up orphaned directories. Use --repo to target a single repository.",
+        after_help = "Examples:\n  wt prune\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
     )]
     Prune {
         /// Show what would be done without doing it
         #[arg(long, short = 'n')]
         dry_run: bool,
+        /// Repository path (prune only this repo, skip orphan cleanup)
+        #[arg(long)]
+        repo: Option<PathBuf>,
     },
     /// Generate shell completions
     #[command(
