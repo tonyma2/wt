@@ -17,7 +17,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
         if !output.is_empty() {
             eprintln!("{output}");
         }
-        prune_merged(&git, dry_run, &cwd)?;
+        prune_merged(&git, dry_run, &cwd, None)?;
         return Ok(());
     }
 
@@ -27,6 +27,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
     if !wt_root.is_dir() {
         return Ok(());
     }
+    let wt_root = fs::canonicalize(&wt_root).unwrap_or(wt_root);
 
     let repos = discover_repos(&wt_root);
     let mut errors = 0usize;
@@ -47,7 +48,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run, &cwd) {
+        if let Err(e) = prune_merged(&git, dry_run, &cwd, Some(&wt_root)) {
             eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
             errors += 1;
         }
@@ -63,9 +64,12 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
                     && let Ok(canonical) = orphan.canonicalize()
                     && (cwd == &canonical || cwd.starts_with(&canonical))
                 {
+                    let label = orphan
+                        .strip_prefix(&wt_root)
+                        .unwrap_or(orphan.as_path());
                     eprintln!(
                         "wt: skipping {} (orphan, current directory)",
-                        orphan.display()
+                        label.display()
                     );
                     return false;
                 }
@@ -77,18 +81,16 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             for orphan in &orphans {
                 println!("{}", orphan.display());
             }
-            eprintln!(
-                "wt: would remove {} orphaned worktree(s) (dry run)",
-                orphans.len()
-            );
         } else {
             for orphan in &orphans {
                 fs::remove_dir_all(orphan)
                     .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
-                eprintln!("wt: removed {}", orphan.display());
+                let label = orphan
+                    .strip_prefix(&wt_root)
+                    .unwrap_or(orphan.as_path());
+                eprintln!("wt: removed {} (orphan)", label.display());
             }
             cleanup_empty_parents(&orphans, &wt_root);
-            eprintln!("wt: removed {} orphaned worktree(s)", orphans.len());
         }
     }
 
@@ -237,7 +239,8 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
         if fs::remove_dir(dir).is_err() {
             break;
         }
-        eprintln!("wt: removed empty directory {}", dir.display());
+        let label = dir.strip_prefix(wt_root).unwrap_or(dir);
+        eprintln!("wt: removed empty directory {}", label.display());
         match dir.parent() {
             Some(p) => dir = p,
             None => break,
@@ -245,7 +248,12 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
     }
 }
 
-fn prune_merged(git: &Git, dry_run: bool, cwd: &Option<PathBuf>) -> Result<(), String> {
+fn prune_merged(
+    git: &Git,
+    dry_run: bool,
+    cwd: &Option<PathBuf>,
+    wt_root: Option<&Path>,
+) -> Result<(), String> {
     let base = git.base_ref().unwrap_or_else(|_| "HEAD".to_string());
 
     let porcelain = git.list_worktrees()?;
@@ -270,14 +278,20 @@ fn prune_merged(git: &Git, dry_run: bool, cwd: &Option<PathBuf>) -> Result<(), S
         let reason = if ancestor { "merged" } else { "upstream gone" };
 
         let path = &wt.path;
+        let label = if let Some(root) = wt_root
+            && let Ok(canonical) = path.canonicalize()
+            && let Ok(rel) = canonical.strip_prefix(root)
+        {
+            rel.display().to_string()
+        } else {
+            branch.to_string()
+        };
+
         if let Some(cwd) = cwd
             && let Ok(canonical) = path.canonicalize()
             && (cwd == &canonical || cwd.starts_with(&canonical))
         {
-            eprintln!(
-                "wt: skipping {} ({branch} {reason}, current directory)",
-                path.display()
-            );
+            eprintln!("wt: skipping {label} ({reason}, current directory)");
             continue;
         }
 
@@ -286,7 +300,7 @@ fn prune_merged(git: &Git, dry_run: bool, cwd: &Option<PathBuf>) -> Result<(), S
         }
 
         if dry_run {
-            eprintln!("wt: would remove {} ({branch} {reason})", path.display());
+            eprintln!("wt: would remove {label} ({reason})");
             continue;
         }
 
@@ -301,7 +315,7 @@ fn prune_merged(git: &Git, dry_run: bool, cwd: &Option<PathBuf>) -> Result<(), S
             continue;
         }
 
-        eprintln!("wt: removed {} ({branch} {reason})", path.display());
+        eprintln!("wt: removed {label} ({reason})");
     }
 
     Ok(())

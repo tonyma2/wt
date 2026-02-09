@@ -1665,7 +1665,7 @@ mod prune {
         assert_branch_absent(&repo, "merged-branch");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("merged-branch merged"),
+            stderr.contains("repo/merged-branch (merged)"),
             "should report merged branch removal, got: {stderr}",
         );
     }
@@ -1707,7 +1707,7 @@ mod prune {
         assert_branch_absent(&repo, "gone-branch");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("gone-branch upstream gone"),
+            stderr.contains("repo/gone-branch (upstream gone)"),
             "should report upstream gone removal, got: {stderr}",
         );
     }
@@ -1835,7 +1835,7 @@ mod prune {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("cwd-merged merged"),
+            stderr.contains("repo/cwd-merged (merged"),
             "should include branch name and merge reason, got: {stderr}",
         );
         assert!(
