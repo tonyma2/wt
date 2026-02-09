@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
+use crate::worktree::parse_porcelain;
 
 pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
     if let Some(repo_path) = repo {
@@ -12,6 +13,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
         if !output.is_empty() {
             eprintln!("{output}");
         }
+        prune_merged(&git, dry_run)?;
         return Ok(());
     }
 
@@ -39,6 +41,10 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
                 errors += 1;
             }
             _ => {}
+        }
+        if let Err(e) = prune_merged(&git, dry_run) {
+            eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
+            errors += 1;
         }
     }
 
@@ -215,4 +221,54 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
             None => break,
         }
     }
+}
+
+fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
+    let base = git.base_ref().unwrap_or_else(|_| "HEAD".to_string());
+
+    let porcelain = git.list_worktrees()?;
+    let worktrees = parse_porcelain(&porcelain);
+
+    for wt in worktrees.iter().skip(1) {
+        if wt.detached || wt.locked {
+            continue;
+        }
+        let branch = match &wt.branch {
+            Some(b) => b,
+            None => continue,
+        };
+
+        let branch_ref = format!("refs/heads/{branch}");
+        let ancestor = git.is_ancestor(&branch_ref, &base);
+        let upstream_gone = git.is_upstream_gone(branch);
+
+        if !ancestor && !upstream_gone {
+            continue;
+        }
+
+        let path = &wt.path;
+        if git.is_dirty(path) {
+            continue;
+        }
+
+        if dry_run {
+            eprintln!("wt: would remove {} ({branch} merged)", path.display());
+            continue;
+        }
+
+        if let Err(e) = git.remove_worktree(path, false) {
+            eprintln!("wt: {e}");
+            continue;
+        }
+
+        let force_delete = upstream_gone && !ancestor;
+        if let Err(e) = git.delete_branch(branch, force_delete) {
+            eprintln!("wt: {e}");
+            continue;
+        }
+
+        eprintln!("wt: removed {} ({branch} merged)", path.display());
+    }
+
+    Ok(())
 }

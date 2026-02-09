@@ -178,7 +178,7 @@ impl Git {
         self.is_ancestor(&branch_ref, "HEAD")
     }
 
-    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.cmd()
             .args(["merge-base", "--is-ancestor", ancestor, descendant])
             .stderr(Stdio::null())
@@ -215,6 +215,12 @@ impl Git {
         let behind: u64 = parts.next()?.parse().ok()?;
         let ahead: u64 = parts.next()?.parse().ok()?;
         Some((ahead, behind))
+    }
+
+    pub fn is_upstream_gone(&self, branch: &str) -> bool {
+        let branch_ref = format!("refs/heads/{branch}");
+        self.upstream_for(&branch_ref)
+            .is_some_and(|upstream| !self.rev_resolves(&upstream))
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {

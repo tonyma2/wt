@@ -1637,4 +1637,176 @@ mod prune {
             String::from_utf8_lossy(&output.stderr),
         );
     }
+
+    #[test]
+    fn prunes_merged_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "merged-branch");
+
+        assert_git_success(&repo, &["merge", "merged-branch"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "merged worktree directory should be removed"
+        );
+        assert_branch_absent(&repo, "merged-branch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("merged-branch merged"),
+            "should report merged branch removal, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn prunes_upstream_gone_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "gone-branch");
+        assert_git_success(&wt_path, &["push", "-u", "origin", "gone-branch"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "gone-branch"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "upstream-gone worktree directory should be removed"
+        );
+        assert_branch_absent(&repo, "gone-branch");
+    }
+
+    #[test]
+    fn dry_run_skips_merged_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "dry-merged");
+
+        assert_git_success(&repo, &["merge", "dry-merged"]);
+
+        let output = wt_bin()
+            .args(["prune", "--dry-run"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --dry-run should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "dry-run should not remove merged worktree"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("would remove"),
+            "should report what would be removed, got: {stderr}",
+        );
+
+        let branch_exists = git(&repo)
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/dry-merged"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(branch_exists, "dry-run should not delete the branch");
+    }
+
+    #[test]
+    fn skips_dirty_merged_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "dirty-merged");
+
+        assert_git_success(&repo, &["merge", "dirty-merged"]);
+        std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "dirty merged worktree should not be removed"
+        );
+    }
+
+    #[test]
+    fn skips_unmerged_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "unmerged-branch");
+
+        std::fs::write(wt_path.join("new.txt"), "change").unwrap();
+        assert_git_success(&wt_path, &["add", "new.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "local change"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "unmerged worktree should not be removed"
+        );
+    }
+
+    #[test]
+    fn repo_flag_prunes_merged() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "repo-merged");
+
+        assert_git_success(&repo, &["merge", "repo-merged"]);
+
+        let output = wt_bin()
+            .args(["prune", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --repo should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "merged worktree should be removed with --repo"
+        );
+        assert_branch_absent(&repo, "repo-merged");
+    }
 }
