@@ -6,6 +6,10 @@ use crate::git::Git;
 use crate::worktree::parse_porcelain;
 
 pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
+    let cwd = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .ok();
+
     if let Some(repo_path) = repo {
         let repo_root = Git::find_repo(Some(repo_path))?;
         let git = Git::new(&repo_root);
@@ -13,7 +17,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
         if !output.is_empty() {
             eprintln!("{output}");
         }
-        prune_merged(&git, dry_run)?;
+        prune_merged(&git, dry_run, &cwd)?;
         return Ok(());
     }
 
@@ -43,7 +47,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run) {
+        if let Err(e) = prune_merged(&git, dry_run, &cwd) {
             eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
             errors += 1;
         }
@@ -52,6 +56,23 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
     let orphans = find_orphans(&wt_root);
 
     if !orphans.is_empty() {
+        let orphans: Vec<PathBuf> = orphans
+            .into_iter()
+            .filter(|orphan| {
+                if let Some(cwd) = &cwd
+                    && let Ok(canonical) = orphan.canonicalize()
+                    && (cwd == &canonical || cwd.starts_with(&canonical))
+                {
+                    eprintln!(
+                        "wt: skipping {} (orphan, current directory)",
+                        orphan.display()
+                    );
+                    return false;
+                }
+                true
+            })
+            .collect();
+
         if dry_run {
             for orphan in &orphans {
                 println!("{}", orphan.display());
@@ -224,7 +245,7 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
     }
 }
 
-fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
+fn prune_merged(git: &Git, dry_run: bool, cwd: &Option<PathBuf>) -> Result<(), String> {
     let base = git.base_ref().unwrap_or_else(|_| "HEAD".to_string());
 
     let porcelain = git.list_worktrees()?;
@@ -249,6 +270,17 @@ fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
         let reason = if ancestor { "merged" } else { "upstream gone" };
 
         let path = &wt.path;
+        if let Some(cwd) = cwd
+            && let Ok(canonical) = path.canonicalize()
+            && (cwd == &canonical || cwd.starts_with(&canonical))
+        {
+            eprintln!(
+                "wt: skipping {} ({branch} {reason}, current directory)",
+                path.display()
+            );
+            continue;
+        }
+
         if git.is_dirty(path) {
             continue;
         }

@@ -1800,6 +1800,51 @@ mod prune {
     }
 
     #[test]
+    fn skips_cwd_merged_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "cwd-merged");
+
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+        assert_git_success(&repo, &["merge", "cwd-merged"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .current_dir(&wt_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "worktree should not be removed when cwd is inside it"
+        );
+        let branch_exists = git(&repo)
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/cwd-merged"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(
+            branch_exists,
+            "branch should not be deleted when worktree is skipped"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cwd-merged merged"),
+            "should include branch name and merge reason, got: {stderr}",
+        );
+        assert!(
+            stderr.contains("current directory"),
+            "should report skipping due to current directory, got: {stderr}",
+        );
+    }
+
+    #[test]
     fn repo_flag_prunes_merged() {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "repo-merged");
