@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -6,6 +6,13 @@ use std::path::PathBuf;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum Shell {
+    Zsh,
+    Bash,
+    Fish,
 }
 
 #[derive(Subcommand)]
@@ -78,15 +85,16 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
-    /// Generate shell completions
+    /// Initialize shell completions
     #[command(
-        long_about = "Generate shell completion scripts.\n\
-            Add to your shell configuration to enable tab completion.",
-        after_help = "Examples:\n  eval \"$(wt completions zsh)\"\n  eval \"$(wt completions bash)\"\n  wt completions fish | source"
+        long_about = "Install shell completion scripts in standard locations.\n\
+            Prints setup guidance on stderr and the installed file path on stdout.",
+        after_help = "Examples:\n  wt init-shell\n  wt init-shell --shell zsh\n  wt init-shell --shell fish"
     )]
-    Completions {
-        /// Shell to generate completions for
-        shell: clap_complete::Shell,
+    InitShell {
+        /// Shell to configure
+        #[arg(long, value_enum)]
+        shell: Option<Shell>,
     },
     /// Print the path to a worktree
     #[command(

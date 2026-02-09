@@ -1,4 +1,4 @@
-pub mod completions;
+pub mod init_shell;
 pub mod link;
 pub mod list;
 pub mod new;

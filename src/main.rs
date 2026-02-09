@@ -12,7 +12,7 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match &cli.command {
-        Command::Completions { shell } => commands::completions::run(*shell),
+        Command::InitShell { shell } => commands::init_shell::run(*shell),
         Command::New { name, repo } => commands::new::run(name, repo.as_deref()),
         Command::List { repo, porcelain } => commands::list::run(repo.as_deref(), *porcelain),
         Command::Remove { names, repo, force } => commands::rm::run(names, repo.as_deref(), *force),

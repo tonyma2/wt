@@ -133,6 +133,241 @@ fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
     path
 }
 
+fn wt_init_shell(home: &Path, args: &[&str]) -> std::process::Output {
+    let mut cmd = wt_bin();
+    cmd.arg("init-shell");
+    cmd.args(args);
+    cmd.env("HOME", home);
+    cmd.env_remove("XDG_DATA_HOME");
+    cmd.env_remove("XDG_CONFIG_HOME");
+    cmd.output().unwrap()
+}
+
+mod init_shell {
+    use super::*;
+
+    #[test]
+    fn installs_zsh_completion_and_prints_path() {
+        let home = TempDir::new().unwrap();
+        let output = wt_init_shell(home.path(), &["--shell", "zsh"]);
+        assert!(
+            output.status.success(),
+            "wt init-shell zsh failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 1, "expected one stdout line, got: {stdout:?}");
+        let installed = PathBuf::from(lines[0].trim());
+        assert_eq!(
+            installed,
+            home.path()
+                .join(".local/share")
+                .join("zsh/site-functions/_wt")
+        );
+        assert!(installed.exists(), "completion file should exist");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("wt: installed completion file"),
+            "expected install status, got: {stderr}",
+        );
+        assert!(
+            stderr.contains("wt: add this to ~/.zshrc"),
+            "expected zsh guidance, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn installs_bash_completion_under_xdg_data_home() {
+        let home = TempDir::new().unwrap();
+        let data_home = home.path().join("xdg-data");
+        let output = wt_bin()
+            .args(["init-shell", "--shell", "bash"])
+            .env("HOME", home.path())
+            .env("XDG_DATA_HOME", &data_home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt init-shell bash failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let installed = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        assert_eq!(installed, data_home.join("bash-completion/completions/wt"));
+        assert!(installed.exists(), "completion file should exist");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("wt: add this to your bash startup file"),
+            "expected bash guidance, got: {stderr}",
+        );
+        assert!(
+            stderr.contains("source"),
+            "expected source guidance, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn installs_fish_completion_under_xdg_config_home() {
+        let home = TempDir::new().unwrap();
+        let config_home = home.path().join("xdg-config");
+        let output = wt_bin()
+            .args(["init-shell", "--shell", "fish"])
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", &config_home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt init-shell fish failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let installed = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        assert_eq!(installed, config_home.join("fish/completions/wt.fish"));
+        assert!(installed.exists(), "completion file should exist");
+    }
+
+    #[test]
+    fn detects_shell_when_flag_is_omitted() {
+        let home = TempDir::new().unwrap();
+        let output = wt_bin()
+            .args(["init-shell"])
+            .env("HOME", home.path())
+            .env("SHELL", "/bin/zsh")
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt init-shell should auto-detect shell: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let installed = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        assert_eq!(
+            installed,
+            home.path()
+                .join(".local/share")
+                .join("zsh/site-functions/_wt")
+        );
+    }
+
+    #[test]
+    fn second_run_reports_up_to_date() {
+        let home = TempDir::new().unwrap();
+        let out1 = wt_init_shell(home.path(), &["--shell", "zsh"]);
+        assert!(out1.status.success());
+
+        let out2 = wt_init_shell(home.path(), &["--shell", "zsh"]);
+        assert!(out2.status.success());
+        let stderr = String::from_utf8_lossy(&out2.stderr);
+        assert!(
+            stderr.contains("wt: completion file is already up to date"),
+            "expected up-to-date status, got: {stderr}",
+        );
+        assert!(
+            !stderr.contains("add this to"),
+            "should not repeat guidance on unchanged, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn errors_when_shell_is_unsupported() {
+        let home = TempDir::new().unwrap();
+        let output = wt_bin()
+            .args(["init-shell"])
+            .env("HOME", home.path())
+            .env("SHELL", "/bin/tcsh")
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "wt init-shell should reject unsupported shell"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot detect supported shell; use --shell zsh|bash|fish"),
+            "expected actionable error, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn errors_when_home_is_missing() {
+        let output = wt_bin()
+            .args(["init-shell", "--shell", "zsh"])
+            .env_remove("HOME")
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "wt init-shell should fail without HOME"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("home directory is not set; set $HOME or XDG_DATA_HOME"),
+            "expected HOME error, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn works_without_home_when_xdg_is_set() {
+        let temp = TempDir::new().unwrap();
+        let output = wt_bin()
+            .args(["init-shell", "--shell", "fish"])
+            .env_remove("HOME")
+            .env("XDG_CONFIG_HOME", temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt init-shell should work without HOME when xdg path is provided: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let installed = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        assert_eq!(installed, temp.path().join("fish/completions/wt.fish"));
+        assert!(installed.exists(), "completion file should exist");
+    }
+
+    #[test]
+    fn completions_command_is_removed() {
+        let output = wt_bin().args(["completions", "zsh"]).output().unwrap();
+        assert!(!output.status.success(), "wt completions should not exist");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "clap usage errors should exit 2"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("completions"),
+            "expected clap subcommand error, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn rejects_relative_xdg_data_home() {
+        let home = TempDir::new().unwrap();
+        let output = wt_bin()
+            .args(["init-shell", "--shell", "zsh"])
+            .env("HOME", home.path())
+            .env("XDG_DATA_HOME", "relative/data")
+            .env_remove("XDG_CONFIG_HOME")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "relative xdg path should fail");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("XDG_DATA_HOME must be an absolute path"),
+            "expected xdg absolute-path error, got: {stderr}",
+        );
+    }
+}
+
 mod new {
     use super::*;
 

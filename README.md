@@ -27,11 +27,12 @@ wt() {
 }
 ```
 
-Enable zsh tab completion:
+Install shell completion support:
 
 ```sh
-mkdir -p ~/.zsh/completions
-wt completions zsh > ~/.zsh/completions/_wt
+wt init-shell
+# or explicitly:
+wt init-shell --shell zsh
 ```
 
 ## Usage
@@ -43,7 +44,7 @@ wt link <file>...        Link files from primary worktree (alias: ln)
 wt list                  List worktrees (alias: ls)
 wt path <branch>         Print worktree path (alias: p)
 wt prune                 Clean up stale and orphaned worktrees
-wt completions <shell>   Generate shell completions (bash/zsh/fish)
+wt init-shell            Install shell completions (bash/zsh/fish)
 ```
 
 ### Options
