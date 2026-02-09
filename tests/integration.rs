@@ -1643,6 +1643,9 @@ mod prune {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "merged-branch");
 
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "merged-branch"]);
 
         let output = wt_bin()
@@ -1706,6 +1709,9 @@ mod prune {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "dry-merged");
 
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "dry-merged"]);
 
         let output = wt_bin()
@@ -1741,6 +1747,9 @@ mod prune {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "dirty-merged");
 
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "dirty-merged"]);
         std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
 
@@ -1779,10 +1788,7 @@ mod prune {
             "wt prune should succeed: {}",
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(
-            wt_path.exists(),
-            "unmerged worktree should not be removed"
-        );
+        assert!(wt_path.exists(), "unmerged worktree should not be removed");
     }
 
     #[test]
@@ -1790,6 +1796,9 @@ mod prune {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "repo-merged");
 
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "repo-merged"]);
 
         let output = wt_bin()

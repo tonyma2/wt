@@ -39,6 +39,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             Err(e) => {
                 eprintln!("wt: cannot prune {}: {e}", repo_path.display());
                 errors += 1;
+                continue;
             }
             _ => {}
         }
@@ -230,13 +231,12 @@ fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
     let worktrees = parse_porcelain(&porcelain);
 
     for wt in worktrees.iter().skip(1) {
-        if wt.detached || wt.locked {
+        let Some(branch) = &wt.branch else {
+            continue;
+        };
+        if wt.locked {
             continue;
         }
-        let branch = match &wt.branch {
-            Some(b) => b,
-            None => continue,
-        };
 
         let branch_ref = format!("refs/heads/{branch}");
         let ancestor = git.is_ancestor(&branch_ref, &base);
