@@ -1682,6 +1682,9 @@ mod prune {
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
 
         let wt_path = wt_new(home.path(), &repo, "gone-branch");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
         assert_git_success(&wt_path, &["push", "-u", "origin", "gone-branch"]);
 
         assert_git_success(&repo, &["push", "origin", "--delete", "gone-branch"]);
@@ -1702,6 +1705,11 @@ mod prune {
             "upstream-gone worktree directory should be removed"
         );
         assert_branch_absent(&repo, "gone-branch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("gone-branch upstream gone"),
+            "should report upstream gone removal, got: {stderr}",
+        );
     }
 
     #[test]

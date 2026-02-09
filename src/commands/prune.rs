@@ -246,13 +246,15 @@ fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
             continue;
         }
 
+        let reason = if ancestor { "merged" } else { "upstream gone" };
+
         let path = &wt.path;
         if git.is_dirty(path) {
             continue;
         }
 
         if dry_run {
-            eprintln!("wt: would remove {} ({branch} merged)", path.display());
+            eprintln!("wt: would remove {} ({branch} {reason})", path.display());
             continue;
         }
 
@@ -267,7 +269,7 @@ fn prune_merged(git: &Git, dry_run: bool) -> Result<(), String> {
             continue;
         }
 
-        eprintln!("wt: removed {} ({branch} merged)", path.display());
+        eprintln!("wt: removed {} ({branch} {reason})", path.display());
     }
 
     Ok(())
