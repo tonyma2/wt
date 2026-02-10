@@ -6,9 +6,7 @@ use crate::git::Git;
 use crate::worktree::parse_porcelain;
 
 pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
-    let cwd = std::env::current_dir()
-        .and_then(|p| p.canonicalize())
-        .ok();
+    let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
 
     if let Some(repo_path) = repo {
         let repo_root = Git::find_repo(Some(repo_path))?;
@@ -64,9 +62,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
                     && let Ok(canonical) = orphan.canonicalize()
                     && (cwd == &canonical || cwd.starts_with(&canonical))
                 {
-                    let label = orphan
-                        .strip_prefix(&wt_root)
-                        .unwrap_or(orphan.as_path());
+                    let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
                     eprintln!(
                         "wt: skipping {} (orphan, current directory)",
                         label.display()
@@ -85,9 +81,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             for orphan in &orphans {
                 fs::remove_dir_all(orphan)
                     .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
-                let label = orphan
-                    .strip_prefix(&wt_root)
-                    .unwrap_or(orphan.as_path());
+                let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
                 eprintln!("wt: removed {} (orphan)", label.display());
             }
             cleanup_empty_parents(&orphans, &wt_root);
@@ -259,6 +253,8 @@ fn prune_merged(
     let porcelain = git.list_worktrees()?;
     let worktrees = parse_porcelain(&porcelain);
 
+    let mut errors = 0usize;
+
     for wt in worktrees.iter().skip(1) {
         let Some(branch) = &wt.branch else {
             continue;
@@ -306,16 +302,22 @@ fn prune_merged(
 
         if let Err(e) = git.remove_worktree(path, false) {
             eprintln!("wt: {e}");
+            errors += 1;
             continue;
         }
 
         let force_delete = upstream_gone && !ancestor;
         if let Err(e) = git.delete_branch(branch, force_delete) {
             eprintln!("wt: {e}");
+            errors += 1;
             continue;
         }
 
         eprintln!("wt: removed {label} ({reason})");
+    }
+
+    if errors > 0 {
+        return Err(format!("cannot clean up {} merged worktree(s)", errors));
     }
 
     Ok(())
