@@ -30,8 +30,7 @@ wt() {
 Enable zsh tab completion:
 
 ```sh
-mkdir -p ~/.zsh/completions
-wt completions zsh > ~/.zsh/completions/_wt
+wt completions zsh > "$(brew --prefix)/share/zsh/site-functions/_wt"
 ```
 
 ## Usage
