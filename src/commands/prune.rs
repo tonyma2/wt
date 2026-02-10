@@ -249,7 +249,13 @@ fn prune_merged(
     cwd: &Option<PathBuf>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
-    let base = git.base_ref().unwrap_or_else(|_| "HEAD".to_string());
+    let base = match git.base_ref() {
+        Ok(base) => Some(base),
+        Err(e) => {
+            eprintln!("wt: {e}; skipping merged worktree pruning");
+            None
+        }
+    };
 
     let porcelain = git.list_worktrees()?;
     let worktrees = parse_porcelain(&porcelain);
@@ -265,7 +271,9 @@ fn prune_merged(
         }
 
         let branch_ref = format!("refs/heads/{branch}");
-        let ancestor = git.is_ancestor(&branch_ref, &base);
+        let ancestor = base
+            .as_ref()
+            .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
         let upstream_gone = gone && git.is_upstream_gone(branch);
 
         if !ancestor && !upstream_gone {

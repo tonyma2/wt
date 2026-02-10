@@ -1641,12 +1641,23 @@ mod prune {
     #[test]
     fn prunes_merged_worktree() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "merged-branch");
 
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
         assert_git_success(&wt_path, &["add", "feature.txt"]);
         assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "merged-branch"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let output = wt_bin()
             .args(["prune"])
@@ -1680,6 +1691,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "squash-branch");
         std::fs::write(wt_path.join("feature.txt"), "squash work").unwrap();
@@ -1716,6 +1728,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "gone-branch");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -1745,12 +1758,23 @@ mod prune {
     #[test]
     fn dry_run_skips_merged_worktree() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "dry-merged");
 
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
         assert_git_success(&wt_path, &["add", "feature.txt"]);
         assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "dry-merged"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let output = wt_bin()
             .args(["prune", "--dry-run"])
@@ -1783,12 +1807,23 @@ mod prune {
     #[test]
     fn skips_dirty_merged_worktree() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "dirty-merged");
 
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
         assert_git_success(&wt_path, &["add", "feature.txt"]);
         assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "dirty-merged"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
         std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
 
         let output = wt_bin()
@@ -1810,6 +1845,15 @@ mod prune {
     #[test]
     fn skips_unmerged_worktree() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "unmerged-branch");
 
         std::fs::write(wt_path.join("new.txt"), "change").unwrap();
@@ -1832,12 +1876,23 @@ mod prune {
     #[test]
     fn skips_cwd_merged_worktree() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "cwd-merged");
 
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
         assert_git_success(&wt_path, &["add", "feature.txt"]);
         assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "cwd-merged"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let output = wt_bin()
             .args(["prune"])
@@ -1884,6 +1939,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "gone-branch");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -1951,6 +2007,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "dirty-gone");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -1989,6 +2046,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "both-branch");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -2034,6 +2092,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "both-diverged-head");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -2074,6 +2133,7 @@ mod prune {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let wt_path = wt_new(home.path(), &repo, "dry-gone");
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
@@ -2116,14 +2176,70 @@ mod prune {
     }
 
     #[test]
+    fn skips_merged_when_default_branch_unknown() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "local-merged-no-origin");
+
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+        assert_git_success(&repo, &["merge", "local-merged-no-origin"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "merged worktree should be kept when default branch cannot be determined"
+        );
+        let branch_exists = git(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/local-merged-no-origin",
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(
+            branch_exists,
+            "branch should not be deleted when merged pruning is skipped"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot determine default branch"),
+            "should explain why merged pruning was skipped, got: {stderr}",
+        );
+    }
+
+    #[test]
     fn repo_flag_prunes_merged() {
         let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
         let wt_path = wt_new(home.path(), &repo, "repo-merged");
 
         std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
         assert_git_success(&wt_path, &["add", "feature.txt"]);
         assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
         assert_git_success(&repo, &["merge", "repo-merged"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
         let output = wt_bin()
             .args(["prune", "--repo"])
