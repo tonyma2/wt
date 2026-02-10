@@ -2025,6 +2025,46 @@ mod prune {
     }
 
     #[test]
+    fn gone_and_merged_succeeds_when_head_is_elsewhere() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "both-diverged-head");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "both-diverged-head"]);
+
+        assert_git_success(&repo, &["merge", "both-diverged-head"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["push", "origin", "--delete", "both-diverged-head"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+        assert_git_success(&repo, &["checkout", "-b", "side", "HEAD~1"]);
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed even when HEAD is elsewhere: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "merged+gone worktree should be removed when HEAD is elsewhere"
+        );
+        assert_branch_absent(&repo, "both-diverged-head");
+    }
+
+    #[test]
     fn dry_run_gone_flag() {
         let (home, repo) = setup();
         let origin = home.path().join("origin.git");

@@ -307,7 +307,7 @@ fn prune_merged(
             continue;
         }
 
-        let force_delete = upstream_gone && !ancestor;
+        let force_delete = upstream_gone;
         if let Err(e) = git.delete_branch(branch, force_delete) {
             eprintln!("wt: {e}");
             errors += 1;
