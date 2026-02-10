@@ -73,14 +73,20 @@ pub enum Command {
         long_about = "Remove stale worktree metadata for missing directories, \
             and remove orphaned worktree directories whose backing repository \
             has been deleted.\n\n\
+            Worktrees whose branch is fully merged into the base branch are also removed.\n\n\
+            Use --gone to also remove worktrees whose upstream tracking branch no longer \
+            exists (e.g. after a squash-merge deleted the remote branch).\n\n\
             By default, discovers all repos from ~/.worktrees/ and prunes each one, \
             then cleans up orphaned directories. Use --repo to target a single repository.",
-        after_help = "Examples:\n  wt prune\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
+        after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
     )]
     Prune {
         /// Show what would be done without doing it
         #[arg(long, short = 'n')]
         dry_run: bool,
+        /// Also remove worktrees whose upstream branch is gone
+        #[arg(long)]
+        gone: bool,
         /// Repository path (prune only this repo, skip orphan cleanup)
         #[arg(long)]
         repo: Option<PathBuf>,

@@ -1671,7 +1671,43 @@ mod prune {
     }
 
     #[test]
-    fn prunes_upstream_gone_worktree() {
+    fn skips_squash_merged_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "squash-branch");
+        std::fs::write(wt_path.join("feature.txt"), "squash work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "squash feature"]);
+
+        assert_git_success(&repo, &["merge", "--squash", "squash-branch"]);
+        assert_git_success(&repo, &["commit", "-m", "squash merge squash-branch"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "squash-merged worktree should not be removed (not a direct ancestor)"
+        );
+    }
+
+    #[test]
+    fn skips_upstream_gone_unmerged_worktree() {
         let (home, repo) = setup();
         let origin = home.path().join("origin.git");
         init_bare_repo(&origin);
@@ -1701,14 +1737,8 @@ mod prune {
             String::from_utf8_lossy(&output.stderr),
         );
         assert!(
-            !wt_path.exists(),
-            "upstream-gone worktree directory should be removed"
-        );
-        assert_branch_absent(&repo, "gone-branch");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("repo/gone-branch (upstream gone)"),
-            "should report upstream gone removal, got: {stderr}",
+            wt_path.exists(),
+            "unmerged worktree should not be removed just because upstream is gone"
         );
     }
 
@@ -1835,13 +1865,214 @@ mod prune {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("repo/cwd-merged (merged"),
-            "should include branch name and merge reason, got: {stderr}",
+            stderr.contains("repo/cwd-merged (merged, current directory)"),
+            "should include branch name and reason, got: {stderr}",
         );
         assert!(
             stderr.contains("current directory"),
             "should report skipping due to current directory, got: {stderr}",
         );
+    }
+
+    #[test]
+    fn gone_flag_prunes_upstream_gone_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "gone-branch");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "gone-branch"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "gone-branch"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "upstream-gone worktree should be removed with --gone"
+        );
+        assert_branch_absent(&repo, "gone-branch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("(upstream gone)"),
+            "should report upstream gone reason, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn gone_flag_skips_no_upstream_worktree() {
+        let (home, repo) = setup();
+        let wt_path = wt_new(home.path(), &repo, "local-only");
+
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "local work"]);
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "local-only branch (never pushed) should not be removed with --gone"
+        );
+    }
+
+    #[test]
+    fn gone_flag_skips_dirty_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "dirty-gone");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "dirty-gone"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "dirty-gone"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "dirty upstream-gone worktree should not be removed"
+        );
+    }
+
+    #[test]
+    fn gone_and_merged_reports_merged() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "both-branch");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "both-branch"]);
+
+        assert_git_success(&repo, &["merge", "both-branch"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["push", "origin", "--delete", "both-branch"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(!wt_path.exists(), "merged+gone worktree should be removed");
+        assert_branch_absent(&repo, "both-branch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("(merged)"),
+            "should report merged (not upstream gone) when both apply, got: {stderr}",
+        );
+        assert!(
+            !stderr.contains("upstream gone"),
+            "should not report upstream gone when merged, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn dry_run_gone_flag() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "dry-gone");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "dry-gone"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "dry-gone"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let output = wt_bin()
+            .args(["prune", "--dry-run", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --dry-run --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "dry-run should not remove upstream-gone worktree"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("would remove"),
+            "should report what would be removed, got: {stderr}",
+        );
+        assert!(
+            stderr.contains("upstream gone"),
+            "should mention upstream gone reason, got: {stderr}",
+        );
+        let branch_exists = git(&repo)
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/dry-gone"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(branch_exists, "dry-run should not delete the branch");
     }
 
     #[test]

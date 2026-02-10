@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::git::Git;
 use crate::worktree::parse_porcelain;
 
-pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String> {
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
 
     if let Some(repo_path) = repo {
@@ -15,7 +15,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
         if !output.is_empty() {
             eprintln!("{output}");
         }
-        prune_merged(&git, dry_run, &cwd, None)?;
+        prune_merged(&git, dry_run, gone, &cwd, None)?;
         return Ok(());
     }
 
@@ -46,7 +46,7 @@ pub fn run(dry_run: bool, repo: Option<&Path>) -> Result<(), String> {
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run, &cwd, Some(&wt_root)) {
+        if let Err(e) = prune_merged(&git, dry_run, gone, &cwd, Some(&wt_root)) {
             eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
             errors += 1;
         }
@@ -245,6 +245,7 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
 fn prune_merged(
     git: &Git,
     dry_run: bool,
+    gone: bool,
     cwd: &Option<PathBuf>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
@@ -265,7 +266,7 @@ fn prune_merged(
 
         let branch_ref = format!("refs/heads/{branch}");
         let ancestor = git.is_ancestor(&branch_ref, &base);
-        let upstream_gone = git.is_upstream_gone(branch);
+        let upstream_gone = gone && git.is_upstream_gone(branch);
 
         if !ancestor && !upstream_gone {
             continue;
@@ -317,7 +318,7 @@ fn prune_merged(
     }
 
     if errors > 0 {
-        return Err(format!("cannot clean up {} merged worktree(s)", errors));
+        return Err(format!("cannot clean up {errors} worktree(s)"));
     }
 
     Ok(())

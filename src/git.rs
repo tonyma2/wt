@@ -152,8 +152,7 @@ impl Git {
         if !output.status.success() {
             return Err("cannot prune worktree metadata".into());
         }
-        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(text)
+        Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 
     pub fn is_dirty(&self, worktree_path: &Path) -> bool {

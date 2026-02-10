@@ -21,7 +21,11 @@ fn main() {
         } => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
         Command::List { repo, porcelain } => commands::list::run(repo.as_deref(), *porcelain),
         Command::Remove { names, repo, force } => commands::rm::run(names, repo.as_deref(), *force),
-        Command::Prune { dry_run, repo } => commands::prune::run(*dry_run, repo.as_deref()),
+        Command::Prune {
+            dry_run,
+            gone,
+            repo,
+        } => commands::prune::run(*dry_run, *gone, repo.as_deref()),
         Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
         Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
     };
