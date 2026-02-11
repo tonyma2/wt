@@ -1,25 +1,24 @@
 use std::path::Path;
 
-use crate::git::{self, Git};
+use crate::git::Git;
 
-pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(name: &str, base: Option<&str>, repo: Option<&Path>) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
 
-    let exists = if git.has_local_branch(name) {
-        true
-    } else if git.has_origin() {
-        if let Err(e) = git.fetch_origin() {
-            eprintln!("wt: warning: {e}; remote branch state may be stale");
-        }
-        git.has_remote_branch(name)
-    } else {
-        false
-    };
-
-    if !exists && !git::check_ref_format(name) {
-        return Err(format!("invalid branch name: {name}"));
+    if let Some((prefix, rest)) = name.split_once('/')
+        && git.list_remotes().iter().any(|r| r == prefix)
+    {
+        let suggestion = match base {
+            Some(b) => format!("wt new {rest} --base {b}"),
+            None => format!("wt new {rest}"),
+        };
+        return Err(format!(
+            "'{name}' is a remote ref; use '{suggestion}' instead"
+        ));
     }
+
+    let local_exists = git.has_local_branch(name);
 
     let repo_name = repo_root
         .file_name()
@@ -36,12 +35,19 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         return Err(format!("path already exists: {}", dest.display()));
     }
 
-    if exists {
+    if let Some(base) = base {
+        if local_exists {
+            return Err(format!("cannot use --base: branch '{name}' already exists"));
+        }
+        git.add_worktree(name, &dest, Some(base))?;
+    } else if local_exists {
         eprintln!("wt: branch '{name}' exists, checking out");
         git.checkout_worktree(name, &dest)?;
     } else {
-        let base = git.base_ref().unwrap_or_else(|_| "HEAD".into());
-        git.add_worktree(name, &dest, &base)?;
+        match git.checkout_worktree(name, &dest) {
+            Ok(()) => eprintln!("wt: checking out '{name}'"),
+            Err(_) => git.add_worktree(name, &dest, None)?,
+        }
     }
 
     println!("{}", dest.display());

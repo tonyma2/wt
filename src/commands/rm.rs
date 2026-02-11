@@ -40,6 +40,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         }
     }
 
+    // TODO: support removing detached HEAD worktrees (skip branch deletion)
     let branch = wt
         .branch
         .as_deref()

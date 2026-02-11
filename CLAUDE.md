@@ -14,7 +14,7 @@ cargo test -p wt -- new::         # filter by test path
 Worktrees live under `~/.worktrees/<repo-name>/`.
 
 - One file per subcommand in `commands/`, each exports `pub fn run(...) -> Result<(), String>`
-- All git calls go through the `Git` struct with `-C <repo>`. Exceptions: `check_ref_format` (free fn, no repo needed), `is_dirty` (runs in worktree path, not admin repo)
+- All git calls go through the `Git` struct with `-C <repo>`. Exception: `is_dirty` (runs in worktree path, not admin repo)
 - `parse_porcelain()` strips `refs/heads/` from branch names during parsing
 - Data flow: `Git::list_worktrees()` → `parse_porcelain()` → query `Vec<Worktree>` in memory
 
