@@ -46,7 +46,10 @@ pub fn run(name: &str, base: Option<&str>, repo: Option<&Path>) -> Result<(), St
     } else {
         match git.checkout_worktree(name, &dest) {
             Ok(()) => eprintln!("wt: checking out '{name}'"),
-            Err(_) => git.add_worktree(name, &dest, None)?,
+            Err(_) => {
+                git.add_worktree(name, &dest, None)?;
+                eprintln!("wt: creating branch '{name}'");
+            }
         }
     }
 
