@@ -77,6 +77,24 @@ fn assert_branch_absent(repo: &Path, branch: &str) {
     );
 }
 
+fn assert_branch_present(repo: &Path, branch: &str) {
+    let output = git(repo)
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .stdout(Stdio::null())
+        .output()
+        .expect("git failed to start");
+    assert!(
+        output.status.success(),
+        "branch '{branch}' should exist in {}",
+        repo.display()
+    );
+}
+
 fn setup() -> (TempDir, PathBuf) {
     let home = TempDir::new().unwrap();
     let repo = home.path().join("repo");
@@ -1061,7 +1079,7 @@ mod rm {
     }
 
     #[test]
-    fn refuses_detached_head_worktree() {
+    fn removes_detached_head_worktree() {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "detach-me");
 
@@ -1070,21 +1088,17 @@ mod rm {
         let output = wt_bin()
             .arg("rm")
             .arg(&wt_path)
-            .arg("--force")
             .arg("--repo")
             .arg(&repo)
             .output()
             .unwrap();
         assert!(
-            !output.status.success(),
-            "wt rm should refuse detached HEAD worktree"
+            output.status.success(),
+            "wt rm should remove detached HEAD worktree: {}",
+            String::from_utf8_lossy(&output.stderr),
         );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("detached HEAD"),
-            "expected detached HEAD error, got: {stderr}",
-        );
-        assert!(wt_path.exists());
+        assert!(!wt_path.exists(), "worktree directory should be removed");
+        assert_branch_present(&repo, "detach-me");
     }
 
     #[test]
