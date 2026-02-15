@@ -39,6 +39,60 @@ impl Git {
         Ok(PathBuf::from(s))
     }
 
+    pub fn has_remote(&self, remote: &str) -> bool {
+        self.cmd()
+            .args(["remote", "get-url", remote])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
+        let output = self
+            .cmd()
+            .args(["fetch", "--prune", "--quiet", remote])
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git fetch: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cannot fetch from '{remote}': {}",
+                stderr_msg(&output)
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn base_ref(&self) -> Result<String, String> {
+        let output = self
+            .cmd()
+            .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+
+        if output.status.success() {
+            let head_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Some(branch) = head_ref.strip_prefix("refs/remotes/origin/")
+                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))
+            {
+                return Ok(format!("origin/{branch}"));
+            }
+        }
+
+        for name in ["main", "master"] {
+            if self.ref_exists(&format!("refs/remotes/origin/{name}")) {
+                return Ok(format!("origin/{name}"));
+            }
+        }
+
+        Err(
+            "cannot determine default branch (tried origin/HEAD, origin/main, origin/master)"
+                .into(),
+        )
+    }
+
     pub fn ref_exists(&self, refname: &str) -> bool {
         self.cmd()
             .args(["show-ref", "--verify", "--quiet", refname])
@@ -152,8 +206,7 @@ impl Git {
         if !output.status.success() {
             return Err("cannot prune worktree metadata".into());
         }
-        let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(text)
+        Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 
     pub fn is_dirty(&self, worktree_path: &Path) -> bool {
@@ -163,7 +216,7 @@ impl Git {
             .args(["status", "--porcelain", "--untracked-files=normal"])
             .stderr(Stdio::null())
             .output()
-            .is_ok_and(|o| !o.stdout.is_empty())
+            .map_or(true, |o| !o.stdout.is_empty())
     }
 
     pub fn is_branch_merged(&self, branch: &str) -> bool {
@@ -178,7 +231,7 @@ impl Git {
         self.is_ancestor(&branch_ref, "HEAD")
     }
 
-    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.cmd()
             .args(["merge-base", "--is-ancestor", ancestor, descendant])
             .stderr(Stdio::null())
@@ -215,6 +268,29 @@ impl Git {
         let behind: u64 = parts.next()?.parse().ok()?;
         let ahead: u64 = parts.next()?.parse().ok()?;
         Some((ahead, behind))
+    }
+
+    pub fn is_upstream_gone(&self, branch: &str) -> bool {
+        let branch_ref = format!("refs/heads/{branch}");
+        self.upstream_for(&branch_ref)
+            .is_some_and(|upstream| !self.rev_resolves(&upstream))
+    }
+
+    pub fn upstream_remote(&self, branch: &str) -> Option<String> {
+        let output = self
+            .cmd()
+            .args(["config", "--get", &format!("branch.{branch}.remote")])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if remote.is_empty() {
+            None
+        } else {
+            Some(remote)
+        }
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {
