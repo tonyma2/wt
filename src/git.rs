@@ -1,15 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-pub fn check_ref_format(name: &str) -> bool {
-    Command::new("git")
-        .args(["check-ref-format", "--branch", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
 fn stderr_msg(output: &Output) -> String {
     let s = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if s.is_empty() {
@@ -48,60 +39,6 @@ impl Git {
         Ok(PathBuf::from(s))
     }
 
-    pub fn has_origin(&self) -> bool {
-        self.cmd()
-            .args(["remote", "get-url", "origin"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    }
-
-    pub fn fetch_origin(&self) -> Result<(), String> {
-        let output = self
-            .cmd()
-            .args(["fetch", "--prune", "--quiet", "origin"])
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git fetch: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "cannot fetch from 'origin': {}",
-                stderr_msg(&output)
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn base_ref(&self) -> Result<String, String> {
-        let output = self
-            .cmd()
-            .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-
-        if output.status.success() {
-            let head_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if let Some(branch) = head_ref.strip_prefix("refs/remotes/origin/")
-                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))
-            {
-                return Ok(format!("origin/{branch}"));
-            }
-        }
-
-        for name in ["main", "master"] {
-            if self.ref_exists(&format!("refs/remotes/origin/{name}")) {
-                return Ok(format!("origin/{name}"));
-            }
-        }
-
-        Err(
-            "cannot determine default branch (tried origin/HEAD, origin/main, origin/master)"
-                .into(),
-        )
-    }
-
     pub fn ref_exists(&self, refname: &str) -> bool {
         self.cmd()
             .args(["show-ref", "--verify", "--quiet", refname])
@@ -115,25 +52,24 @@ impl Git {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
-    pub fn has_remote_branch(&self, name: &str) -> bool {
-        self.ref_exists(&format!("refs/remotes/origin/{name}"))
-    }
-
-    pub fn add_worktree(&self, branch: &str, dest: &Path, base_ref: &str) -> Result<(), String> {
-        let output = self
-            .cmd()
-            .args(["worktree", "add", "--quiet", "-b", branch])
-            .arg(dest)
-            .arg(base_ref)
+    pub fn add_worktree(
+        &self,
+        branch: &str,
+        dest: &Path,
+        base_ref: Option<&str>,
+    ) -> Result<(), String> {
+        let mut cmd = self.cmd();
+        cmd.args(["worktree", "add", "--quiet", "-b", branch])
+            .arg(dest);
+        if let Some(base) = base_ref {
+            cmd.arg(base);
+        }
+        let output = cmd
             .stdout(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot create worktree: {}: {}",
-                dest.display(),
-                stderr_msg(&output)
-            ));
+            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
         }
         Ok(())
     }
@@ -148,11 +84,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot create worktree: {}: {}",
-                dest.display(),
-                stderr_msg(&output)
-            ));
+            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
         }
         Ok(())
     }

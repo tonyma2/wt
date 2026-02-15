@@ -40,25 +40,18 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         }
     }
 
-    let branch = wt
-        .branch
-        .as_deref()
-        .ok_or_else(|| {
-            format!(
-                "worktree has no branch (detached HEAD); remove manually with: git worktree remove {}",
-                target.display()
-            )
-        })?
-        .to_string();
+    let branch = wt.branch.as_deref().map(str::to_string);
 
-    if !git.has_local_branch(&branch) {
-        return Err(format!("local branch not found: {branch}"));
-    }
+    if let Some(ref branch) = branch {
+        if !git.has_local_branch(branch) {
+            return Err(format!("local branch not found: {branch}"));
+        }
 
-    if worktree::branch_checked_out_elsewhere(&worktrees, &branch, &target) {
-        return Err(format!(
-            "branch '{branch}' is checked out in another worktree; remove that worktree first"
-        ));
+        if worktree::branch_checked_out_elsewhere(&worktrees, branch, &target) {
+            return Err(format!(
+                "branch '{branch}' is checked out in another worktree; remove that worktree first"
+            ));
+        }
     }
 
     if let Ok(cwd) = std::env::current_dir().and_then(|p| p.canonicalize())
@@ -74,7 +67,9 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         if git.is_dirty(&target) {
             return Err("worktree has local changes; use --force to remove".into());
         }
-        if !git.is_branch_merged(&branch) {
+        if let Some(ref branch) = branch
+            && !git.is_branch_merged(branch)
+        {
             return Err(format!(
                 "branch '{branch}' has unpushed commits; use --force to remove"
             ));
@@ -82,13 +77,17 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
     }
 
     git.remove_worktree(&target, force)?;
-    git.delete_branch(&branch, force)?;
 
-    eprintln!(
-        "wt: removed worktree and branch '{}' ({})",
-        branch,
-        target.display()
-    );
+    if let Some(ref branch) = branch {
+        git.delete_branch(branch, force)?;
+        eprintln!(
+            "wt: removed worktree and branch '{}' ({})",
+            branch,
+            target.display()
+        );
+    } else {
+        eprintln!("wt: removed worktree ({})", target.display());
+    }
     Ok(())
 }
 

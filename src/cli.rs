@@ -10,18 +10,25 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Create a worktree for a branch
+    /// Create a worktree for a branch or ref
     #[command(
         visible_alias = "n",
-        long_about = "Create a worktree for a branch.\n\
-            If the branch exists (locally or on the remote), it is checked out.\n\
-            Otherwise, a new branch is created from the default base branch.\n\
+        long_about = "Create a worktree for a branch or ref.\n\
+            By default, checks out an existing branch or ref.\n\
+            Use --create to create a new branch from HEAD, or provide [base] to create from a specific start point.\n\
+            Tags and other non-branch refs check out as detached HEAD.\n\
             If <name> includes '/', nested directories are created under ~/.worktrees/<repo>/.",
-        after_help = "Examples:\n  wt new feat/login\n  wt new fix/session-timeout --repo /path/to/repo"
+        after_help = "Examples:\n  wt new feat/login\n  wt new -c feat/login\n  wt new -c feat/login develop\n  wt new fix/session-timeout --repo /path/to/repo\n  wt new v1.0"
     )]
     New {
-        /// Branch name
+        /// Branch name or ref
         name: String,
+        /// Create a new branch instead of checking out an existing ref
+        #[arg(short = 'c', long = "create")]
+        create: bool,
+        /// Start point for created branch (requires --create)
+        #[arg(requires = "create")]
+        base: Option<String>,
         /// Repository path
         #[arg(long)]
         repo: Option<PathBuf>,

@@ -4,8 +4,7 @@ use crate::git::Git;
 use crate::worktree;
 
 pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
-    let repo_root = Git::find_repo(repo)
-        .map_err(|_| "not a git repository; use --repo or run inside one".to_string())?;
+    let repo_root = Git::find_repo(repo)?;
 
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;

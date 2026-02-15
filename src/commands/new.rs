@@ -1,25 +1,15 @@
 use std::path::Path;
 
-use crate::git::{self, Git};
+use crate::git::Git;
 
-pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(
+    name: &str,
+    create: bool,
+    base: Option<&str>,
+    repo: Option<&Path>,
+) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
-
-    let exists = if git.has_local_branch(name) {
-        true
-    } else if git.has_origin() {
-        if let Err(e) = git.fetch_origin() {
-            eprintln!("wt: warning: {e}; remote branch state may be stale");
-        }
-        git.has_remote_branch(name)
-    } else {
-        false
-    };
-
-    if !exists && !git::check_ref_format(name) {
-        return Err(format!("invalid branch name: {name}"));
-    }
 
     let repo_name = repo_root
         .file_name()
@@ -36,12 +26,17 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         return Err(format!("path already exists: {}", dest.display()));
     }
 
-    if exists {
-        eprintln!("wt: branch '{name}' exists, checking out");
-        git.checkout_worktree(name, &dest)?;
+    if create {
+        if git.has_local_branch(name) {
+            return Err(format!(
+                "cannot create branch '{name}': already exists; use 'wt new {name}'"
+            ));
+        }
+        git.add_worktree(name, &dest, base)?;
+        eprintln!("wt: creating branch '{name}'");
     } else {
-        let base = git.base_ref().unwrap_or_else(|_| "HEAD".into());
-        git.add_worktree(name, &dest, &base)?;
+        git.checkout_worktree(name, &dest)?;
+        eprintln!("wt: checking out '{name}'");
     }
 
     println!("{}", dest.display());
