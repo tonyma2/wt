@@ -1616,6 +1616,40 @@ mod prune {
     }
 
     #[test]
+    fn preserves_parent_dir_when_cwd_is_inside_orphan_parent() {
+        let home = TempDir::new().unwrap();
+
+        let repo = home.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+
+        let wt_path = wt_new(home.path(), &repo, "orphan-cwd");
+        let parent_dir = wt_path.parent().unwrap().to_path_buf();
+
+        // Delete the backing repo so the worktree becomes an orphan
+        std::fs::remove_dir_all(&repo).unwrap();
+
+        assert!(parent_dir.exists(), "parent dir should exist before prune");
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .current_dir(&parent_dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(!wt_path.exists(), "orphaned worktree should still be removed");
+        assert!(
+            parent_dir.exists(),
+            "parent directory should be preserved when cwd is inside it"
+        );
+    }
+
+    #[test]
     fn no_worktrees_dir_succeeds_silently() {
         let home = TempDir::new().unwrap();
         // No ~/.worktrees/ exists
@@ -2173,6 +2207,46 @@ mod prune {
             .unwrap()
             .success();
         assert!(branch_exists, "dry-run should not delete the branch");
+    }
+
+    #[test]
+    fn prunes_merged_worktree_when_head_is_elsewhere() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let wt_path = wt_new(home.path(), &repo, "head-elsewhere-merged");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+        assert_git_success(&repo, &["merge", "head-elsewhere-merged"]);
+        assert_git_success(&repo, &["push", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        // Move HEAD to a branch that does not contain the merge commit
+        assert_git_success(&repo, &["checkout", "-b", "side", "HEAD~1"]);
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed even when HEAD is elsewhere: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "merged worktree should be removed even when HEAD is elsewhere"
+        );
+        assert_branch_absent(&repo, "head-elsewhere-merged");
     }
 
     #[test]

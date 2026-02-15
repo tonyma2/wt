@@ -84,7 +84,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
                 let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
                 eprintln!("wt: removed {} (orphan)", label.display());
             }
-            cleanup_empty_parents(&orphans, &wt_root);
+            cleanup_empty_parents(&orphans, &wt_root, &cwd);
         }
     }
 
@@ -213,21 +213,27 @@ fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     }
 }
 
-fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path) {
+fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path, cwd: &Option<PathBuf>) {
     let mut candidates: Vec<&Path> = orphans.iter().filter_map(|p| p.parent()).collect();
 
     candidates.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     candidates.dedup();
 
     for dir in candidates {
-        cleanup_dir_chain(dir, wt_root);
+        cleanup_dir_chain(dir, wt_root, cwd);
     }
 }
 
-fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path) {
+fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: &Option<PathBuf>) {
     while dir != wt_root && dir.starts_with(wt_root) {
         let is_empty = fs::read_dir(dir).is_ok_and(|mut d| d.next().is_none());
         if !is_empty {
+            break;
+        }
+        if let Some(cwd) = cwd
+            && let Ok(canonical) = dir.canonicalize()
+            && (cwd == &canonical || cwd.starts_with(&canonical))
+        {
             break;
         }
         if fs::remove_dir(dir).is_err() {
@@ -315,8 +321,7 @@ fn prune_merged(
             continue;
         }
 
-        let force_delete = upstream_gone;
-        if let Err(e) = git.delete_branch(branch, force_delete) {
+        if let Err(e) = git.delete_branch(branch, true) {
             eprintln!("wt: {e}");
             errors += 1;
             continue;
