@@ -225,6 +225,12 @@ mod new {
             "wt new should succeed with unreachable origin: {}",
             String::from_utf8_lossy(&output.stderr),
         );
+        let wt_path = parse_wt_new_path(&output);
+        assert!(wt_path.exists(), "worktree path should exist");
+        assert_eq!(
+            assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
+            "offline-branch"
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.contains("warning"),
@@ -454,6 +460,45 @@ mod new {
         assert_eq!(
             wt_tip, develop_tip,
             "new branch should start from develop, not main"
+        );
+    }
+
+    #[test]
+    fn creates_worktree_from_remote_base() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+
+        init_bare_repo(&origin);
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+
+        assert_git_success(&repo, &["commit", "--allow-empty", "-m", "local-only"]);
+        let origin_tip = assert_git_stdout_success(&repo, &["rev-parse", "origin/main"])
+            .trim()
+            .to_string();
+
+        let output = wt_bin()
+            .args(["new", "-c", "feat/from-origin", "origin/main", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt new -c <name> origin/main should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let wt_path = parse_wt_new_path(&output);
+        let wt_tip = assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+        assert_eq!(wt_tip, origin_tip, "new branch should start from origin/main");
+        assert_eq!(
+            assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
+            "feat/from-origin"
         );
     }
 
@@ -2306,6 +2351,44 @@ mod prune {
         assert!(
             stderr.contains("skipping upstream-gone pruning"),
             "should warn about skipping upstream-gone pruning, got: {stderr}",
+        );
+    }
+
+    #[test]
+    fn gone_skips_missing_remote() {
+        let (home, repo, _origin) = setup_with_origin();
+
+        let wt_path = wt_new(home.path(), &repo, "missing-remote");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["config", "branch.missing-remote.remote", "upstream"]);
+        });
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["config", "branch.missing-remote.merge", "refs/heads/missing-remote"]);
+        });
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed when branch remote is missing: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "worktree should not be removed when branch remote is missing"
+        );
+        assert_branch_present(&repo, "missing-remote");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("remote 'upstream' not found; skipping upstream-gone pruning"),
+            "should report missing remote, got: {stderr}",
         );
     }
 
