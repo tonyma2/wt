@@ -69,11 +69,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot create worktree: {}: {}",
-                dest.display(),
-                stderr_msg(&output)
-            ));
+            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
         }
         Ok(())
     }
@@ -88,11 +84,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot create worktree: {}: {}",
-                dest.display(),
-                stderr_msg(&output)
-            ));
+            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
         }
         Ok(())
     }
@@ -223,17 +215,6 @@ impl Git {
         let behind: u64 = parts.next()?.parse().ok()?;
         let ahead: u64 = parts.next()?.parse().ok()?;
         Some((ahead, behind))
-    }
-
-    pub fn list_remotes(&self) -> Vec<String> {
-        let Ok(output) = self.cmd().arg("remote").stderr(Stdio::null()).output() else {
-            return Vec::new();
-        };
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(String::from)
-            .collect()
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {

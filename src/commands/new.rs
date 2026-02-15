@@ -2,23 +2,14 @@ use std::path::Path;
 
 use crate::git::Git;
 
-pub fn run(name: &str, base: Option<&str>, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(
+    name: &str,
+    create: bool,
+    base: Option<&str>,
+    repo: Option<&Path>,
+) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
-
-    if let Some((prefix, rest)) = name.split_once('/')
-        && git.list_remotes().iter().any(|r| r == prefix)
-    {
-        let suggestion = match base {
-            Some(b) => format!("wt new {rest} --base {b}"),
-            None => format!("wt new {rest}"),
-        };
-        return Err(format!(
-            "'{name}' is a remote ref; use '{suggestion}' instead"
-        ));
-    }
-
-    let local_exists = git.has_local_branch(name);
 
     let repo_name = repo_root
         .file_name()
@@ -35,22 +26,17 @@ pub fn run(name: &str, base: Option<&str>, repo: Option<&Path>) -> Result<(), St
         return Err(format!("path already exists: {}", dest.display()));
     }
 
-    if let Some(base) = base {
-        if local_exists {
-            return Err(format!("cannot use --base: branch '{name}' already exists"));
+    if create {
+        if git.has_local_branch(name) {
+            return Err(format!(
+                "cannot create branch '{name}': already exists; use 'wt new {name}'"
+            ));
         }
-        git.add_worktree(name, &dest, Some(base))?;
-    } else if local_exists {
-        eprintln!("wt: branch '{name}' exists, checking out");
-        git.checkout_worktree(name, &dest)?;
+        git.add_worktree(name, &dest, base)?;
+        eprintln!("wt: creating branch '{name}'");
     } else {
-        match git.checkout_worktree(name, &dest) {
-            Ok(()) => eprintln!("wt: checking out '{name}'"),
-            Err(_) => {
-                git.add_worktree(name, &dest, None)?;
-                eprintln!("wt: creating branch '{name}'");
-            }
-        }
+        git.checkout_worktree(name, &dest)?;
+        eprintln!("wt: checking out '{name}'");
     }
 
     println!("{}", dest.display());

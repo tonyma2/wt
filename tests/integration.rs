@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
@@ -105,7 +105,7 @@ fn init_bare_repo(path: &Path) {
 
 fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
     let output = wt_bin()
-        .args(["new", branch, "--repo"])
+        .args(["new", "-c", branch, "--repo"])
         .arg(repo)
         .env("HOME", home)
         .output()
@@ -115,6 +115,25 @@ fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
         "wt new {branch} failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
+    parse_wt_new_path(&output)
+}
+
+fn wt_checkout(home: &Path, repo: &Path, name: &str) -> PathBuf {
+    let output = wt_bin()
+        .args(["new", name, "--repo"])
+        .arg(repo)
+        .env("HOME", home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt new {name} failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    parse_wt_new_path(&output)
+}
+
+fn parse_wt_new_path(output: &Output) -> PathBuf {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
@@ -149,7 +168,7 @@ mod new {
 
         assert_git_success(&repo, &["branch", "existing"]);
 
-        let wt_path = wt_new(home.path(), &repo, "existing");
+        let wt_path = wt_checkout(home.path(), &repo, "existing");
         assert_eq!(
             assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
             "existing"
@@ -166,7 +185,7 @@ mod new {
         );
 
         let output = wt_bin()
-            .args(["new", "offline-branch", "--repo"])
+            .args(["new", "-c", "offline-branch", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
@@ -199,14 +218,14 @@ mod new {
         assert_git_success(&repo, &["branch", "-D", "remote-only"]);
 
         let output = wt_bin()
-            .args(["new", "remote-only", "--base", "main", "--repo"])
+            .args(["new", "-c", "remote-only", "main", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "wt new --base should succeed when only remote branch exists: {}",
+            "wt new -c <base> should succeed when only remote branch exists: {}",
             String::from_utf8_lossy(&output.stderr),
         );
 
@@ -232,10 +251,41 @@ mod new {
         assert_git_success(&repo, &["push", "-u", "origin", "remote-only"]);
         assert_git_success(&repo, &["branch", "-D", "remote-only"]);
 
-        let wt_path = wt_new(home.path(), &repo, "remote-only");
+        let wt_path = wt_checkout(home.path(), &repo, "remote-only");
         assert_eq!(
             assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
             "remote-only"
+        );
+    }
+
+    #[test]
+    fn checks_out_remote_tracking_ref_as_detached_head() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_branch_absent(&repo, "origin/main");
+
+        let origin_main = assert_git_stdout_success(&repo, &["rev-parse", "origin/main"])
+            .trim()
+            .to_string();
+        let wt_path = wt_checkout(home.path(), &repo, "origin/main");
+        let branch = assert_git_stdout_success(&wt_path, &["branch", "--show-current"]);
+        assert!(
+            branch.trim().is_empty(),
+            "origin/main checkout should be detached HEAD, got branch: {branch}"
+        );
+        let wt_head = assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+        assert_eq!(
+            wt_head, origin_main,
+            "worktree HEAD should match origin/main tip"
         );
     }
 
@@ -356,14 +406,14 @@ mod new {
         assert_git_success(&repo, &["checkout", "main"]);
 
         let output = wt_bin()
-            .args(["new", "feat/x", "--base", "develop", "--repo"])
+            .args(["new", "-c", "feat/x", "develop", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "wt new --base should succeed: {}",
+            "wt new -c <base> should succeed: {}",
             String::from_utf8_lossy(&output.stderr),
         );
 
@@ -378,25 +428,25 @@ mod new {
     }
 
     #[test]
-    fn rejects_base_with_existing_branch() {
+    fn rejects_create_with_existing_branch() {
         let (home, repo) = setup();
 
         assert_git_success(&repo, &["branch", "existing"]);
 
         let output = wt_bin()
-            .args(["new", "existing", "--base", "main", "--repo"])
+            .args(["new", "-c", "existing", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
             .unwrap();
         assert!(
             !output.status.success(),
-            "wt new --base should fail for existing branch"
+            "wt new -c should fail for existing branch"
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("cannot use --base"),
-            "expected --base rejection, got: {stderr}",
+            stderr.contains("already exists") && stderr.contains("wt new existing"),
+            "expected create guidance, got: {stderr}",
         );
     }
 
@@ -469,7 +519,7 @@ mod new {
     }
 
     #[test]
-    fn rejects_remote_ref() {
+    fn allows_local_branches_with_origin_prefix() {
         let (home, repo) = setup();
         let origin = home.path().join("origin.git");
 
@@ -479,18 +529,38 @@ mod new {
             cmd.args(["remote", "add", "origin"]).arg(&origin);
         });
         assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["branch", "origin/main"]);
+
+        let wt_path = wt_checkout(home.path(), &repo, "origin/main");
+        assert_eq!(
+            assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
+            "origin/main"
+        );
+    }
+
+    #[test]
+    fn rejects_base_without_create() {
+        let (home, repo) = setup();
 
         let output = wt_bin()
-            .args(["new", "origin/main", "--repo"])
+            .args(["new", "feat/x", "main", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
             .unwrap();
-        assert!(!output.status.success(), "wt new should reject remote refs");
+        assert!(
+            !output.status.success(),
+            "wt new <name> <base> without -c should fail"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "wt new <name> <base> without -c should be a usage error"
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("use 'wt new main' instead"),
-            "should suggest the correct command, got: {stderr}",
+            stderr.contains("--create"),
+            "expected clap guidance about --create, got: {stderr}",
         );
     }
 
@@ -511,21 +581,87 @@ mod new {
     #[test]
     fn rejects_unresolvable_base() {
         let (home, repo) = setup();
+        let dest = home.path().join(".worktrees").join("repo").join("feat/x");
 
         let output = wt_bin()
-            .args(["new", "feat/x", "--base", "nonexistent", "--repo"])
+            .args(["new", "-c", "feat/x", "nonexistent", "--repo"])
             .arg(&repo)
             .env("HOME", home.path())
             .output()
             .unwrap();
         assert!(
             !output.status.success(),
-            "wt new --base nonexistent should fail"
+            "wt new -c with nonexistent base should fail"
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.is_empty(),
             "should produce an error message on stderr"
+        );
+        assert!(
+            !stderr.contains(dest.to_string_lossy().as_ref()),
+            "stderr should not repeat destination path, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn checkout_missing_name_fails_without_creation() {
+        let (home, repo) = setup();
+        let dest = home.path().join(".worktrees").join("repo").join("missing");
+
+        let output = wt_bin()
+            .args(["new", "missing", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "wt new should fail for unresolved checkout names"
+        );
+        assert!(
+            !dest.exists(),
+            "wt new should not create destination on failure"
+        );
+        assert_branch_absent(&repo, "missing");
+    }
+
+    #[test]
+    fn checkout_error_does_not_fallback_to_creation() {
+        let (home, repo) = setup();
+
+        assert_git_success(&repo, &["branch", "existing"]);
+        let existing_wt = home.path().join("existing-manual");
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["worktree", "add"])
+                .arg(&existing_wt)
+                .arg("existing");
+        });
+
+        let dest = home.path().join(".worktrees").join("repo").join("existing");
+
+        let output = wt_bin()
+            .args(["new", "existing", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "wt new should surface checkout errors instead of creating a branch"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("already used by worktree"),
+            "expected checkout error from git, got: {stderr}",
+        );
+        assert!(
+            !stderr.contains(dest.to_string_lossy().as_ref()),
+            "stderr should not repeat destination path, got: {stderr}"
+        );
+        assert!(
+            !dest.exists(),
+            "wt new should not create destination on checkout failure"
         );
     }
 }
@@ -1340,8 +1476,8 @@ mod prune {
         );
 
         // Verify git metadata was cleaned: re-adding the same branch should work
-        let _wt_a1_new = wt_new(home.path(), &repo_a, "branch-a1");
-        let _wt_b1_new = wt_new(home.path(), &repo_b, "branch-b1");
+        let _wt_a1_new = wt_checkout(home.path(), &repo_a, "branch-a1");
+        let _wt_b1_new = wt_checkout(home.path(), &repo_b, "branch-b1");
     }
 
     #[test]
@@ -1375,7 +1511,7 @@ mod prune {
         );
 
         // repo_a was pruned, so re-adding branch-a should work
-        let _wt_a2 = wt_new(home.path(), &repo_a, "branch-a");
+        let _wt_a2 = wt_checkout(home.path(), &repo_a, "branch-a");
 
         // repo_b was NOT pruned, so its stale metadata blocks re-adding
         let output = wt_bin()
