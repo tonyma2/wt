@@ -1958,6 +1958,111 @@ mod prune {
     }
 
     #[test]
+    fn gone_fetches_non_origin_remote_before_classifying_gone() {
+        let (home, repo) = setup();
+        let upstream = home.path().join("upstream.git");
+        init_bare_repo(&upstream);
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "upstream"]).arg(&upstream);
+        });
+        assert_git_success(&repo, &["push", "-u", "upstream", "main"]);
+
+        let wt_path = wt_new(home.path(), &repo, "upstream-live");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "upstream", "upstream-live"]);
+        assert_git_success(
+            &repo,
+            &["update-ref", "-d", "refs/remotes/upstream/upstream-live"],
+        );
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "worktree should not be removed when upstream still exists remotely"
+        );
+        assert_branch_present(&repo, "upstream-live");
+        let tracking_exists = git(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/remotes/upstream/upstream-live",
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(
+            tracking_exists,
+            "prune --gone should refresh non-origin tracking refs before classifying gone"
+        );
+    }
+
+    #[test]
+    fn gone_fetch_failure_only_skips_that_remote() {
+        let (home, repo, origin) = setup_with_origin();
+        let upstream = home.path().join("upstream.git");
+        init_bare_repo(&upstream);
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "upstream"]).arg(&upstream);
+        });
+        assert_git_success(&repo, &["push", "-u", "upstream", "main"]);
+
+        let wt_origin = wt_new(home.path(), &repo, "origin-gone");
+        std::fs::write(wt_origin.join("origin.txt"), "work").unwrap();
+        assert_git_success(&wt_origin, &["add", "origin.txt"]);
+        assert_git_success(&wt_origin, &["commit", "-m", "origin work"]);
+        assert_git_success(&wt_origin, &["push", "-u", "origin", "origin-gone"]);
+        assert_git_success(&origin, &["branch", "-D", "origin-gone"]);
+
+        let wt_upstream = wt_new(home.path(), &repo, "upstream-live");
+        std::fs::write(wt_upstream.join("upstream.txt"), "work").unwrap();
+        assert_git_success(&wt_upstream, &["add", "upstream.txt"]);
+        assert_git_success(&wt_upstream, &["commit", "-m", "upstream work"]);
+        assert_git_success(&wt_upstream, &["push", "-u", "upstream", "upstream-live"]);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "set-url", "upstream", "/nonexistent"]);
+        });
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_origin.exists(),
+            "origin-tracking upstream-gone worktree should still be removed"
+        );
+        assert!(
+            wt_upstream.exists(),
+            "upstream worktree should be preserved"
+        );
+        assert_branch_absent(&repo, "origin-gone");
+        assert_branch_present(&repo, "upstream-live");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot fetch from 'upstream'"),
+            "should report upstream fetch failure, got: {stderr}",
+        );
+    }
+
+    #[test]
     fn gone_skips_no_upstream_worktree() {
         let (home, repo) = setup();
         let wt_path = wt_new(home.path(), &repo, "local-only");

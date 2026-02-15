@@ -39,25 +39,25 @@ impl Git {
         Ok(PathBuf::from(s))
     }
 
-    pub fn has_origin(&self) -> bool {
+    pub fn has_remote(&self, remote: &str) -> bool {
         self.cmd()
-            .args(["remote", "get-url", "origin"])
+            .args(["remote", "get-url", remote])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|s| s.success())
     }
 
-    pub fn fetch_origin(&self) -> Result<(), String> {
+    pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
         let output = self
             .cmd()
-            .args(["fetch", "--prune", "--quiet", "origin"])
+            .args(["fetch", "--prune", "--quiet", remote])
             .stdout(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run git fetch: {e}"))?;
         if !output.status.success() {
             return Err(format!(
-                "cannot fetch from 'origin': {}",
+                "cannot fetch from '{remote}': {}",
                 stderr_msg(&output)
             ));
         }
@@ -274,6 +274,23 @@ impl Git {
         let branch_ref = format!("refs/heads/{branch}");
         self.upstream_for(&branch_ref)
             .is_some_and(|upstream| !self.rev_resolves(&upstream))
+    }
+
+    pub fn upstream_remote(&self, branch: &str) -> Option<String> {
+        let output = self
+            .cmd()
+            .args(["config", "--get", &format!("branch.{branch}.remote")])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if remote.is_empty() {
+            None
+        } else {
+            Some(remote)
+        }
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {

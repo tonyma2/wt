@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -245,17 +245,6 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
     }
 }
 
-fn try_fetch_for_gone(git: &Git, dry_run: bool) -> bool {
-    if dry_run || !git.has_origin() {
-        return true;
-    }
-    if let Err(e) = git.fetch_origin() {
-        eprintln!("wt: {e}; skipping upstream-gone pruning");
-        return false;
-    }
-    true
-}
-
 fn worktree_label(branch: &str, path: &Path, wt_root: Option<&Path>) -> String {
     if let Some(root) = wt_root
         && let Ok(canonical) = path.canonicalize()
@@ -282,7 +271,12 @@ fn prune_merged(
     cwd: Option<&Path>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
-    let check_gone = gone && try_fetch_for_gone(git, dry_run);
+    struct PruneCandidate {
+        branch: String,
+        path: PathBuf,
+        merged: bool,
+        remote: Option<String>,
+    }
 
     let base = match git.base_ref() {
         Ok(base) => Some(base),
@@ -295,46 +289,80 @@ fn prune_merged(
 
     let porcelain = git.list_worktrees()?;
     let worktrees = parse_porcelain(&porcelain);
+    let candidates: Vec<PruneCandidate> = worktrees
+        .iter()
+        .skip(1)
+        .filter_map(|wt| {
+            let branch = wt.branch.as_ref()?;
+            if wt.locked || base_branch.is_some_and(|b| b == branch) {
+                return None;
+            }
+
+            let branch_ref = format!("refs/heads/{branch}");
+            let merged = base
+                .as_ref()
+                .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
+
+            Some(PruneCandidate {
+                branch: branch.clone(),
+                path: wt.path.clone(),
+                merged,
+                remote: git.upstream_remote(branch),
+            })
+        })
+        .collect();
+    let mut gone_remote_status = BTreeMap::new();
+
+    if gone && !dry_run {
+        let remotes: BTreeSet<String> =
+            candidates.iter().filter_map(|c| c.remote.clone()).collect();
+        for remote in remotes {
+            let fetched = if !git.has_remote(&remote) {
+                eprintln!("wt: remote '{remote}' not found; skipping upstream-gone pruning");
+                false
+            } else {
+                git.fetch_remote(&remote)
+                    .inspect_err(|e| eprintln!("wt: {e}; skipping upstream-gone pruning"))
+                    .is_ok()
+            };
+            gone_remote_status.insert(remote, fetched);
+        }
+    }
 
     let mut errors = 0usize;
 
-    for wt in worktrees.iter().skip(1) {
-        let Some(branch) = &wt.branch else {
-            continue;
+    for candidate in candidates {
+        let upstream_gone = if !gone {
+            false
+        } else if dry_run {
+            git.is_upstream_gone(&candidate.branch)
+        } else {
+            candidate.remote.as_ref().is_some_and(|remote| {
+                gone_remote_status.get(remote).copied().unwrap_or(false)
+                    && git.is_upstream_gone(&candidate.branch)
+            })
         };
-        if wt.locked {
-            continue;
-        }
-        if base_branch.is_some_and(|b| b == branch) {
-            continue;
-        }
 
-        let branch_ref = format!("refs/heads/{branch}");
-        let merged = base
-            .as_ref()
-            .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
-        let upstream_gone = check_gone && git.is_upstream_gone(branch);
-
-        if !merged && !upstream_gone {
+        if !candidate.merged && !upstream_gone {
             continue;
         }
 
-        let reason = if merged && upstream_gone {
+        let reason = if candidate.merged && upstream_gone {
             "merged, upstream gone"
-        } else if merged {
+        } else if candidate.merged {
             "merged"
         } else {
             "upstream gone"
         };
 
-        let label = worktree_label(branch, &wt.path, wt_root);
+        let label = worktree_label(&candidate.branch, &candidate.path, wt_root);
 
-        if is_cwd_inside(&wt.path, cwd) {
+        if is_cwd_inside(&candidate.path, cwd) {
             eprintln!("wt: skipping {label} ({reason}, current directory)");
             continue;
         }
 
-        if git.is_dirty(&wt.path) {
+        if git.is_dirty(&candidate.path) {
             continue;
         }
 
@@ -343,13 +371,13 @@ fn prune_merged(
             continue;
         }
 
-        if let Err(e) = git.remove_worktree(&wt.path, false) {
+        if let Err(e) = git.remove_worktree(&candidate.path, false) {
             eprintln!("wt: {e}");
             errors += 1;
             continue;
         }
 
-        if let Err(e) = git.delete_branch(branch, true) {
+        if let Err(e) = git.delete_branch(&candidate.branch, true) {
             eprintln!("wt: {e}");
             errors += 1;
             continue;
