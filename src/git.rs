@@ -39,6 +39,60 @@ impl Git {
         Ok(PathBuf::from(s))
     }
 
+    pub fn has_origin(&self) -> bool {
+        self.cmd()
+            .args(["remote", "get-url", "origin"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    pub fn fetch_origin(&self) -> Result<(), String> {
+        let output = self
+            .cmd()
+            .args(["fetch", "--prune", "--quiet", "origin"])
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git fetch: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cannot fetch from 'origin': {}",
+                stderr_msg(&output)
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn base_ref(&self) -> Result<String, String> {
+        let output = self
+            .cmd()
+            .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+
+        if output.status.success() {
+            let head_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Some(branch) = head_ref.strip_prefix("refs/remotes/origin/")
+                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))
+            {
+                return Ok(format!("origin/{branch}"));
+            }
+        }
+
+        for name in ["main", "master"] {
+            if self.ref_exists(&format!("refs/remotes/origin/{name}")) {
+                return Ok(format!("origin/{name}"));
+            }
+        }
+
+        Err(
+            "cannot determine default branch (tried origin/HEAD, origin/main, origin/master)"
+                .into(),
+        )
+    }
+
     pub fn ref_exists(&self, refname: &str) -> bool {
         self.cmd()
             .args(["show-ref", "--verify", "--quiet", refname])
@@ -162,7 +216,7 @@ impl Git {
             .args(["status", "--porcelain", "--untracked-files=normal"])
             .stderr(Stdio::null())
             .output()
-            .is_ok_and(|o| !o.stdout.is_empty())
+            .map_or(true, |o| !o.stdout.is_empty())
     }
 
     pub fn is_branch_merged(&self, branch: &str) -> bool {
@@ -218,8 +272,9 @@ impl Git {
 
     pub fn is_upstream_gone(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
-        self.upstream_for(&branch_ref)
-            .is_some_and(|upstream| !self.rev_resolves(&upstream))
+        self.upstream_for(&branch_ref).is_some_and(|upstream| {
+            upstream.starts_with("origin/") && !self.rev_resolves(&upstream)
+        })
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {

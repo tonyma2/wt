@@ -15,7 +15,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
         if !output.is_empty() {
             eprintln!("{output}");
         }
-        prune_merged(&git, dry_run, gone, &cwd, None)?;
+        prune_merged(&git, dry_run, gone, cwd.as_deref(), None)?;
         return Ok(());
     }
 
@@ -46,7 +46,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run, gone, &cwd, Some(&wt_root)) {
+        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref(), Some(&wt_root)) {
             eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
             errors += 1;
         }
@@ -84,7 +84,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
                 let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
                 eprintln!("wt: removed {} (orphan)", label.display());
             }
-            cleanup_empty_parents(&orphans, &wt_root, &cwd);
+            cleanup_empty_parents(&orphans, &wt_root, cwd.as_deref());
         }
     }
 
@@ -132,8 +132,6 @@ fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
 }
 
 fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
-    // gitdir is like <repo>/.git/worktrees/<name>
-    // go up 3 levels to get <repo>
     let worktrees_dir = gitdir.parent()?;
     if worktrees_dir.file_name()?.to_str()? != "worktrees" {
         return None;
@@ -213,18 +211,17 @@ fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     }
 }
 
-fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path, cwd: &Option<PathBuf>) {
-    let mut candidates: Vec<&Path> = orphans.iter().filter_map(|p| p.parent()).collect();
+fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path, cwd: Option<&Path>) {
+    let candidates: BTreeSet<&Path> = orphans.iter().filter_map(|p| p.parent()).collect();
+    let mut sorted: Vec<&Path> = candidates.into_iter().collect();
+    sorted.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
 
-    candidates.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
-    candidates.dedup();
-
-    for dir in candidates {
+    for dir in sorted {
         cleanup_dir_chain(dir, wt_root, cwd);
     }
 }
 
-fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: &Option<PathBuf>) {
+fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
     while dir != wt_root && dir.starts_with(wt_root) {
         let is_empty = fs::read_dir(dir).is_ok_and(|mut d| d.next().is_none());
         if !is_empty {
@@ -232,7 +229,7 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: &Option<PathBuf>) {
         }
         if let Some(cwd) = cwd
             && let Ok(canonical) = dir.canonicalize()
-            && (cwd == &canonical || cwd.starts_with(&canonical))
+            && (cwd == canonical || cwd.starts_with(&canonical))
         {
             break;
         }
@@ -252,9 +249,18 @@ fn prune_merged(
     git: &Git,
     dry_run: bool,
     gone: bool,
-    cwd: &Option<PathBuf>,
+    cwd: Option<&Path>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
+    let gone = gone
+        && git.has_origin()
+        && git
+            .fetch_origin()
+            .inspect_err(|e| {
+                eprintln!("wt: {e}; skipping upstream-gone pruning");
+            })
+            .is_ok();
+
     let base = match git.base_ref() {
         Ok(base) => Some(base),
         Err(e) => {
@@ -262,6 +268,7 @@ fn prune_merged(
             None
         }
     };
+    let base_branch = base.as_deref().and_then(|b| b.strip_prefix("origin/"));
 
     let porcelain = git.list_worktrees()?;
     let worktrees = parse_porcelain(&porcelain);
@@ -273,6 +280,9 @@ fn prune_merged(
             continue;
         };
         if wt.locked {
+            continue;
+        }
+        if base_branch.is_some_and(|b| b == branch) {
             continue;
         }
 
@@ -300,7 +310,7 @@ fn prune_merged(
 
         if let Some(cwd) = cwd
             && let Ok(canonical) = path.canonicalize()
-            && (cwd == &canonical || cwd.starts_with(&canonical))
+            && (cwd == canonical || cwd.starts_with(&canonical))
         {
             eprintln!("wt: skipping {label} ({reason}, current directory)");
             continue;

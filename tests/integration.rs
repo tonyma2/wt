@@ -1642,7 +1642,10 @@ mod prune {
             "wt prune should succeed: {}",
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(!wt_path.exists(), "orphaned worktree should still be removed");
+        assert!(
+            !wt_path.exists(),
+            "orphaned worktree should still be removed"
+        );
         assert!(
             parent_dir.exists(),
             "parent directory should be preserved when cwd is inside it"
@@ -2295,6 +2298,48 @@ mod prune {
     }
 
     #[test]
+    fn skips_base_branch_in_linked_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        // Create a linked worktree on main, move primary to a side branch
+        let _wt_path = wt_new(home.path(), &repo, "side-branch");
+        assert_git_success(&repo, &["checkout", "-b", "other"]);
+        assert_git_success(&repo, &["push", "-u", "origin", "other"]);
+
+        // main is trivially an ancestor of origin/main, but must not be pruned
+        let main_wt = wt_checkout(home.path(), &repo, "main");
+
+        let output = wt_bin()
+            .args(["prune"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            main_wt.exists(),
+            "base branch worktree should not be pruned"
+        );
+        let branch_exists = git(&repo)
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(branch_exists, "base branch should not be deleted");
+    }
+
+    #[test]
     fn repo_flag_prunes_merged() {
         let (home, repo) = setup();
         let origin = home.path().join("origin.git");
@@ -2331,5 +2376,85 @@ mod prune {
             "merged worktree should be removed with --repo"
         );
         assert_branch_absent(&repo, "repo-merged");
+    }
+
+    #[test]
+    fn repo_flag_gone_prunes_upstream_gone() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let wt_path = wt_new(home.path(), &repo, "repo-gone-branch");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "repo-gone-branch"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "repo-gone-branch"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let output = wt_bin()
+            .args(["prune", "--gone", "--repo"])
+            .arg(&repo)
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone --repo should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !wt_path.exists(),
+            "upstream-gone worktree should be removed with --repo --gone"
+        );
+        assert_branch_absent(&repo, "repo-gone-branch");
+    }
+
+    #[test]
+    fn gone_flag_skips_locked_worktree() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let wt_path = wt_new(home.path(), &repo, "locked-gone");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "locked-gone"]);
+
+        assert_git_success(&repo, &["push", "origin", "--delete", "locked-gone"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["worktree", "lock"]).arg(&wt_path);
+        });
+
+        let output = wt_bin()
+            .args(["prune", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            wt_path.exists(),
+            "locked upstream-gone worktree should not be removed"
+        );
     }
 }
