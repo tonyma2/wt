@@ -2110,12 +2110,8 @@ mod prune {
         assert_branch_absent(&repo, "both-branch");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("(merged)"),
-            "should report merged (not upstream gone) when both apply, got: {stderr}",
-        );
-        assert!(
-            !stderr.contains("upstream gone"),
-            "should not report upstream gone when merged, got: {stderr}",
+            stderr.contains("(merged, upstream gone)"),
+            "should report both merged and upstream gone when both apply, got: {stderr}",
         );
     }
 
@@ -2210,6 +2206,56 @@ mod prune {
             .unwrap()
             .success();
         assert!(branch_exists, "dry-run should not delete the branch");
+    }
+
+    #[test]
+    fn dry_run_gone_does_not_fetch() {
+        let (home, repo) = setup();
+        let origin = home.path().join("origin.git");
+        init_bare_repo(&origin);
+
+        assert_git_success_with(&repo, |cmd| {
+            cmd.args(["remote", "add", "origin"]).arg(&origin);
+        });
+        assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+        assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+        let wt_path = wt_new(home.path(), &repo, "dry-no-fetch");
+        std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+        assert_git_success(&wt_path, &["add", "feature.txt"]);
+        assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+        assert_git_success(&wt_path, &["push", "-u", "origin", "dry-no-fetch"]);
+
+        // Delete branch directly in the bare repo so the local remote-tracking
+        // ref is NOT pruned. A real fetch --prune would remove it.
+        assert_git_success(&origin, &["branch", "-D", "dry-no-fetch"]);
+
+        let output = wt_bin()
+            .args(["prune", "--dry-run", "--gone"])
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt prune --dry-run --gone should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // The remote-tracking ref should still exist because dry-run must not fetch
+        let tracking_exists = git(&repo)
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/remotes/origin/dry-no-fetch",
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(
+            tracking_exists,
+            "dry-run --gone should not fetch (remote-tracking ref should still exist)"
+        );
     }
 
     #[test]

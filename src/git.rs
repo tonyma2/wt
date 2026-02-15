@@ -272,9 +272,8 @@ impl Git {
 
     pub fn is_upstream_gone(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
-        self.upstream_for(&branch_ref).is_some_and(|upstream| {
-            upstream.starts_with("origin/") && !self.rev_resolves(&upstream)
-        })
+        self.upstream_for(&branch_ref)
+            .is_some_and(|upstream| !self.rev_resolves(&upstream))
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {

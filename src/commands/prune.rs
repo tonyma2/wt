@@ -252,14 +252,11 @@ fn prune_merged(
     cwd: Option<&Path>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
-    let gone = gone
-        && git.has_origin()
-        && git
-            .fetch_origin()
-            .inspect_err(|e| {
-                eprintln!("wt: {e}; skipping upstream-gone pruning");
-            })
-            .is_ok();
+    if gone && !dry_run && git.has_origin() {
+        if let Err(e) = git.fetch_origin() {
+            eprintln!("wt: {e}");
+        }
+    }
 
     let base = match git.base_ref() {
         Ok(base) => Some(base),
@@ -296,7 +293,12 @@ fn prune_merged(
             continue;
         }
 
-        let reason = if ancestor { "merged" } else { "upstream gone" };
+        let reason = match (ancestor, upstream_gone) {
+            (true, true) => "merged, upstream gone",
+            (true, false) => "merged",
+            (false, true) => "upstream gone",
+            _ => unreachable!(),
+        };
 
         let path = &wt.path;
         let label = if let Some(root) = wt_root
