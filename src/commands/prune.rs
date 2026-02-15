@@ -245,6 +245,36 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
     }
 }
 
+fn try_fetch_for_gone(git: &Git, dry_run: bool) -> bool {
+    if dry_run || !git.has_origin() {
+        return true;
+    }
+    if let Err(e) = git.fetch_origin() {
+        eprintln!("wt: {e}; skipping upstream-gone pruning");
+        return false;
+    }
+    true
+}
+
+fn worktree_label(branch: &str, path: &Path, wt_root: Option<&Path>) -> String {
+    if let Some(root) = wt_root
+        && let Ok(canonical) = path.canonicalize()
+        && let Ok(rel) = canonical.strip_prefix(root)
+    {
+        rel.display().to_string()
+    } else {
+        branch.to_string()
+    }
+}
+
+fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
+    let Some(cwd) = cwd else { return false };
+    let Ok(canonical) = path.canonicalize() else {
+        return false;
+    };
+    cwd == canonical || cwd.starts_with(&canonical)
+}
+
 fn prune_merged(
     git: &Git,
     dry_run: bool,
@@ -252,11 +282,7 @@ fn prune_merged(
     cwd: Option<&Path>,
     wt_root: Option<&Path>,
 ) -> Result<(), String> {
-    if gone && !dry_run && git.has_origin() {
-        if let Err(e) = git.fetch_origin() {
-            eprintln!("wt: {e}");
-        }
-    }
+    let check_gone = gone && try_fetch_for_gone(git, dry_run);
 
     let base = match git.base_ref() {
         Ok(base) => Some(base),
@@ -284,41 +310,31 @@ fn prune_merged(
         }
 
         let branch_ref = format!("refs/heads/{branch}");
-        let ancestor = base
+        let merged = base
             .as_ref()
             .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
-        let upstream_gone = gone && git.is_upstream_gone(branch);
+        let upstream_gone = check_gone && git.is_upstream_gone(branch);
 
-        if !ancestor && !upstream_gone {
+        if !merged && !upstream_gone {
             continue;
         }
 
-        let reason = match (ancestor, upstream_gone) {
-            (true, true) => "merged, upstream gone",
-            (true, false) => "merged",
-            (false, true) => "upstream gone",
-            _ => unreachable!(),
-        };
-
-        let path = &wt.path;
-        let label = if let Some(root) = wt_root
-            && let Ok(canonical) = path.canonicalize()
-            && let Ok(rel) = canonical.strip_prefix(root)
-        {
-            rel.display().to_string()
+        let reason = if merged && upstream_gone {
+            "merged, upstream gone"
+        } else if merged {
+            "merged"
         } else {
-            branch.to_string()
+            "upstream gone"
         };
 
-        if let Some(cwd) = cwd
-            && let Ok(canonical) = path.canonicalize()
-            && (cwd == canonical || cwd.starts_with(&canonical))
-        {
+        let label = worktree_label(branch, &wt.path, wt_root);
+
+        if is_cwd_inside(&wt.path, cwd) {
             eprintln!("wt: skipping {label} ({reason}, current directory)");
             continue;
         }
 
-        if git.is_dirty(path) {
+        if git.is_dirty(&wt.path) {
             continue;
         }
 
@@ -327,7 +343,7 @@ fn prune_merged(
             continue;
         }
 
-        if let Err(e) = git.remove_worktree(path, false) {
+        if let Err(e) = git.remove_worktree(&wt.path, false) {
             eprintln!("wt: {e}");
             errors += 1;
             continue;
