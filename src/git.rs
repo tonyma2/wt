@@ -112,7 +112,7 @@ impl Git {
             .args([
                 "for-each-ref",
                 "--format=%(refname)",
-                &format!("refs/remotes/*/{name}"),
+                &format!("refs/remotes/**/{name}"),
             ])
             .stderr(Stdio::null())
             .output();
