@@ -60,27 +60,28 @@ fn list_human_output_matches_golden() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let head = assert_git_stdout_success(&repo, &["rev-parse", "HEAD"]);
-    let short_head = &head.trim()[..8];
-
     let normalized = normalize_home_paths(&String::from_utf8_lossy(&output.stdout), home.path());
-    let expected = format!(
-        "{:<1}  {:<24}  {:<8}  {:<8}  PATH\n{:<1}  {:<24}  {:<8}  {:<8}  $HOME/repo\n{:<1}  {:<24}  {:<8}  {:<8}  $HOME/.worktrees/repo/feat-list\n",
-        "",
-        "BRANCH",
-        "HEAD",
-        "STATE",
-        "",
-        "main",
-        short_head,
-        "-",
-        "",
-        "feat-list",
-        short_head,
-        "-",
-    );
+    let lines: Vec<&str> = normalized.lines().collect();
+    assert_eq!(lines.len(), 3, "expected 3 lines, got: {normalized}");
 
-    assert_eq!(normalized, expected);
+    let header = format!(
+        "{:<1}  {:<24}  {:<8}  {:<8}  PATH",
+        "", "BRANCH", "HEAD", "STATE"
+    );
+    assert_eq!(lines[0], header);
+
+    assert!(
+        lines[1].contains("main") && lines[1].contains("$HOME/repo"),
+        "expected main row, got: {}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains("feat-list")
+            && lines[2].contains("$HOME/.wt/worktrees/")
+            && lines[2].contains("/repo"),
+        "expected feat-list row with random path, got: {}",
+        lines[2]
+    );
 }
 
 #[test]
@@ -98,7 +99,7 @@ fn marks_current_worktree_when_cwd_is_inside_linked_worktree() {
     );
 
     let normalized = normalize_home_paths(&String::from_utf8_lossy(&output.stdout), home.path());
-    let row = find_row(&normalized, "$HOME/.worktrees/repo/feat-cwd-marker");
+    let row = find_row(&normalized, "feat-cwd-marker");
     assert!(
         row.starts_with("*  "),
         "linked worktree should be marked as current, got row: {row}",

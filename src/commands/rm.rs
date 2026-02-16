@@ -78,6 +78,12 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     git.remove_worktree(&target, force)?;
 
+    if let Some(parent) = target.parent()
+        && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+
     if let Some(ref branch) = branch {
         git.delete_branch(branch, force)?;
         eprintln!(

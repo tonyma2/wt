@@ -17,7 +17,7 @@ pub enum Command {
             By default, checks out an existing branch or ref.\n\
             Use --create to create a new branch from HEAD, or provide [base] to create from a specific start point.\n\
             Tags and other non-branch refs check out as detached HEAD.\n\
-            If <name> includes '/', nested directories are created under ~/.worktrees/<repo>/.",
+            Worktrees are created under ~/.wt/worktrees/<id>/<repo>/.",
         after_help = "Examples:\n  wt new feat/login\n  wt new -c feat/login\n  wt new -c feat/login develop\n  wt new fix/session-timeout --repo /path/to/repo\n  wt new v1.0"
     )]
     New {
@@ -55,7 +55,7 @@ pub enum Command {
             Name lookup requires repository context (current repo or --repo).\n\
             Also deletes the linked local branch by default.\n\
             Use --force to remove dirty worktrees and force-delete the branch.",
-        after_help = "Examples:\n  wt rm feat/login\n  wt rm feat/a feat/b feat/c\n  wt rm /Users/me/.worktrees/my-repo/feat/login\n  wt rm feat/login --force"
+        after_help = "Examples:\n  wt rm feat/login\n  wt rm feat/a feat/b feat/c\n  wt rm /Users/me/.wt/worktrees/a3f2/my-repo\n  wt rm feat/login --force"
     )]
     Remove {
         /// Branch names or paths
@@ -76,7 +76,7 @@ pub enum Command {
             Worktrees whose branch is fully merged into the base branch are also removed.\n\n\
             Use --gone to also remove worktrees whose upstream tracking branch no longer \
             exists (e.g. after a squash-merge deleted the remote branch).\n\n\
-            By default, discovers all repos from ~/.worktrees/ and prunes each one, \
+            By default, discovers all repos from ~/.wt/worktrees/ and prunes each one, \
             then cleans up orphaned directories. Use --repo to target a single repository.",
         after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
     )]

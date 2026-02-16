@@ -148,7 +148,7 @@ worktree /home/user/project
 HEAD abc123
 branch refs/heads/main
 
-worktree /home/user/.worktrees/project/feature
+worktree /home/user/.wt/worktrees/a3f2b1/project
 HEAD def456
 branch refs/heads/feature
 locked
@@ -169,7 +169,7 @@ worktree /home/user/project
 HEAD abc123
 branch refs/heads/main
 
-worktree /home/user/.worktrees/project/feature
+worktree /home/user/.wt/worktrees/a3f2b1/project
 HEAD def456
 branch refs/heads/feature";
         let wts = parse_porcelain(input);

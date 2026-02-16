@@ -203,7 +203,7 @@ fn preserves_parent_dir_when_cwd_is_inside_orphan_parent() {
 #[test]
 fn no_worktrees_dir_succeeds_silently() {
     let home = TempDir::new().unwrap();
-    // No ~/.worktrees/ exists
+    // No ~/.wt/worktrees/ exists
 
     let output = wt_bin()
         .args(["prune"])
@@ -212,7 +212,7 @@ fn no_worktrees_dir_succeeds_silently() {
         .unwrap();
     assert!(
         output.status.success(),
-        "wt prune should succeed with no ~/.worktrees: {}",
+        "wt prune should succeed with no ~/.wt/worktrees: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(output.stdout.is_empty(), "should produce no stdout");
@@ -253,7 +253,7 @@ fn prunes_merged_worktree() {
     assert_branch_absent(&repo, "merged-branch");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("repo/merged-branch (merged)"),
+        stderr.contains("merged-branch (merged)"),
         "should report merged branch removal, got: {stderr}",
     );
 }
@@ -449,7 +449,7 @@ fn skips_cwd_merged_worktree() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("repo/cwd-merged (merged, current directory)"),
+        stderr.contains("cwd-merged (merged, current directory)"),
         "should include branch name and reason, got: {stderr}",
     );
 }
@@ -1090,7 +1090,7 @@ fn reports_repo_prune_failures_with_aggregate_error() {
     let broken_repo = home.path().join("broken-repo");
     std::fs::create_dir(&broken_repo).unwrap();
 
-    let fake_wt = home.path().join(".worktrees/synthetic/repo/fake");
+    let fake_wt = home.path().join(".wt/worktrees/aabb11/synthetic-repo");
     std::fs::create_dir_all(&fake_wt).unwrap();
     let fake_gitdir = broken_repo.join(".git/worktrees/fake");
     std::fs::write(
@@ -1123,7 +1123,7 @@ fn reports_repo_prune_failures_with_aggregate_error() {
 #[test]
 fn warns_and_skips_when_dot_git_file_is_malformed() {
     let home = TempDir::new().unwrap();
-    let malformed = home.path().join(".worktrees/bad/repo/wt");
+    let malformed = home.path().join(".wt/worktrees/ccdd22/bad-repo");
     std::fs::create_dir_all(&malformed).unwrap();
     std::fs::write(malformed.join(".git"), "not-a-gitdir-line\n").unwrap();
 

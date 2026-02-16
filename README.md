@@ -1,6 +1,6 @@
 # wt
 
-Git worktree manager. Creates worktrees under `~/.worktrees/<repo>/` and manages their lifecycle.
+Git worktree manager. Creates worktrees under `~/.wt/worktrees/<id>/<repo>/` and manages their lifecycle.
 
 ## Install
 
