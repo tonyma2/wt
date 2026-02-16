@@ -199,29 +199,6 @@ fn fails_when_repo_path_is_not_a_git_repository() {
 }
 
 #[test]
-fn rejects_when_destination_path_already_exists() {
-    let (home, repo) = setup();
-    let dest = home
-        .path()
-        .join(".worktrees")
-        .join("repo")
-        .join("existing-path");
-    std::fs::create_dir_all(&dest).unwrap();
-
-    let output = wt_bin()
-        .args(["new", "existing-path", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
-    assert_error(
-        &output,
-        1,
-        &format!("wt: path already exists: {}\n", dest.display()),
-    );
-}
-
-#[test]
 fn creates_worktree_from_head() {
     let (home, repo) = setup();
     let origin = home.path().join("origin.git");
@@ -431,8 +408,8 @@ fn does_not_strip_non_remote_prefix() {
 
     let wt_path = wt_new(home.path(), &repo, "feat/foo");
     assert!(
-        wt_path.ends_with("feat/foo"),
-        "directory should be 'feat/foo': {}",
+        wt_path.ends_with("repo"),
+        "leaf directory should be repo name: {}",
         wt_path.display(),
     );
     let branch = assert_git_stdout_success(&wt_path, &["branch", "--show-current"]);
@@ -442,7 +419,6 @@ fn does_not_strip_non_remote_prefix() {
 #[test]
 fn rejects_unresolvable_base() {
     let (home, repo) = setup();
-    let dest = home.path().join(".worktrees").join("repo").join("feat/x");
 
     let output = wt_bin()
         .args(["new", "-c", "feat/x", "nonexistent", "--repo"])
@@ -459,16 +435,12 @@ fn rejects_unresolvable_base() {
         !stderr.is_empty(),
         "should produce an error message on stderr"
     );
-    assert!(
-        !stderr.contains(dest.to_string_lossy().as_ref()),
-        "stderr should not repeat destination path, got: {stderr}"
-    );
 }
 
 #[test]
 fn checkout_missing_name_fails_without_creation() {
     let (home, repo) = setup();
-    let dest = home.path().join(".worktrees").join("repo").join("missing");
+    let wt_root = home.path().join(".wt").join("worktrees");
 
     let output = wt_bin()
         .args(["new", "missing", "--repo"])
@@ -481,8 +453,8 @@ fn checkout_missing_name_fails_without_creation() {
         "wt new should fail for unresolved checkout names"
     );
     assert!(
-        !dest.exists(),
-        "wt new should not create destination on failure"
+        !wt_root.exists() || std::fs::read_dir(&wt_root).unwrap().next().is_none(),
+        "wt new should not leave directories on failure"
     );
     assert_branch_absent(&repo, "missing");
 }
@@ -499,7 +471,7 @@ fn checkout_error_does_not_fallback_to_creation() {
             .arg("existing");
     });
 
-    let dest = home.path().join(".worktrees").join("repo").join("existing");
+    let wt_root = home.path().join(".wt").join("worktrees");
 
     let output = wt_bin()
         .args(["new", "existing", "--repo"])
@@ -517,11 +489,7 @@ fn checkout_error_does_not_fallback_to_creation() {
         "expected checkout error from git, got: {stderr}",
     );
     assert!(
-        !stderr.contains(dest.to_string_lossy().as_ref()),
-        "stderr should not repeat destination path, got: {stderr}"
-    );
-    assert!(
-        !dest.exists(),
-        "wt new should not create destination on checkout failure"
+        !wt_root.exists() || std::fs::read_dir(&wt_root).unwrap().next().is_none(),
+        "wt new should not leave directories on checkout failure"
     );
 }

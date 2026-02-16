@@ -54,9 +54,9 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         }
     }
 
-    if let Ok(cwd) = std::env::current_dir().and_then(|p| p.canonicalize())
-        && (cwd == target || cwd.starts_with(&target))
-    {
+    let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
+
+    if is_cwd_inside(&target, cwd.as_deref()) {
         return Err(format!(
             "cannot remove {}: current directory is inside the worktree",
             target.display()
@@ -78,6 +78,14 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     git.remove_worktree(&target, force)?;
 
+    if let Some(parent) = target.parent()
+        && worktree::is_managed_worktree_dir(parent)
+        && !is_cwd_inside(parent, cwd.as_deref())
+        && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+
     if let Some(ref branch) = branch {
         git.delete_branch(branch, force)?;
         eprintln!(
@@ -89,6 +97,11 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         eprintln!("wt: removed worktree ({})", target.display());
     }
     Ok(())
+}
+
+fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
+    let Some(cwd) = cwd else { return false };
+    cwd == path || cwd.starts_with(path)
 }
 
 fn resolve_target(

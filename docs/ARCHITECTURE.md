@@ -1,6 +1,6 @@
 # Architecture
 
-`wt` is a single-binary CLI that manages git worktrees under `~/.worktrees/<repo>/`.
+`wt` is a single-binary CLI that manages git worktrees under `~/.wt/worktrees/<id>/<repo>/`.
 
 ## Module Graph
 
@@ -44,7 +44,7 @@ Exceptions:
 
 ## Commands
 
-**new** — Resolves repo, builds destination path as `~/.worktrees/<repo>/<name>`. Validates destination doesn't already exist and (with `-c`) that the branch doesn't already exist. Creates a new branch (`git worktree add -b`) or checks out an existing ref (`git worktree add`). Prints the path to stdout.
+**new** — Resolves repo, builds destination path as `~/.wt/worktrees/<random-id>/<repo>`. The 6-char hex random ID ensures unique paths regardless of branch name. Validates (with `-c`) that the branch doesn't already exist. Creates a new branch (`git worktree add -b`) or checks out an existing ref (`git worktree add`). Prints the path to stdout.
 
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
@@ -55,7 +55,7 @@ Exceptions:
 
 **prune** — Two modes:
 - With `--repo`: prunes a single repo's stale metadata and merged worktrees
-- Without `--repo` (default): discovers all repos from `~/.worktrees/` via `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
+- Without `--repo` (default): discovers all repos from `~/.wt/worktrees/` via recursive `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
 - Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
@@ -68,11 +68,9 @@ Exceptions:
 ## Filesystem Layout
 
 ```
-~/.worktrees/
-└── <repo-name>/
-    ├── <branch>/           Worktree directory (created by git)
-    ├── <nested/branch>/    Slash in branch name → nested directories
-    └── ...
+~/.wt/worktrees/
+└── <random-id>/            6-char hex (e.g. a3f2b1)
+    └── <repo-name>/        Worktree directory (created by git)
 ```
 
 The admin (primary) repo lives wherever the user cloned it. Worktree directories contain a `.git` file (not a directory) pointing back to `.git/worktrees/<name>` in the admin repo.
@@ -83,7 +81,7 @@ Integration tests live in `tests/` with one file per subcommand. Shared helpers 
 
 ### Setup
 
-**`setup()`** — Creates a `TempDir` with a git repo in a `repo/` subdirectory (single empty commit on `main`). Returns `(TempDir, repo_path)`. `HOME` is set to the `TempDir` root so worktrees land at `<TempDir>/.worktrees/repo/`. Keep `TempDir` in scope — dropping it deletes the directory.
+**`setup()`** — Creates a `TempDir` with a git repo in a `repo/` subdirectory (single empty commit on `main`). Returns `(TempDir, repo_path)`. `HOME` is set to the `TempDir` root so worktrees land at `<TempDir>/.wt/worktrees/<id>/repo/`. Keep `TempDir` in scope — dropping it deletes the directory.
 
 **`setup_with_origin()`** — Like `setup()` but creates a bare remote as `origin`, pushes `main`, and fetches to set up tracking refs. Returns `(TempDir, repo_path, origin_path)`.
 
