@@ -176,4 +176,30 @@ branch refs/heads/feature";
         assert_eq!(wts.len(), 2);
         assert_eq!(wts[1].branch.as_deref(), Some("feature"));
     }
+
+    #[test]
+    fn locked_with_reason() {
+        let input = "\
+worktree /home/user/project
+HEAD abc123
+branch refs/heads/main
+locked because: in use
+";
+        let wts = parse_porcelain(input);
+        assert_eq!(wts.len(), 1);
+        assert!(wts[0].locked);
+    }
+
+    #[test]
+    fn prunable_with_reason() {
+        let input = "\
+worktree /home/user/project
+HEAD abc123
+branch refs/heads/main
+prunable gitdir file points to non-existent location
+";
+        let wts = parse_porcelain(input);
+        assert_eq!(wts.len(), 1);
+        assert!(wts[0].prunable);
+    }
 }

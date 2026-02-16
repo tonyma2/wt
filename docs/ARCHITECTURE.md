@@ -93,6 +93,10 @@ Integration tests live in `tests/` with one file per subcommand. Shared helpers 
 
 **`wt_bin()`** — Returns a `Command` for the compiled binary.
 
+**`wt(home)`** — Returns a `Command` for the compiled binary with `HOME` set.
+
+**`run_wt(home, configure)`** — Closure-based `wt` runner with consistent `HOME` setup that returns `Output`.
+
 **`wt_new(home, repo, branch)`** — Runs `wt new -c <branch> --repo <repo>` with `HOME` overridden. Returns the created worktree path.
 
 **`wt_checkout(home, repo, name)`** — Same but without `-c` (checks out existing ref).
@@ -110,3 +114,18 @@ Integration tests live in `tests/` with one file per subcommand. Shared helpers 
 **`assert_branch_absent(dir, branch)`** — Panics if the branch exists.
 
 **`assert_branch_present(dir, branch)`** — Panics if the branch does not exist.
+
+**`assert_exit_code(output, code)`** — Panics unless the process exited with exactly `code`.
+
+**`assert_stdout_empty(output)`** — Panics unless stdout is empty.
+
+**`assert_stderr_empty(output)`** — Panics unless stderr is empty.
+
+**`assert_stderr_exact(output, expected)`** — Panics unless stderr exactly matches `expected`.
+
+**`assert_error(output, code, expected_stderr)`** — Composite assertion for error contracts:
+exit code + empty stdout + exact stderr.
+
+**`canonical(path)`** — Canonicalizes a path, falling back to the original when canonicalization fails.
+
+**`normalize_home_paths(output, home)`** — Replaces canonical and raw home prefixes with `$HOME` for stable output assertions.
