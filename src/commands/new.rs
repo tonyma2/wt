@@ -1,13 +1,10 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
 
 fn random_id() -> Result<String, String> {
     let mut buf = [0u8; 3];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut buf))
-        .map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
+    getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
     Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
 }
 
