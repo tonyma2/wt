@@ -109,14 +109,16 @@ impl Git {
     pub fn has_remote_branch(&self, name: &str) -> bool {
         let output = self
             .cmd()
-            .args([
-                "for-each-ref",
-                "--format=%(refname)",
-                &format!("refs/remotes/**/{name}"),
-            ])
+            .args(["remote"])
             .stderr(Stdio::null())
             .output();
-        output.is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
+        let Ok(output) = output else { return false };
+        if !output.status.success() {
+            return false;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}")))
     }
 
     pub fn add_worktree(
