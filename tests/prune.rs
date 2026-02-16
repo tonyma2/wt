@@ -259,6 +259,223 @@ fn prunes_merged_worktree() {
 }
 
 #[test]
+fn preserves_unmanaged_parent_when_pruning_merged_worktree() {
+    let (home, repo, _origin) = setup_with_origin();
+    let unmanaged_parent = home.path().join("custom-parent");
+    let unmanaged_wt = unmanaged_parent.join("merged-external");
+    std::fs::create_dir(&unmanaged_parent).unwrap();
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "merged-external"])
+            .arg(&unmanaged_wt)
+            .arg("main");
+    });
+
+    std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
+    assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
+    assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "merged-external"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --repo should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !unmanaged_wt.exists(),
+        "merged unmanaged worktree should still be removed"
+    );
+    assert!(
+        unmanaged_parent.exists(),
+        "unmanaged parent directory should not be removed"
+    );
+    assert_branch_absent(&repo, "merged-external");
+}
+
+#[test]
+fn preserves_unmanaged_siblings_when_pruning_merged_worktree() {
+    let (home, repo, _origin) = setup_with_origin();
+    let unmanaged_parent = home.path().join("custom-parent-with-siblings");
+    let unmanaged_wt = unmanaged_parent.join("merged-external-siblings");
+    let sibling_file = unmanaged_parent.join("keep.txt");
+    let sibling_dir = unmanaged_parent.join("keep-dir");
+    std::fs::create_dir(&unmanaged_parent).unwrap();
+    std::fs::write(&sibling_file, "keep").unwrap();
+    std::fs::create_dir(&sibling_dir).unwrap();
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "merged-external-siblings"])
+            .arg(&unmanaged_wt)
+            .arg("main");
+    });
+
+    std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
+    assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
+    assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "merged-external-siblings"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --repo should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !unmanaged_wt.exists(),
+        "merged unmanaged worktree should still be removed"
+    );
+    assert!(
+        unmanaged_parent.exists(),
+        "unmanaged parent should never be removed by prune merged cleanup"
+    );
+    assert!(
+        sibling_file.exists(),
+        "sibling file in unmanaged parent should be preserved"
+    );
+    assert!(
+        sibling_dir.exists(),
+        "sibling directory in unmanaged parent should be preserved"
+    );
+    assert_branch_absent(&repo, "merged-external-siblings");
+}
+
+#[test]
+fn preserves_unmanaged_parent_when_pruning_in_default_mode() {
+    let (home, repo, _origin) = setup_with_origin();
+    let _managed_anchor = wt_new(home.path(), &repo, "discover-anchor");
+
+    let unmanaged_parent = home.path().join("default-mode-unmanaged-parent");
+    let unmanaged_wt = unmanaged_parent.join("default-mode-external");
+    std::fs::create_dir(&unmanaged_parent).unwrap();
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "default-mode-external"])
+            .arg(&unmanaged_wt)
+            .arg("main");
+    });
+
+    std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
+    assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
+    assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "default-mode-external"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !unmanaged_wt.exists(),
+        "merged unmanaged worktree should still be removed"
+    );
+    assert!(
+        unmanaged_parent.exists(),
+        "unmanaged parent should not be removed in default prune mode"
+    );
+    assert_branch_absent(&repo, "default-mode-external");
+}
+
+#[test]
+fn preserves_user_files_in_managed_parent_when_pruning_merged_worktree() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "merged-parent-data");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+    let user_note = parent_dir.join("keep.txt");
+    let user_dir = parent_dir.join("keep-dir");
+    std::fs::write(&user_note, "do not delete").unwrap();
+    std::fs::create_dir(&user_dir).unwrap();
+
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "merged-parent-data"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "merged worktree should be removed");
+    assert!(
+        parent_dir.exists(),
+        "managed parent should be preserved when it contains user data"
+    );
+    assert!(
+        user_note.exists(),
+        "user file in managed parent should be preserved"
+    );
+    assert!(
+        user_dir.exists(),
+        "user directory in managed parent should be preserved"
+    );
+    assert_branch_absent(&repo, "merged-parent-data");
+}
+
+#[test]
+fn preserves_managed_parent_when_cwd_is_inside_merged_parent() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "cwd-parent-merged");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "cwd-parent-merged"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .current_dir(&parent_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "merged worktree should still be removed when cwd is in parent"
+    );
+    assert!(
+        parent_dir.exists(),
+        "managed parent directory should be preserved when cwd is inside it"
+    );
+    assert_branch_absent(&repo, "cwd-parent-merged");
+}
+
+#[test]
 fn skips_squash_merged_worktree() {
     let (home, repo, _origin) = setup_with_origin();
 

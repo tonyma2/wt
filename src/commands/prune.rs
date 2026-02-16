@@ -249,6 +249,14 @@ fn worktree_label(branch: &str) -> String {
     branch.to_string()
 }
 
+fn is_managed_worktree_dir(dir: &Path) -> bool {
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    let wt_base = Path::new(&home).join(".wt").join("worktrees");
+    dir.starts_with(&wt_base) && dir.parent() == Some(wt_base.as_path())
+}
+
 fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
     let Some(cwd) = cwd else { return false };
     let Ok(canonical) = path.canonicalize() else {
@@ -365,6 +373,8 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
         }
 
         if let Some(parent) = candidate.path.parent()
+            && is_managed_worktree_dir(parent)
+            && !is_cwd_inside(parent, cwd)
             && fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
         {
             let _ = fs::remove_dir(parent);

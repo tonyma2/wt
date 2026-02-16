@@ -363,6 +363,160 @@ fn refuses_when_current_directory_is_inside_target_worktree() {
 }
 
 #[test]
+fn preserves_managed_parent_when_cwd_is_inside_parent() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "cwd-parent-guard");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+
+    let output = wt_bin()
+        .args(["rm", "cwd-parent-guard", "--force", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .current_dir(&parent_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should remove the worktree: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "worktree should still be removed when cwd is in parent"
+    );
+    assert!(
+        parent_dir.exists(),
+        "managed parent directory should be preserved when cwd is inside it"
+    );
+    assert_branch_absent(&repo, "cwd-parent-guard");
+}
+
+#[test]
+fn preserves_user_files_in_managed_parent() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "managed-parent-data");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+    let user_note = parent_dir.join("keep.txt");
+    let user_dir = parent_dir.join("keep-dir");
+    std::fs::write(&user_note, "do not delete").unwrap();
+    std::fs::create_dir(&user_dir).unwrap();
+
+    let output = wt_bin()
+        .args(["rm", "managed-parent-data", "--force", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should remove worktree: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "worktree should be removed");
+    assert!(
+        parent_dir.exists(),
+        "managed parent should be preserved when it contains user data"
+    );
+    assert!(
+        user_note.exists(),
+        "user file in parent should be preserved"
+    );
+    assert!(
+        user_dir.exists(),
+        "user directory in parent should be preserved"
+    );
+    assert_branch_absent(&repo, "managed-parent-data");
+}
+
+#[test]
+fn preserves_unmanaged_parent_and_siblings_when_removing_by_path() {
+    let (home, repo) = setup();
+    let unmanaged_parent = home.path().join("external-worktrees");
+    let unmanaged_wt = unmanaged_parent.join("remove-external");
+    let sibling_file = unmanaged_parent.join("keep.txt");
+    let sibling_dir = unmanaged_parent.join("keep-dir");
+    std::fs::create_dir(&unmanaged_parent).unwrap();
+    std::fs::write(&sibling_file, "keep").unwrap();
+    std::fs::create_dir(&sibling_dir).unwrap();
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "remove-external"])
+            .arg(&unmanaged_wt)
+            .arg("main");
+    });
+
+    let output = wt_bin()
+        .arg("rm")
+        .arg(&unmanaged_wt)
+        .arg("--force")
+        .arg("--repo")
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should remove unmanaged worktree: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !unmanaged_wt.exists(),
+        "target unmanaged worktree should be removed"
+    );
+    assert!(
+        unmanaged_parent.exists(),
+        "unmanaged parent should never be removed by wt rm cleanup"
+    );
+    assert!(
+        sibling_file.exists(),
+        "sibling file in unmanaged parent should be preserved"
+    );
+    assert!(
+        sibling_dir.exists(),
+        "sibling directory in unmanaged parent should be preserved"
+    );
+    assert_branch_absent(&repo, "remove-external");
+}
+
+#[test]
+fn preserves_empty_unmanaged_parent_when_removing_by_path() {
+    let (home, repo) = setup();
+    let unmanaged_parent = home.path().join("external-empty-parent");
+    let unmanaged_wt = unmanaged_parent.join("remove-external-empty");
+    std::fs::create_dir(&unmanaged_parent).unwrap();
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "remove-external-empty"])
+            .arg(&unmanaged_wt)
+            .arg("main");
+    });
+
+    let output = wt_bin()
+        .arg("rm")
+        .arg(&unmanaged_wt)
+        .arg("--force")
+        .arg("--repo")
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should remove unmanaged worktree: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !unmanaged_wt.exists(),
+        "target unmanaged worktree should be removed"
+    );
+    assert!(
+        unmanaged_parent.exists(),
+        "empty unmanaged parent should never be removed by wt rm cleanup"
+    );
+    assert_branch_absent(&repo, "remove-external-empty");
+}
+
+#[test]
 fn force_removes_dirty_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "dirty-force");
