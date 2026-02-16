@@ -10,7 +10,9 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    let matches = worktree::find_by_branch(&worktrees, name);
+    let all_matches = worktree::find_by_branch(&worktrees, name);
+    let has_prunable = all_matches.iter().any(|wt| wt.prunable);
+    let matches: Vec<_> = all_matches.into_iter().filter(|wt| !wt.prunable).collect();
     match matches.as_slice() {
         [one] => {
             println!("{}", one.path.display());
@@ -24,6 +26,11 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
             return Err("multiple worktrees match; remove duplicates with `wt rm`".into());
         }
         [] => {}
+    }
+
+    if has_prunable {
+        eprintln!("wt: pruning stale worktree metadata");
+        git.prune_worktrees(false)?;
     }
 
     let dest = worktree::create_dest(&repo_root)?;

@@ -177,6 +177,36 @@ fn switch_alias_works() {
 }
 
 #[test]
+fn switch_skips_prunable_worktree() {
+    let (home, repo) = setup();
+    let path = wt_new(home.path(), &repo, "feat/prunable");
+
+    // Delete the worktree directory to make it prunable
+    std::fs::remove_dir_all(&path).unwrap();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/prunable", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(
+        &output,
+        "wt: pruning stale worktree metadata\nwt: checking out 'feat/prunable'\n",
+    );
+
+    let new_path = parse_wt_new_path(&output);
+    assert!(new_path.exists());
+    assert_ne!(
+        canonical(&new_path),
+        canonical(&path),
+        "should create a new worktree, not return the stale path"
+    );
+}
+
+#[test]
 fn switch_cleans_up_on_failure() {
     let (home, repo) = setup();
 
