@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::commands::new::unique_dest;
 use crate::git::Git;
 use crate::worktree;
 
@@ -32,7 +31,7 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
 
     let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
     let wt_base = Path::new(&home).join(".wt").join("worktrees");
-    let dest = unique_dest(&wt_base, repo_name)?;
+    let dest = worktree::unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
 

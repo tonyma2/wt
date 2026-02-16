@@ -1,23 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::git::Git;
-
-pub(crate) fn random_id() -> Result<String, String> {
-    let mut buf = [0u8; 3];
-    getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
-    Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
-}
-
-pub(crate) fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
-    for _ in 0..10 {
-        let id = random_id()?;
-        let candidate = wt_base.join(id).join(repo_name);
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err("cannot generate unique worktree path".to_string())
-}
+use crate::worktree;
 
 pub fn run(
     name: &str,
@@ -35,7 +19,7 @@ pub fn run(
 
     let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
     let wt_base = Path::new(&home).join(".wt").join("worktrees");
-    let dest = unique_dest(&wt_base, repo_name)?;
+    let dest = worktree::unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
 

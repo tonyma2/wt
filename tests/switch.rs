@@ -44,11 +44,7 @@ fn switch_checks_out_existing_branch() {
     });
 
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("checking out"),
-        "expected 'checking out' in stderr, got: {stderr}",
-    );
+    assert_stderr_exact(&output, "wt: checking out 'feat/checkout-me'\n");
 
     let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let path = std::path::PathBuf::from(&path_str);
@@ -65,11 +61,7 @@ fn switch_creates_new_branch() {
     });
 
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("creating branch"),
-        "expected 'creating branch' in stderr, got: {stderr}",
-    );
+    assert_stderr_exact(&output, "wt: creating branch 'feat/brand-new'\n");
 
     let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let path = std::path::PathBuf::from(&path_str);
@@ -91,11 +83,7 @@ fn switch_checks_out_remote_branch() {
     });
 
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("checking out"),
-        "expected 'checking out' in stderr, got: {stderr}",
-    );
+    assert_stderr_exact(&output, "wt: checking out 'feat/remote-only'\n");
 
     let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let path = std::path::PathBuf::from(&path_str);
@@ -166,11 +154,7 @@ fn switch_alias_works() {
     });
 
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("creating branch"),
-        "expected 'creating branch' in stderr, got: {stderr}",
-    );
+    assert_stderr_exact(&output, "wt: creating branch 'feat/alias-test'\n");
 
     let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     assert!(

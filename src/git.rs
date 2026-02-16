@@ -107,11 +107,7 @@ impl Git {
     }
 
     pub fn has_remote_branch(&self, name: &str) -> bool {
-        let output = self
-            .cmd()
-            .args(["remote"])
-            .stderr(Stdio::null())
-            .output();
+        let output = self.cmd().args(["remote"]).stderr(Stdio::null()).output();
         let Ok(output) = output else { return false };
         if !output.status.success() {
             return false;

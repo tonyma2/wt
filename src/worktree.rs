@@ -93,6 +93,23 @@ pub fn branch_checked_out_elsewhere(
         .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path)
 }
 
+fn random_id() -> Result<String, String> {
+    let mut buf = [0u8; 3];
+    getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
+    Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
+}
+
+pub fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
+    for _ in 0..10 {
+        let id = random_id()?;
+        let candidate = wt_base.join(id).join(repo_name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("cannot generate unique worktree path".to_string())
+}
+
 fn canonicalize_or_self(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
