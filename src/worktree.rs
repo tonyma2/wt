@@ -93,6 +93,20 @@ pub fn branch_checked_out_elsewhere(
         .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path)
 }
 
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub fn is_managed_worktree_dir(dir: &Path) -> bool {
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    let wt_base = Path::new(&home).join(".wt").join("worktrees");
+    let canonical_wt_base = canonicalize_or_self(&wt_base);
+    let canonical_dir = canonicalize_or_self(dir);
+    canonical_dir.parent() == Some(canonical_wt_base.as_path())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

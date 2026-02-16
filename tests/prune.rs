@@ -475,6 +475,59 @@ fn preserves_managed_parent_when_cwd_is_inside_merged_parent() {
     assert_branch_absent(&repo, "cwd-parent-merged");
 }
 
+#[cfg(unix)]
+#[test]
+fn removes_managed_parent_when_home_is_symlinked() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = TempDir::new().unwrap();
+    let real_home = sandbox.path().join("real-home");
+    std::fs::create_dir(&real_home).unwrap();
+
+    let repo = real_home.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+
+    let origin = real_home.join("origin.git");
+    init_bare_repo(&origin);
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["remote", "add", "origin"]).arg(&origin);
+    });
+    assert_git_success(&repo, &["push", "-u", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let home_link = sandbox.path().join("home-link");
+    symlink(&real_home, &home_link).unwrap();
+
+    let wt_path = wt_new(&home_link, &repo, "symlink-home-prune");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&repo, &["merge", "symlink-home-prune"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .env("HOME", &home_link)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should remove merged worktree with symlinked HOME: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "merged worktree should be removed");
+    assert!(
+        !parent_dir.exists(),
+        "managed parent should be removed when HOME resolves through a symlink"
+    );
+    assert_branch_absent(&repo, "symlink-home-prune");
+}
+
 #[test]
 fn skips_squash_merged_worktree() {
     let (home, repo, _origin) = setup_with_origin();

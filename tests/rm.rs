@@ -1,6 +1,8 @@
 pub mod common;
 
 use common::*;
+#[cfg(unix)]
+use tempfile::TempDir;
 
 #[test]
 fn removes_worktree_and_branch() {
@@ -389,6 +391,44 @@ fn preserves_managed_parent_when_cwd_is_inside_parent() {
         "managed parent directory should be preserved when cwd is inside it"
     );
     assert_branch_absent(&repo, "cwd-parent-guard");
+}
+
+#[cfg(unix)]
+#[test]
+fn removes_managed_parent_when_home_is_symlinked() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = TempDir::new().unwrap();
+    let real_home = sandbox.path().join("real-home");
+    std::fs::create_dir(&real_home).unwrap();
+
+    let repo = real_home.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+
+    let home_link = sandbox.path().join("home-link");
+    symlink(&real_home, &home_link).unwrap();
+
+    let wt_path = wt_new(&home_link, &repo, "symlink-home-rm");
+    let parent_dir = wt_path.parent().unwrap().to_path_buf();
+
+    let output = wt_bin()
+        .args(["rm", "symlink-home-rm", "--force", "--repo"])
+        .arg(&repo)
+        .env("HOME", &home_link)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should remove worktree with symlinked HOME: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "worktree should be removed");
+    assert!(
+        !parent_dir.exists(),
+        "managed parent should be removed when HOME resolves through a symlink"
+    );
+    assert_branch_absent(&repo, "symlink-home-rm");
 }
 
 #[test]

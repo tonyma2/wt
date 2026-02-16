@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
-use crate::worktree::parse_porcelain;
+use crate::worktree;
 
 pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String> {
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
@@ -249,14 +249,6 @@ fn worktree_label(branch: &str) -> String {
     branch.to_string()
 }
 
-fn is_managed_worktree_dir(dir: &Path) -> bool {
-    let Ok(home) = std::env::var("HOME") else {
-        return false;
-    };
-    let wt_base = Path::new(&home).join(".wt").join("worktrees");
-    dir.starts_with(&wt_base) && dir.parent() == Some(wt_base.as_path())
-}
-
 fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
     let Some(cwd) = cwd else { return false };
     let Ok(canonical) = path.canonicalize() else {
@@ -283,7 +275,7 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
     let base_branch = base.as_deref().and_then(|b| b.strip_prefix("origin/"));
 
     let porcelain = git.list_worktrees()?;
-    let worktrees = parse_porcelain(&porcelain);
+    let worktrees = worktree::parse_porcelain(&porcelain);
     let candidates: Vec<PruneCandidate> = worktrees
         .iter()
         .skip(1)
@@ -373,7 +365,7 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
         }
 
         if let Some(parent) = candidate.path.parent()
-            && is_managed_worktree_dir(parent)
+            && worktree::is_managed_worktree_dir(parent)
             && !is_cwd_inside(parent, cwd)
             && fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
         {

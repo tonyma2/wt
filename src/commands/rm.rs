@@ -79,7 +79,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
     git.remove_worktree(&target, force)?;
 
     if let Some(parent) = target.parent()
-        && is_managed_worktree_dir(parent)
+        && worktree::is_managed_worktree_dir(parent)
         && !is_cwd_inside(parent, cwd.as_deref())
         && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
     {
@@ -97,14 +97,6 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         eprintln!("wt: removed worktree ({})", target.display());
     }
     Ok(())
-}
-
-fn is_managed_worktree_dir(dir: &Path) -> bool {
-    let Ok(home) = std::env::var("HOME") else {
-        return false;
-    };
-    let wt_base = Path::new(&home).join(".wt").join("worktrees");
-    dir.starts_with(&wt_base) && dir.parent() == Some(wt_base.as_path())
 }
 
 fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
