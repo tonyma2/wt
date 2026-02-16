@@ -52,4 +52,4 @@ Every new feature, bug fix, or behavioral change MUST include tests. Work is not
 
 ## Git Workflow
 
-Conventional commits, squash merge, branch naming: `<type>/<description>`. Full procedure in **[docs/git-workflow.md](docs/git-workflow.md)**.
+Conventional commits, squash merge, branch naming: `<type>/<kebab-description>`. Full procedure in **[docs/git-workflow.md](docs/git-workflow.md)**.
