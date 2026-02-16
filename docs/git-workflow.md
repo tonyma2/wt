@@ -34,10 +34,12 @@ docs: use homebrew zsh site-functions path for completions
 
 **Title** — the conventional commit subject. No `(#N)` suffix; that's added at merge. Keep the title accurate as scope evolves.
 
-**Body** — must include a `## Summary` (1-3 bullet points) and a `## Changes` section with a before/after table:
+**Body** — a `## Summary` heading with 1-2 sentences of motivation followed by a before/after table:
 
 ```markdown
-## Changes
+## Summary
+
+<motivation — why this change exists>
 
 | Before | After |
 |--------|-------|
@@ -62,7 +64,7 @@ Fix failures locally, commit as separate commits, push. The squash merge folds t
 
 ## PR Updates
 
-Commit and push. If the change type or scope shifted, update the title with `gh pr edit --title`. If the summary or Changes table shifted, update the body with `gh pr edit --body`.
+Commit and push. If the change type or scope shifted, update the title with `gh pr edit --title`. If the summary shifted, update the body with `gh pr edit --body`.
 
 Rebase when behind `main` — always `--force-with-lease`, never `--force`:
 
