@@ -99,7 +99,7 @@ fn random_id() -> Result<String, String> {
     Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
 }
 
-pub fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
+fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
     for _ in 0..10 {
         let id = random_id()?;
         let candidate = wt_base.join(id).join(repo_name);
@@ -108,6 +108,26 @@ pub fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
         }
     }
     Err("cannot generate unique worktree path".to_string())
+}
+
+pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
+    let repo_name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
+    let wt_base = Path::new(&home).join(".wt").join("worktrees");
+    let dest = unique_dest(&wt_base, repo_name)?;
+    std::fs::create_dir_all(&dest)
+        .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
+    Ok(dest)
+}
+
+pub fn cleanup_dest(dest: &Path) {
+    let _ = std::fs::remove_dir_all(dest);
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 fn canonicalize_or_self(path: &Path) -> PathBuf {

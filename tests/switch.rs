@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 pub mod common;
 
 use common::*;
 
-fn wt_switch(home: &std::path::Path, repo: &std::path::Path, name: &str) -> std::path::PathBuf {
+fn wt_switch(home: &std::path::Path, repo: &std::path::Path, name: &str) -> PathBuf {
     let output = run_wt(home, |cmd| {
         cmd.args(["switch", name, "--repo"]).arg(repo);
     });
@@ -12,6 +14,14 @@ fn wt_switch(home: &std::path::Path, repo: &std::path::Path, name: &str) -> std:
         String::from_utf8_lossy(&output.stderr),
     );
     parse_wt_new_path(&output)
+}
+
+fn dir_entry_count(dir: &std::path::Path) -> usize {
+    if dir.exists() {
+        std::fs::read_dir(dir).unwrap().count()
+    } else {
+        0
+    }
 }
 
 #[test]
@@ -26,11 +36,8 @@ fn switch_returns_existing_worktree_path() {
     assert!(output.status.success());
     assert_stderr_empty(&output);
 
-    let switch_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert_eq!(
-        canonical(&std::path::PathBuf::from(&switch_path)),
-        canonical(&path),
-    );
+    let switch_path = parse_wt_new_path(&output);
+    assert_eq!(canonical(&switch_path), canonical(&path));
 }
 
 #[test]
@@ -46,9 +53,12 @@ fn switch_checks_out_existing_branch() {
     assert!(output.status.success());
     assert_stderr_exact(&output, "wt: checking out 'feat/checkout-me'\n");
 
-    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = std::path::PathBuf::from(&path_str);
-    assert!(path.exists(), "worktree path should exist: {path_str}");
+    let path = parse_wt_new_path(&output);
+    assert!(
+        path.exists(),
+        "worktree path should exist: {}",
+        path.display()
+    );
     assert_branch_present(&repo, "feat/checkout-me");
 }
 
@@ -63,9 +73,12 @@ fn switch_creates_new_branch() {
     assert!(output.status.success());
     assert_stderr_exact(&output, "wt: creating branch 'feat/brand-new'\n");
 
-    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = std::path::PathBuf::from(&path_str);
-    assert!(path.exists(), "worktree path should exist: {path_str}");
+    let path = parse_wt_new_path(&output);
+    assert!(
+        path.exists(),
+        "worktree path should exist: {}",
+        path.display()
+    );
     assert_branch_present(&repo, "feat/brand-new");
 }
 
@@ -85,9 +98,12 @@ fn switch_checks_out_remote_branch() {
     assert!(output.status.success());
     assert_stderr_exact(&output, "wt: checking out 'feat/remote-only'\n");
 
-    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = std::path::PathBuf::from(&path_str);
-    assert!(path.exists(), "worktree path should exist: {path_str}");
+    let path = parse_wt_new_path(&output);
+    assert!(
+        path.exists(),
+        "worktree path should exist: {}",
+        path.display()
+    );
 }
 
 #[test]
@@ -102,11 +118,8 @@ fn switch_is_idempotent() {
     assert!(output.status.success());
     assert_stderr_empty(&output);
 
-    let second_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert_eq!(
-        canonical(&std::path::PathBuf::from(&second_path)),
-        canonical(&first_path),
-    );
+    let second_path = parse_wt_new_path(&output);
+    assert_eq!(canonical(&second_path), canonical(&first_path));
 }
 
 #[test]
@@ -115,8 +128,7 @@ fn switch_errors_on_ambiguous_name() {
 
     let wt1_path = wt_new(home.path(), &repo, "feat/ambig");
 
-    // Manually force the second worktree onto the same branch by using
-    // git worktree add with --force (bypasses the "already checked out" guard).
+    // --force bypasses the "already checked out" guard
     let wt2_dir = home.path().join(".wt").join("worktrees").join("manual");
     std::fs::create_dir_all(&wt2_dir).unwrap();
     assert_git_success_with(&repo, |cmd| {
@@ -130,13 +142,17 @@ fn switch_errors_on_ambiguous_name() {
     });
 
     assert_exit_code(&output, 1);
+    assert_stdout_empty(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("ambiguous"),
         "expected 'ambiguous' in stderr, got: {stderr}",
     );
+    assert!(
+        stderr.contains("wt rm"),
+        "expected actionable guidance in stderr, got: {stderr}",
+    );
 
-    // Cleanup: remove the manual worktree so temp dir cleanup doesn't fail
     assert_git_success_with(&repo, |cmd| {
         cmd.args(["worktree", "remove", "--force"]).arg(&wt2_dir);
     });
@@ -156,11 +172,8 @@ fn switch_alias_works() {
     assert!(output.status.success());
     assert_stderr_exact(&output, "wt: creating branch 'feat/alias-test'\n");
 
-    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(
-        std::path::Path::new(&path_str).exists(),
-        "worktree path should exist",
-    );
+    let path = parse_wt_new_path(&output);
+    assert!(path.exists(), "worktree path should exist");
 }
 
 #[test]
@@ -168,34 +181,18 @@ fn switch_cleans_up_on_failure() {
     let (home, repo) = setup();
 
     let wt_dir = home.path().join(".wt").join("worktrees");
-    let before: Vec<_> = if wt_dir.exists() {
-        std::fs::read_dir(&wt_dir)
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .collect()
-    } else {
-        vec![]
-    };
+    let before = dir_entry_count(&wt_dir);
 
-    // Use an invalid refname that git will reject as a branch name
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["switch", "bad:name", "--repo"]).arg(&repo);
     });
 
     assert!(!output.status.success());
-
-    let after: Vec<_> = if wt_dir.exists() {
-        std::fs::read_dir(&wt_dir)
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .collect()
-    } else {
-        vec![]
-    };
+    assert_stdout_empty(&output);
 
     assert_eq!(
-        before.len(),
-        after.len(),
+        before,
+        dir_entry_count(&wt_dir),
         "no new directories should remain after failed switch",
     );
 }

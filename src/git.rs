@@ -106,15 +106,25 @@ impl Git {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
-    pub fn has_remote_branch(&self, name: &str) -> bool {
-        let output = self.cmd().args(["remote"]).stderr(Stdio::null()).output();
-        let Ok(output) = output else { return false };
+    pub fn ref_or_branch_exists(&self, name: &str) -> Result<bool, String> {
+        Ok(self.has_local_branch(name)
+            || self.rev_resolves(name)
+            || self.has_remote_branch(name)?)
+    }
+
+    fn has_remote_branch(&self, name: &str) -> Result<bool, String> {
+        let output = self
+            .cmd()
+            .args(["remote"])
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git remote: {e}"))?;
         if !output.status.success() {
-            return false;
+            return Err(format!("cannot list remotes: {}", stderr_msg(&output)));
         }
-        String::from_utf8_lossy(&output.stdout)
+        Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
-            .any(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}")))
+            .any(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}"))))
     }
 
     pub fn add_worktree(
@@ -250,7 +260,7 @@ impl Git {
             .is_ok_and(|s| s.success())
     }
 
-    pub(crate) fn rev_resolves(&self, refname: &str) -> bool {
+    fn rev_resolves(&self, refname: &str) -> bool {
         self.cmd()
             .args(["rev-parse", "--verify", "--quiet", refname])
             .stdout(Stdio::null())
