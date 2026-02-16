@@ -6,7 +6,7 @@
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow, commands, test harness
 - **[docs/decisions.md](docs/decisions.md)** — intentional choices that look improvable but aren't (read before refactoring)
-- **[docs/git-workflow.md](docs/git-workflow.md)** — commits, PRs, CI, merging
+- **[docs/git-workflow.md](docs/git-workflow.md)** — commits, PRs, CI, merging (read before any git operation)
 
 ## Build & Test
 
@@ -50,6 +50,3 @@ Every new feature, bug fix, or behavioral change MUST include tests. Work is not
 - **Unit tests**: inline under `#[cfg(test)] mod tests` for pure parsing/logic
 - **No mocking**: tests use real git repos in temp directories. Do not introduce mock layers (see [decisions.md](docs/decisions.md))
 
-## Git Workflow
-
-Conventional commits, squash merge, branch naming: `<type>/<kebab-description>`. Full procedure in **[docs/git-workflow.md](docs/git-workflow.md)**.
