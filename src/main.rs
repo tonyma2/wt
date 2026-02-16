@@ -27,6 +27,7 @@ fn main() {
             repo,
         } => commands::prune::run(*dry_run, *gone, repo.as_deref()),
         Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
+        Command::Switch { name, repo } => commands::switch::run(name, repo.as_deref()),
         Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
     };
 

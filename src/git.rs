@@ -106,6 +106,19 @@ impl Git {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
+    pub fn has_remote_branch(&self, name: &str) -> bool {
+        let output = self
+            .cmd()
+            .args([
+                "for-each-ref",
+                "--format=%(refname)",
+                &format!("refs/remotes/*/{name}"),
+            ])
+            .stderr(Stdio::null())
+            .output();
+        output.is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
+    }
+
     pub fn add_worktree(
         &self,
         branch: &str,
@@ -239,7 +252,7 @@ impl Git {
             .is_ok_and(|s| s.success())
     }
 
-    fn rev_resolves(&self, refname: &str) -> bool {
+    pub(crate) fn rev_resolves(&self, refname: &str) -> bool {
         self.cmd()
             .args(["rev-parse", "--verify", "--quiet", refname])
             .stdout(Stdio::null())

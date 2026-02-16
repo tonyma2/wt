@@ -1,32 +1,29 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::commands::new::unique_dest;
 use crate::git::Git;
+use crate::worktree;
 
-pub(crate) fn random_id() -> Result<String, String> {
-    let mut buf = [0u8; 3];
-    getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
-    Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
-}
-
-pub(crate) fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
-    for _ in 0..10 {
-        let id = random_id()?;
-        let candidate = wt_base.join(id).join(repo_name);
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err("cannot generate unique worktree path".to_string())
-}
-
-pub fn run(
-    name: &str,
-    create: bool,
-    base: Option<&str>,
-    repo: Option<&Path>,
-) -> Result<(), String> {
+pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
+
+    let output = git.list_worktrees()?;
+    let worktrees = worktree::parse_porcelain(&output);
+    let matches = worktree::find_by_branch(&worktrees, name);
+
+    if matches.len() > 1 {
+        eprintln!("wt: ambiguous name '{name}'; matches:");
+        for m in &matches {
+            eprintln!("  - {}", m.path.display());
+        }
+        return Err("multiple worktrees match; specify the full branch name".into());
+    }
+
+    if matches.len() == 1 {
+        println!("{}", matches[0].path.display());
+        return Ok(());
+    }
 
     let repo_name = repo_root
         .file_name()
@@ -39,14 +36,11 @@ pub fn run(
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
 
+    let create =
+        !git.has_local_branch(name) && !git.rev_resolves(name) && !git.has_remote_branch(name);
+
     let result = if create {
-        if git.has_local_branch(name) {
-            Err(format!(
-                "cannot create branch '{name}': already exists; use 'wt new {name}'"
-            ))
-        } else {
-            git.add_worktree(name, &dest, base)
-        }
+        git.add_worktree(name, &dest, None)
     } else {
         git.checkout_worktree(name, &dest)
     };

@@ -113,6 +113,22 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
+    /// Switch to a worktree, creating one if needed
+    #[command(
+        visible_alias = "s",
+        long_about = "Switch to a worktree, creating one if needed.\n\
+            If a worktree already exists for the branch, prints its path.\n\
+            If a branch or ref exists but has no worktree, checks it out into a new one.\n\
+            If the name doesn't exist at all, creates a new branch from HEAD.",
+        after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  cd \"$(wt switch feat/login)\""
+    )]
+    Switch {
+        /// Branch name or ref
+        name: String,
+        /// Repository path
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
     /// Link files from the primary worktree into linked worktrees
     #[command(
         visible_alias = "ln",
