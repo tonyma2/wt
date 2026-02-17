@@ -6,17 +6,17 @@
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow, commands, test harness
 - **[docs/decisions.md](docs/decisions.md)** — intentional choices that look improvable but aren't (read before refactoring)
-- **[docs/git-workflow.md](docs/git-workflow.md)** — commits, PRs, CI, merging
+- **[docs/git-workflow.md](docs/git-workflow.md)** — commits, PRs, merging (read before any git operation)
 
 ## Build & Test
 
 ```sh
-cargo build                       # compile
-cargo test                        # all tests (unit + integration)
-cargo test --test new             # one integration test file
-cargo test --test new -- create   # filter by test name
-cargo fmt --check                 # formatting
-cargo clippy -- -D warnings       # lints
+cargo build                                # compile
+cargo test                                 # all tests (unit + integration)
+cargo test --test new                      # one integration test file
+cargo test --test new -- create            # filter by test name
+cargo fmt                                  # formatting
+cargo clippy --all-targets -- -D warnings  # lints
 ```
 
 ## Structure
@@ -28,8 +28,6 @@ cargo clippy -- -D warnings       # lints
 
 - Follow Rust 2024 conventions unless there is a strong reason not to
 - Self-documenting code — no comments unless explaining a non-obvious *why*
-- No doc comments except in `cli.rs` (clap derives help text from `///`)
-- `Result<(), String>` everywhere — no error crates. Errors are human-readable strings
 - Combinators (`map_err`, `and_then`, `is_ok_and`) over match when clearer
 - `let`-chains for multi-condition guards
 - Bool struct fields have no `is_` prefix — `bare`, `locked`, `prunable`
@@ -50,6 +48,3 @@ Every new feature, bug fix, or behavioral change MUST include tests. Work is not
 - **Unit tests**: inline under `#[cfg(test)] mod tests` for pure parsing/logic
 - **No mocking**: tests use real git repos in temp directories. Do not introduce mock layers (see [decisions.md](docs/decisions.md))
 
-## Git Workflow
-
-Conventional commits, squash merge, branch naming: `<type>/<kebab-description>`. Full procedure in **[docs/git-workflow.md](docs/git-workflow.md)**.

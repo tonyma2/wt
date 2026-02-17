@@ -22,6 +22,10 @@ Shell wrappers depend on `cd "$(wt new ...)"` capturing stdout as a path. Any no
 
 Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust. **Caveat:** the replacement strings are coupled to the `///` help text on the `name` and `names` args in `cli.rs`. Changing those docstrings silently degrades completion. The unit test `zsh_path_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
 
+## Do not add doc comments outside `cli.rs`
+
+Clap derives `--help` text from `///` doc comments on CLI structs and fields. Adding doc comments elsewhere sets a false expectation that the codebase documents public APIs — it doesn't. Code is self-documenting; inline comments explain non-obvious *why*, not *what*.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.

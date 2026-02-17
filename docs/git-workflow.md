@@ -1,6 +1,6 @@
 # Git Workflow
 
-Agents own the ceremony — commits, PRs, CI. Humans own the merge decision.
+Agents own the ceremony — commits, PRs. The human owns the merge decision.
 
 ## Branches
 
@@ -8,7 +8,7 @@ Branch name: `<type>/<kebab-description>` (e.g. `feat/prune-locked`, `fix/path-r
 
 ## Commits
 
-Conventional commits — imperative mood, lowercase, no period.
+Conventional commits — imperative mood, lowercase, no period. No additional description in the commit body unless the subject line alone doesn't capture the change.
 
 ```
 <type>[(<scope>)][!]: <description>
@@ -30,14 +30,18 @@ fix: warn on link conflicts instead of silently skipping
 docs: use homebrew zsh site-functions path for completions
 ```
 
+One logical change per commit.
+
 ## Pull Requests
 
 **Title** — the conventional commit subject. No `(#N)` suffix; that's added at merge. Keep the title accurate as scope evolves.
 
-**Body** — must include a `## Summary` (1-3 bullet points) and a `## Changes` section with a before/after table:
+**Body** — a `## Summary` heading with 1-2 sentences of motivation followed by a before/after table:
 
 ```markdown
-## Changes
+## Summary
+
+<motivation — why this change exists>
 
 | Before | After |
 |--------|-------|
@@ -47,40 +51,28 @@ docs: use homebrew zsh site-functions path for completions
 - One row per user-visible behavioral change — skip internal refactors
 - Describe behaviors, not code (`prune ignores locked worktrees` not `added if locked { continue }`)
 
-## CI
-
-All four checks must pass before merge:
-
-| Job        | Command                                                              |
-|------------|----------------------------------------------------------------------|
-| **fmt**    | `cargo fmt --check`                                                  |
-| **clippy** | `cargo clippy --locked --all-targets --all-features -- -D warnings`  |
-| **test**   | `cargo test --locked`                                                |
-| **build**  | `cargo build --locked`                                               |
-
-Fix failures locally, commit as separate commits, push. The squash merge folds them together.
+**Creation** — push with `git push -u origin HEAD`, then `gh pr create`. Post the PR URL back to the human and end your turn.
 
 ## PR Updates
 
-Commit and push. If the change type or scope shifted, update the title with `gh pr edit --title`. If the summary or Changes table shifted, update the body with `gh pr edit --body`.
+Commit and push. If the change type or scope shifted, update the title with `gh pr edit --title`. If the summary shifted, update the body with `gh pr edit --body`.
 
 Rebase when behind `main` — always `--force-with-lease`, never `--force`:
 
 ```sh
-git fetch origin main
-git rebase origin/main
+git pull --rebase origin main
 git push --force-with-lease
 ```
 
 ## Review
 
-After CI passes, do not merge, close, or take further action on the PR. A human will review and either approve or request changes. If changes are requested, address them per [PR Updates](#pr-updates) and wait for the next review cycle. Only merge when the human explicitly asks.
+Do not merge or close the PR. The human will review and either approve or request changes. If changes are requested, address them per [PR Updates](#pr-updates) and end your turn. Only merge when the human explicitly asks.
 
 ## Merging
 
 Squash merge is the default. `gh pr merge --squash` uses the PR title as the commit subject and appends `(#N)` automatically.
 
-Always pass `--body` to prevent GitHub from concatenating all commit messages into the body. Use collected git trailers and `BREAKING CHANGE:` footers, or `--body ""` for a clean commit.
+Always pass `--body`: collect `Co-Authored-By` trailers and `BREAKING CHANGE:` footers from the PR's commits, or use `--body ""` if there are none.
 
 Before merging, check the PR title against all commits in the PR:
 
