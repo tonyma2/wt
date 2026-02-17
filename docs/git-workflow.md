@@ -8,7 +8,7 @@ Branch name: `<type>/<kebab-description>` (e.g. `feat/prune-locked`, `fix/path-r
 
 ## Commits
 
-Conventional commits — imperative mood, lowercase, no period.
+Conventional commits — imperative mood, lowercase, no period. No additional description in the commit body unless the subject line alone doesn't capture the change.
 
 ```
 <type>[(<scope>)][!]: <description>
