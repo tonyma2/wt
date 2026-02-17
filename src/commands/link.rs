@@ -66,25 +66,24 @@ fn validate_path(file: &str) -> Result<(), String> {
         return Err(format!("path must be relative: {file}"));
     }
 
-    for component in path.components() {
-        if component == std::path::Component::ParentDir {
-            return Err(format!("path must not contain '..': {file}"));
-        }
+    if path
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!("path must not contain '..': {file}"));
     }
 
     Ok(())
 }
 
 fn is_expected_link(dest: &Path, source: &Path) -> bool {
-    dest.symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
-        && std::fs::read_link(dest).is_ok_and(|target| target == *source)
+    std::fs::read_link(dest).is_ok_and(|target| target == *source)
 }
 
 fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
     if dest
         .symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_dir() && !m.file_type().is_symlink())
+        .is_ok_and(|m| m.file_type().is_dir())
     {
         std::fs::remove_dir_all(dest)
     } else {

@@ -7,7 +7,7 @@ pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     if names.len() == 1 {
         return remove_one(&names[0], repo, force);
     }
-    let mut errors = 0u32;
+    let mut errors = 0usize;
     for name in names {
         if let Err(e) = remove_one(name, repo, force) {
             eprintln!("wt: {e}");
@@ -40,9 +40,9 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         }
     }
 
-    let branch = wt.branch.as_deref().map(str::to_string);
+    let branch = wt.branch.clone();
 
-    if let Some(ref branch) = branch {
+    if let Some(branch) = &branch {
         if !git.has_local_branch(branch) {
             return Err(format!("local branch not found: {branch}"));
         }
@@ -56,7 +56,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
 
-    if is_cwd_inside(&target, cwd.as_deref()) {
+    if worktree::is_cwd_inside(&target, cwd.as_deref()) {
         return Err(format!(
             "cannot remove {}: current directory is inside the worktree",
             target.display()
@@ -67,7 +67,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         if git.is_dirty(&target) {
             return Err("worktree has local changes; use --force to remove".into());
         }
-        if let Some(ref branch) = branch
+        if let Some(branch) = &branch
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
@@ -80,13 +80,13 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     if let Some(parent) = target.parent()
         && worktree::is_managed_worktree_dir(parent)
-        && !is_cwd_inside(parent, cwd.as_deref())
+        && !worktree::is_cwd_inside(parent, cwd.as_deref())
         && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
     {
         let _ = std::fs::remove_dir(parent);
     }
 
-    if let Some(ref branch) = branch {
+    if let Some(branch) = &branch {
         git.delete_branch(branch, force)?;
         eprintln!(
             "wt: removed worktree and branch '{}' ({})",
@@ -97,11 +97,6 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         eprintln!("wt: removed worktree ({})", target.display());
     }
     Ok(())
-}
-
-fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
-    let Some(cwd) = cwd else { return false };
-    cwd == path || cwd.starts_with(path)
 }
 
 fn resolve_target(
@@ -173,11 +168,9 @@ fn load_worktrees(target: &Path) -> Result<(PathBuf, Vec<Worktree>), String> {
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    let admin = worktrees
-        .iter()
-        .find(|wt| wt.path != target)
-        .or(worktrees.first())
+    let primary = worktrees
+        .first()
         .ok_or_else(|| format!("cannot resolve repository for: {}", target.display()))?;
 
-    Ok((admin.path.clone(), worktrees))
+    Ok((primary.path.clone(), worktrees))
 }

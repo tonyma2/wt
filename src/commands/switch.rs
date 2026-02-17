@@ -10,9 +10,12 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    let all_matches = worktree::find_by_branch(&worktrees, name);
-    let has_prunable = all_matches.iter().any(|wt| wt.prunable);
-    let matches = worktree::find_live_by_branch(&worktrees, name);
+    let branch_matches: Vec<_> = worktrees
+        .iter()
+        .filter(|wt| wt.branch.as_deref() == Some(name))
+        .collect();
+    let has_prunable = branch_matches.iter().any(|wt| wt.prunable);
+    let matches: Vec<_> = branch_matches.into_iter().filter(|wt| wt.live()).collect();
 
     match matches.as_slice() {
         [one] => {

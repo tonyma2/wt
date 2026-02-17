@@ -52,40 +52,32 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
         }
     }
 
-    let orphans = find_orphans(&wt_root);
-
-    if !orphans.is_empty() {
-        let orphans: Vec<PathBuf> = orphans
-            .into_iter()
-            .filter(|orphan| {
-                if let Some(cwd) = &cwd
-                    && let Ok(canonical) = orphan.canonicalize()
-                    && (cwd == &canonical || cwd.starts_with(&canonical))
-                {
-                    let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
-                    eprintln!(
-                        "wt: skipping {} (orphan, current directory)",
-                        label.display()
-                    );
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        if dry_run {
-            for orphan in &orphans {
-                println!("{}", orphan.display());
-            }
+    let mut orphans = find_orphans(&wt_root);
+    orphans.retain(|orphan| {
+        if worktree::is_cwd_inside(orphan, cwd.as_deref()) {
+            let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
+            eprintln!(
+                "wt: skipping {} (orphan, current directory)",
+                label.display()
+            );
+            false
         } else {
-            for orphan in &orphans {
-                fs::remove_dir_all(orphan)
-                    .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
-                let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
-                eprintln!("wt: removed {} (orphan)", label.display());
-            }
-            cleanup_empty_parents(&orphans, &wt_root, cwd.as_deref());
+            true
         }
+    });
+
+    if dry_run {
+        for orphan in &orphans {
+            println!("{}", orphan.display());
+        }
+    } else {
+        for orphan in &orphans {
+            fs::remove_dir_all(orphan)
+                .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
+            let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
+            eprintln!("wt: removed {} (orphan)", label.display());
+        }
+        cleanup_empty_parents(&orphans, &wt_root, cwd.as_deref());
     }
 
     if errors > 0 {
@@ -177,7 +169,6 @@ fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
         }
 
         let path = entry.path();
-
         let dot_git = path.join(".git");
 
         if dot_git.is_file() {
@@ -227,10 +218,7 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
         if !is_empty {
             break;
         }
-        if let Some(cwd) = cwd
-            && let Ok(canonical) = dir.canonicalize()
-            && (cwd == canonical || cwd.starts_with(&canonical))
-        {
+        if worktree::is_cwd_inside(dir, cwd) {
             break;
         }
         if fs::remove_dir(dir).is_err() {
@@ -238,23 +226,9 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
         }
         let label = dir.strip_prefix(wt_root).unwrap_or(dir);
         eprintln!("wt: removed empty directory {}", label.display());
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => break,
-        }
+        let Some(p) = dir.parent() else { break };
+        dir = p;
     }
-}
-
-fn worktree_label(branch: &str) -> String {
-    branch.to_string()
-}
-
-fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
-    let Some(cwd) = cwd else { return false };
-    let Ok(canonical) = path.canonicalize() else {
-        return false;
-    };
-    cwd == canonical || cwd.starts_with(&canonical)
 }
 
 fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Result<(), String> {
@@ -274,14 +248,14 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
     };
     let base_branch = base.as_deref().and_then(|b| b.strip_prefix("origin/"));
 
-    let porcelain = git.list_worktrees()?;
-    let worktrees = worktree::parse_porcelain(&porcelain);
+    let output = git.list_worktrees()?;
+    let worktrees = worktree::parse_porcelain(&output);
     let candidates: Vec<PruneCandidate> = worktrees
         .iter()
         .skip(1)
         .filter_map(|wt| {
             let branch = wt.branch.as_ref()?;
-            if wt.locked || base_branch.is_some_and(|b| b == branch) {
+            if wt.locked || wt.prunable || base_branch.is_some_and(|b| b == branch) {
                 return None;
             }
 
@@ -342,9 +316,9 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
             "upstream gone"
         };
 
-        let label = worktree_label(&candidate.branch);
+        let label = &candidate.branch;
 
-        if is_cwd_inside(&candidate.path, cwd) {
+        if worktree::is_cwd_inside(&candidate.path, cwd) {
             eprintln!("wt: skipping {label} ({reason}, current directory)");
             continue;
         }
@@ -366,7 +340,7 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
 
         if let Some(parent) = candidate.path.parent()
             && worktree::is_managed_worktree_dir(parent)
-            && !is_cwd_inside(parent, cwd)
+            && !worktree::is_cwd_inside(parent, cwd)
             && fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
         {
             let _ = fs::remove_dir(parent);

@@ -19,10 +19,14 @@ impl Git {
         Self { repo: repo.into() }
     }
 
-    fn cmd(&self) -> Command {
+    fn cmd_in(path: &Path) -> Command {
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(&self.repo);
+        cmd.arg("-C").arg(path);
         cmd
+    }
+
+    fn cmd(&self) -> Command {
+        Self::cmd_in(&self.repo)
     }
 
     pub fn find_repo(path: Option<&Path>) -> Result<PathBuf, String> {
@@ -172,7 +176,7 @@ impl Git {
         if !output.status.success() {
             return Err(format!("cannot list worktrees: {}", stderr_msg(&output)));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     pub fn remove_worktree(&self, path: &Path, force: bool) -> Result<(), String> {
@@ -224,15 +228,16 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree prune: {e}"))?;
         if !output.status.success() {
-            return Err("cannot prune worktree metadata".into());
+            return Err(format!(
+                "cannot prune worktree metadata: {}",
+                stderr_msg(&output)
+            ));
         }
         Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 
     pub fn is_dirty(&self, worktree_path: &Path) -> bool {
-        Command::new("git")
-            .arg("-C")
-            .arg(worktree_path)
+        Self::cmd_in(worktree_path)
             .args(["status", "--porcelain", "--untracked-files=normal"])
             .stderr(Stdio::null())
             .output()
@@ -306,11 +311,7 @@ impl Git {
             return None;
         }
         let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if remote.is_empty() {
-            None
-        } else {
-            Some(remote)
-        }
+        (!remote.is_empty()).then_some(remote)
     }
 
     fn upstream_for(&self, refspec: &str) -> Option<String> {
@@ -320,10 +321,6 @@ impl Git {
             .output()
             .ok()?;
         let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if upstream.is_empty() {
-            None
-        } else {
-            Some(upstream)
-        }
+        (!upstream.is_empty()).then_some(upstream)
     }
 }

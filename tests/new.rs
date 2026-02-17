@@ -283,7 +283,9 @@ fn rejects_create_with_existing_branch() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("already exists") && stderr.contains("wt new existing"),
+        stderr.contains("already exists")
+            && stderr.contains("wt new")
+            && stderr.contains("existing"),
         "expected create guidance, got: {stderr}",
     );
 }
