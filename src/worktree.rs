@@ -11,6 +11,12 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+impl Worktree {
+    pub fn live(&self) -> bool {
+        !self.prunable && self.path.exists()
+    }
+}
+
 #[derive(Default)]
 struct PorcelainParser {
     path: Option<PathBuf>,
@@ -79,6 +85,13 @@ pub fn find_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Work
         .collect()
 }
 
+pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
+    worktrees
+        .iter()
+        .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
+        .collect()
+}
+
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
     worktrees.iter().find(|wt| wt.path == path)
 }
@@ -90,7 +103,7 @@ pub fn branch_checked_out_elsewhere(
 ) -> bool {
     worktrees
         .iter()
-        .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path)
+        .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path && wt.live())
 }
 
 fn random_id() -> Result<String, String> {

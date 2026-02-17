@@ -115,7 +115,7 @@ fn resolve_target(
         let git = Git::new(&repo_root);
         let output = git.list_worktrees()?;
         let worktrees = worktree::parse_porcelain(&output);
-        let matches = worktree::find_by_branch(&worktrees, name_or_path);
+        let matches = worktree::find_live_by_branch(&worktrees, name_or_path);
 
         if matches.len() == 1 {
             let target = matches[0].path.clone();

@@ -106,13 +106,10 @@ impl Git {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
-    pub fn ref_or_branch_exists(&self, name: &str) -> Result<bool, String> {
-        Ok(self.has_local_branch(name)
-            || self.rev_resolves(name)
-            || self.has_remote_branch(name)?)
-    }
-
-    fn has_remote_branch(&self, name: &str) -> Result<bool, String> {
+    pub fn remotes_with_branch(&self, name: &str) -> Result<Vec<String>, String> {
+        if name == "HEAD" {
+            return Ok(vec![]);
+        }
         let output = self
             .cmd()
             .args(["remote"])
@@ -124,7 +121,9 @@ impl Git {
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
-            .any(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}"))))
+            .filter(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}")))
+            .map(str::to_string)
+            .collect())
     }
 
     pub fn add_worktree(
@@ -260,7 +259,7 @@ impl Git {
             .is_ok_and(|s| s.success())
     }
 
-    fn rev_resolves(&self, refname: &str) -> bool {
+    pub fn rev_resolves(&self, refname: &str) -> bool {
         self.cmd()
             .args(["rev-parse", "--verify", "--quiet", refname])
             .stdout(Stdio::null())
