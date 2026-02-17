@@ -11,6 +11,12 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+impl Worktree {
+    pub fn live(&self) -> bool {
+        !self.prunable && self.path.exists()
+    }
+}
+
 #[derive(Default)]
 struct PorcelainParser {
     path: Option<PathBuf>,
@@ -79,6 +85,13 @@ pub fn find_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Work
         .collect()
 }
 
+pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
+    worktrees
+        .iter()
+        .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
+        .collect()
+}
+
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
     worktrees.iter().find(|wt| wt.path == path)
 }
@@ -90,7 +103,44 @@ pub fn branch_checked_out_elsewhere(
 ) -> bool {
     worktrees
         .iter()
-        .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path)
+        .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path && wt.live())
+}
+
+fn random_id() -> Result<String, String> {
+    let mut buf = [0u8; 3];
+    getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
+    Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))
+}
+
+fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
+    for _ in 0..10 {
+        let id = random_id()?;
+        let candidate = wt_base.join(id).join(repo_name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("cannot generate unique worktree path".to_string())
+}
+
+pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
+    let repo_name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
+    let wt_base = Path::new(&home).join(".wt").join("worktrees");
+    let dest = unique_dest(&wt_base, repo_name)?;
+    std::fs::create_dir_all(&dest)
+        .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
+    Ok(dest)
+}
+
+pub fn cleanup_dest(dest: &Path) {
+    let _ = std::fs::remove_dir_all(dest);
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 fn canonicalize_or_self(path: &Path) -> PathBuf {

@@ -9,7 +9,7 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
-    let matches = worktree::find_by_branch(&worktrees, name);
+    let matches = worktree::find_live_by_branch(&worktrees, name);
 
     if matches.is_empty() {
         return Err(format!("no worktree found for branch: {name}"));

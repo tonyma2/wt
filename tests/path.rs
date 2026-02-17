@@ -38,6 +38,30 @@ fn errors_when_branch_has_no_worktree() {
 }
 
 #[test]
+fn skips_prunable_worktree() {
+    let (home, repo) = setup();
+    let live_path = wt_new(home.path(), &repo, "feat/stale-path");
+
+    // Create a second worktree for the same branch, then delete it
+    let stale_dir = home.path().join(".wt").join("worktrees").join("stale-path");
+    std::fs::create_dir_all(&stale_dir).unwrap();
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "--force", "--quiet"])
+            .arg(&stale_dir)
+            .arg("feat/stale-path");
+    });
+    std::fs::remove_dir_all(&stale_dir).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "feat/stale-path", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    assert_eq!(canonical(&reported), canonical(&live_path));
+}
+
+#[test]
 fn errors_when_branch_name_is_ambiguous() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "shared");
