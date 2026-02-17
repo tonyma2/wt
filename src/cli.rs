@@ -124,7 +124,7 @@ pub enum Command {
         after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  cd \"$(wt switch feat/login)\""
     )]
     Switch {
-        /// Branch name
+        /// Worktree branch name
         name: String,
         /// Repository path
         #[arg(long)]
