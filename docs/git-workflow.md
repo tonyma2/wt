@@ -72,7 +72,7 @@ Do not merge or close the PR. The human will review and either approve or reques
 
 Squash merge is the default. `gh pr merge --squash` uses the PR title as the commit subject and appends `(#N)` automatically.
 
-Always pass `--body` to prevent GitHub from concatenating all commit messages into the body. Use collected git trailers and `BREAKING CHANGE:` footers, or `--body ""` for a clean commit.
+Always pass `--body`: collect `Co-Authored-By` trailers and `BREAKING CHANGE:` footers from the PR's commits, or use `--body ""` if there are none.
 
 Before merging, check the PR title against all commits in the PR:
 
