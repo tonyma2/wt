@@ -170,7 +170,7 @@ mod tests {
             script
                 .matches(":name -- Worktree branch name:_wt_path_branches")
                 .count(),
-            2
+            4
         );
         assert_eq!(
             script
