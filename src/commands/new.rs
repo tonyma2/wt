@@ -15,8 +15,11 @@ pub fn run(
 
     let result = if create {
         if git.has_local_branch(name) {
+            let repo_flag = repo
+                .map(|r| format!(" --repo {}", r.display()))
+                .unwrap_or_default();
             Err(format!(
-                "cannot create branch '{name}': already exists; use 'wt new {name}'"
+                "cannot create branch '{name}': already exists; use 'wt new{repo_flag} {name}'"
             ))
         } else {
             git.add_worktree(name, &dest, base)

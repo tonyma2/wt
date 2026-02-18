@@ -1379,7 +1379,7 @@ fn reports_repo_prune_failures_with_aggregate_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(&format!(
-            "wt: cannot prune {}: cannot prune worktree metadata\n",
+            "wt: cannot prune {}: cannot prune worktree metadata",
             broken_repo.display()
         )),
         "expected per-repo prune error, got: {stderr}",

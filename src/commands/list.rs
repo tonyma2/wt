@@ -1,4 +1,3 @@
-use std::fmt::Write;
 use std::path::Path;
 
 use crate::git::Git;
@@ -9,13 +8,13 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
 
+    let output = git.list_worktrees()?;
+
     if porcelain {
-        let output = git.list_worktrees()?;
         print!("{output}");
         return Ok(());
     }
 
-    let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
     let cwd = std::env::current_dir()
         .ok()
@@ -49,10 +48,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     );
 
     for wt in &worktrees {
-        let is_current = cwd.as_ref().is_some_and(|c| {
-            let wt_canon = std::fs::canonicalize(&wt.path).unwrap_or_else(|_| wt.path.clone());
-            c == &wt_canon || c.starts_with(&wt_canon)
-        });
+        let is_current = !wt.prunable && worktree::is_cwd_inside(&wt.path, cwd.as_deref());
         let cur_marker = if is_current { "*" } else { "" };
 
         let branch = wt.branch.as_deref().unwrap_or("(detached)");
@@ -85,17 +81,19 @@ fn worktree_status(git: &Git, wt: &Worktree) -> String {
     }
 
     let mut s = String::new();
-    if git.is_dirty(&wt.path) {
-        s.push('*');
-    }
-    if let Some(branch) = &wt.branch
-        && let Some((ahead, behind)) = git.ahead_behind(branch)
-    {
-        if ahead > 0 {
-            write!(s, "+{ahead}").unwrap();
+    if !wt.prunable {
+        if git.is_dirty(&wt.path) {
+            s.push('*');
         }
-        if behind > 0 {
-            write!(s, "-{behind}").unwrap();
+        if let Some(branch) = &wt.branch
+            && let Some((ahead, behind)) = git.ahead_behind(branch)
+        {
+            if ahead > 0 {
+                s.push_str(&format!("+{ahead}"));
+            }
+            if behind > 0 {
+                s.push_str(&format!("-{behind}"));
+            }
         }
     }
 
@@ -118,27 +116,28 @@ fn worktree_status(git: &Git, wt: &Worktree) -> String {
 }
 
 fn trunc(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else if max <= 3 {
-        chars[..max].iter().collect()
-    } else {
-        let mut out: String = chars[..max - 3].iter().collect();
-        out.push_str("...");
-        out
+    if s.chars().count() <= max {
+        return s.to_string();
     }
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
+    format!("{}...", &s[..end])
 }
 
 fn trunc_tail(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else if max <= 3 {
-        chars[chars.len() - max..].iter().collect()
-    } else {
-        let mut out = String::from("...");
-        out.extend(&chars[chars.len() - max + 3..]);
-        out
+    let char_count = s.chars().count();
+    if char_count <= max {
+        return s.to_string();
     }
+    if max <= 3 {
+        let start = s.char_indices().nth(char_count - max).map_or(0, |(i, _)| i);
+        return s[start..].to_string();
+    }
+    let start = s
+        .char_indices()
+        .nth(char_count - max + 3)
+        .map_or(0, |(i, _)| i);
+    format!("...{}", &s[start..])
 }

@@ -3,12 +3,12 @@ use clap::CommandFactory;
 use crate::cli::Cli;
 
 pub fn run(shell: clap_complete::Shell) -> Result<(), String> {
-    let script = render(shell);
+    let script = render(shell)?;
     print!("{script}");
     Ok(())
 }
 
-fn render(shell: clap_complete::Shell) -> String {
+fn render(shell: clap_complete::Shell) -> Result<String, String> {
     let mut out = Vec::new();
     clap_complete::generate(shell, &mut Cli::command(), "wt", &mut out);
     let mut script = String::from_utf8_lossy(&out).into_owned();
@@ -136,17 +136,33 @@ _wt_remove_targets() {
         } else {
             script.push_str(helper);
         }
+        const NAME_TARGET: &str = ":name -- Worktree branch name:_default";
+        const NAMES_TARGET: &str = "*::names -- Branch names or paths:_default";
+        if !script.contains(NAME_TARGET) {
+            return Err(
+                "zsh completion generation failed: clap_complete output format changed \
+                 (name target not found); please report this bug"
+                    .into(),
+            );
+        }
+        if !script.contains(NAMES_TARGET) {
+            return Err(
+                "zsh completion generation failed: clap_complete output format changed \
+                 (names target not found); please report this bug"
+                    .into(),
+            );
+        }
         script = script.replace(
-            ":name -- Worktree branch name:_default",
+            NAME_TARGET,
             ":name -- Worktree branch name:_wt_path_branches",
         );
         script = script.replace(
-            "*::names -- Branch names or paths:_default",
+            NAMES_TARGET,
             "*::names -- Branch names or paths:_wt_remove_targets",
         );
     }
 
-    script
+    Ok(script)
 }
 
 #[cfg(test)]
@@ -155,7 +171,7 @@ mod tests {
 
     #[test]
     fn zsh_path_completion_is_dynamic() {
-        let script = render(clap_complete::Shell::Zsh);
+        let script = render(clap_complete::Shell::Zsh).unwrap();
         assert!(script.contains("_wt_path_branches()"));
         assert!(script.contains("_wt_remove_targets()"));
         assert!(script.contains("_wt_collect_worktree_rows()"));
@@ -183,7 +199,7 @@ mod tests {
 
     #[test]
     fn bash_completion_does_not_include_zsh_helper() {
-        let script = render(clap_complete::Shell::Bash);
+        let script = render(clap_complete::Shell::Bash).unwrap();
         assert!(!script.contains("_wt_path_branches()"));
     }
 }

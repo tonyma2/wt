@@ -30,20 +30,17 @@ struct PorcelainParser {
 
 impl PorcelainParser {
     fn flush(&mut self, out: &mut Vec<Worktree>) {
-        if let Some(path) = self.path.take() {
+        let parser = std::mem::take(self);
+        if let Some(path) = parser.path {
             out.push(Worktree {
                 path,
-                head: std::mem::take(&mut self.head),
-                branch: self.branch.take(),
-                bare: self.bare,
-                detached: self.detached,
-                locked: self.locked,
-                prunable: self.prunable,
+                head: parser.head,
+                branch: parser.branch,
+                bare: parser.bare,
+                detached: parser.detached,
+                locked: parser.locked,
+                prunable: parser.prunable,
             });
-            self.bare = false;
-            self.detached = false;
-            self.locked = false;
-            self.prunable = false;
         }
     }
 }
@@ -78,13 +75,6 @@ pub fn parse_porcelain(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
-pub fn find_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
-    worktrees
-        .iter()
-        .filter(|wt| wt.branch.as_deref() == Some(name))
-        .collect()
-}
-
 pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
     worktrees
         .iter()
@@ -94,6 +84,12 @@ pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a
 
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
     worktrees.iter().find(|wt| wt.path == path)
+}
+
+pub fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
+    let Some(cwd) = cwd else { return false };
+    let canonical = canonicalize_or_self(path);
+    cwd.starts_with(&canonical)
 }
 
 pub fn branch_checked_out_elsewhere(
@@ -120,7 +116,7 @@ fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
             return Ok(candidate);
         }
     }
-    Err("cannot generate unique worktree path".to_string())
+    Err("cannot generate unique worktree path".into())
 }
 
 pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
