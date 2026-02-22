@@ -15,6 +15,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
 │   ├── path.rs         Print worktree path by branch name
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
+│   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
 │   └── completions.rs  Generate shell completions (zsh gets dynamic branch completion)
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
@@ -62,6 +63,8 @@ Exceptions:
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
 
 **link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`.
+
+**unlink** — Removes symlinks from linked worktrees. Only removes symlinks that point to the primary worktree's copy of the file. Non-symlink files and symlinks pointing elsewhere are skipped with a warning unless `--force` is used.
 
 **completions** — Generates clap_complete output. For zsh, injects four custom functions (`_wt_collect_worktree_rows`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`) and patches the generated script via string replacement.
 

@@ -29,6 +29,9 @@ fn main() {
         Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
         Command::Switch { name, repo } => commands::switch::run(name, repo.as_deref()),
         Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
+        Command::Unlink { files, repo, force } => {
+            commands::unlink::run(files, repo.as_deref(), *force)
+        }
     };
 
     if let Err(e) = result {
