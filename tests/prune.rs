@@ -1417,3 +1417,80 @@ fn warns_and_skips_when_dot_git_file_is_malformed() {
         "malformed worktree directory should be skipped rather than removed"
     );
 }
+
+#[test]
+fn base_flag_overrides_default_branch() {
+    let (home, repo) = setup();
+
+    assert_git_success(&repo, &["checkout", "-b", "develop"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "develop commit"]);
+
+    let wt_path = wt_new(home.path(), &repo, "feat-base-test");
+    std::fs::write(wt_path.join("file.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "file.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "add file"]);
+
+    assert_git_success(&repo, &["merge", "feat-base-test"]);
+
+    // Without --base, prune cannot determine default branch (no origin) and skips
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        wt_path.exists(),
+        "without --base, worktree should be kept (no origin to detect default branch)"
+    );
+
+    // With --base develop, prune should detect the merge and remove
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .args(["--base", "develop"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "merged worktree should be removed with --base develop"
+    );
+    assert_branch_absent(&repo, "feat-base-test");
+}
+
+#[test]
+fn base_flag_with_global_prune() {
+    let (home, repo) = setup();
+
+    assert_git_success(&repo, &["checkout", "-b", "trunk"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "trunk commit"]);
+
+    let wt_path = wt_new(home.path(), &repo, "feat-trunk-test");
+    std::fs::write(wt_path.join("file.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "file.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "add file"]);
+
+    assert_git_success(&repo, &["merge", "feat-trunk-test"]);
+
+    let output = wt_bin()
+        .args(["prune", "--base", "trunk"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "merged worktree should be removed with --base trunk in global mode"
+    );
+}

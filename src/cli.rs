@@ -90,6 +90,9 @@ pub enum Command {
         /// Repository path (prune only this repo, skip orphan cleanup)
         #[arg(long)]
         repo: Option<PathBuf>,
+        /// Base branch for merged detection (e.g. develop, trunk)
+        #[arg(long)]
+        base: Option<String>,
     },
     /// Generate shell completions
     #[command(

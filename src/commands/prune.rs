@@ -5,7 +5,12 @@ use std::path::{Path, PathBuf};
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(
+    dry_run: bool,
+    gone: bool,
+    repo: Option<&Path>,
+    base: Option<&str>,
+) -> Result<(), String> {
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
 
     if let Some(repo_path) = repo {
@@ -15,7 +20,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
         if !output.is_empty() {
             eprintln!("{output}");
         }
-        prune_merged(&git, dry_run, gone, cwd.as_deref())?;
+        prune_merged(&git, dry_run, gone, cwd.as_deref(), base)?;
         return Ok(());
     }
 
@@ -46,7 +51,7 @@ pub fn run(dry_run: bool, gone: bool, repo: Option<&Path>) -> Result<(), String>
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref()) {
+        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref(), base) {
             eprintln!("wt: cannot prune merged in {}: {e}", repo_path.display());
             errors += 1;
         }
@@ -231,7 +236,13 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
     }
 }
 
-fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Result<(), String> {
+fn prune_merged(
+    git: &Git,
+    dry_run: bool,
+    gone: bool,
+    cwd: Option<&Path>,
+    base_override: Option<&str>,
+) -> Result<(), String> {
     struct PruneCandidate {
         branch: String,
         path: PathBuf,
@@ -239,11 +250,15 @@ fn prune_merged(git: &Git, dry_run: bool, gone: bool, cwd: Option<&Path>) -> Res
         remote: Option<String>,
     }
 
-    let base = match git.base_ref() {
-        Ok(base) => Some(base),
-        Err(e) => {
-            eprintln!("wt: {e}; skipping merged worktree pruning");
-            None
+    let base = if let Some(b) = base_override {
+        Some(b.to_string())
+    } else {
+        match git.base_ref() {
+            Ok(base) => Some(base),
+            Err(e) => {
+                eprintln!("wt: {e}; skipping merged worktree pruning");
+                None
+            }
         }
     };
     let base_branch = base.as_deref().and_then(|b| b.strip_prefix("origin/"));
