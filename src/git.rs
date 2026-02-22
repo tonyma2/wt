@@ -110,6 +110,21 @@ impl Git {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
+    pub fn local_branches(&self) -> Vec<String> {
+        let output = self
+            .cmd()
+            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+            .output()
+            .ok();
+        match output {
+            Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::to_string)
+                .collect(),
+            _ => vec![],
+        }
+    }
+
     pub fn remotes_with_branch(&self, name: &str) -> Result<Vec<String>, String> {
         if name == "HEAD" {
             return Ok(vec![]);

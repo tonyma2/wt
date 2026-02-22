@@ -14,8 +14,10 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
 │   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
 │   ├── path.rs         Print worktree path by branch name
+│   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   └── completions.rs  Generate shell completions (zsh gets dynamic branch completion)
+├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
 └── terminal.rs         Terminal width detection (COLUMNS env, ioctl fallback, then 132)
@@ -60,6 +62,8 @@ Exceptions:
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
+
+**switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. When creating a new branch, checks for similarly-named local branches using Levenshtein distance and errors with a suggestion if a close match is found. `-c`/`--create` bypasses the fuzzy check. Rejects non-branch refs (tags, SHAs).
 
 **link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`.
 

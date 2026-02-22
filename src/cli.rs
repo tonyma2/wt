@@ -119,13 +119,18 @@ pub enum Command {
         long_about = "Switch to a worktree, creating one if needed.\n\
             If a worktree already exists for the branch, prints its path.\n\
             If the branch exists (local or remote) but has no worktree, checks it out into a new one.\n\
-            If no branch with this name exists, creates one from HEAD.\n\
+            If no branch with this name exists and no similar branch exists, creates one from HEAD.\n\
+            If a similar branch name exists (possible typo), errors with a suggestion.\n\
+            Use --create to skip the typo check and force creation.\n\
             Non-branch refs (tags, SHAs) are rejected; use `wt new` instead.",
-        after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  cd \"$(wt switch feat/login)\""
+        after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  wt switch -c feat/new-branch\n  cd \"$(wt switch feat/login)\""
     )]
     Switch {
         /// Worktree branch name
         name: String,
+        /// Create a new branch, skipping the similar-name check
+        #[arg(short = 'c', long = "create")]
+        create: bool,
         /// Repository path
         #[arg(long)]
         repo: Option<PathBuf>,
