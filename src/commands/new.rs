@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::commands::link;
 use crate::git::Git;
 use crate::worktree;
 
@@ -38,6 +39,8 @@ pub fn run(
     } else {
         eprintln!("wt: checking out '{name}'");
     }
+
+    link::auto_link(&repo_root, &dest);
 
     println!("{}", dest.display());
     Ok(())

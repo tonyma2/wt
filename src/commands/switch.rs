@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::commands::link;
 use crate::git::Git;
 use crate::worktree;
 
@@ -82,6 +83,8 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     } else {
         eprintln!("wt: creating branch '{name}'");
     }
+
+    link::auto_link(&repo_root, &dest);
 
     println!("{}", dest.display());
     Ok(())

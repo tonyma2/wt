@@ -17,6 +17,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
 │   └── completions.rs  Generate shell completions (zsh gets dynamic branch completion)
+├── config.rs           Read/write ~/.wt/config TOML (auto-link persistence)
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
 └── terminal.rs         Terminal width detection (COLUMNS env, ioctl fallback, then 132)
@@ -45,7 +46,7 @@ Exceptions:
 
 ## Commands
 
-**new** — Resolves repo, builds destination path as `~/.wt/worktrees/<random-id>/<repo>`. The 6-char hex random ID ensures unique paths regardless of branch name. Validates (with `-c`) that the branch doesn't already exist. Creates a new branch (`git worktree add -b`) or checks out an existing ref (`git worktree add`). Prints the path to stdout.
+**new** — Resolves repo, builds destination path as `~/.wt/worktrees/<random-id>/<repo>`. The 6-char hex random ID ensures unique paths regardless of branch name. Validates (with `-c`) that the branch doesn't already exist. Creates a new branch (`git worktree add -b`) or checks out an existing ref (`git worktree add`). Auto-links files from `~/.wt/config` if configured. Prints the path to stdout.
 
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
@@ -62,7 +63,9 @@ Exceptions:
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
 
-**link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`.
+**switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
+
+**link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`. Persists linked files to `~/.wt/config` for auto-linking on new worktree creation.
 
 **unlink** — Removes symlinks from linked worktrees. Only removes symlinks that point to the primary worktree's copy of the file. Non-symlink files and symlinks pointing elsewhere are skipped with a warning unless `--force` is used.
 
@@ -71,9 +74,11 @@ Exceptions:
 ## Filesystem Layout
 
 ```
-~/.wt/worktrees/
-└── <random-id>/            6-char hex (e.g. a3f2b1)
-    └── <repo-name>/        Worktree directory (created by git)
+~/.wt/
+├── config                  TOML config (auto-link file list per repo)
+└── worktrees/
+    └── <random-id>/        6-char hex (e.g. a3f2b1)
+        └── <repo-name>/    Worktree directory (created by git)
 ```
 
 The admin (primary) repo lives wherever the user cloned it. Worktree directories contain a `.git` file (not a directory) pointing back to `.git/worktrees/<name>` in the admin repo.

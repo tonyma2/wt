@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config;
 use crate::git::Git;
 use crate::worktree;
 
@@ -52,6 +53,13 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
             result.map_err(|e| format!("cannot remove {} in {}: {e}", file, wt.path.display()))?;
             eprintln!("wt: unlinked {file} ({})", wt.path.display());
         }
+    }
+
+    if let Err(e) = config::remove_links(
+        &repo_root,
+        &files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    ) {
+        eprintln!("wt: cannot update link config: {e}");
     }
 
     Ok(())

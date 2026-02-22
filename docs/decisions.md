@@ -26,6 +26,10 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 
 Clap derives `--help` text from `///` doc comments on CLI structs and fields. Adding doc comments elsewhere sets a false expectation that the codebase documents public APIs — it doesn't. Code is self-documenting; inline comments explain non-obvious *why*, not *what*.
 
+## Config is per-repo keyed in a single global file
+
+Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives considered: `.wtlinks` in the repo (pollutes the repository), git config (wrong abstraction for file lists), per-repo config files under `~/.wt/` (more filesystem complexity). A single file is simple to read, edit, and back up.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.

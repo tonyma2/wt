@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config;
 use crate::git::Git;
 use crate::worktree;
 
@@ -56,7 +57,54 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
         }
     }
 
+    if let Err(e) = config::add_links(
+        &repo_root,
+        &files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    ) {
+        eprintln!("wt: cannot save link config: {e}");
+    }
+
     Ok(())
+}
+
+pub fn auto_link(repo_root: &std::path::Path, worktree_path: &std::path::Path) {
+    let files = config::get_links(repo_root);
+    if files.is_empty() {
+        return;
+    }
+
+    let git = Git::new(repo_root);
+    let output = match git.list_worktrees() {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let worktrees = worktree::parse_porcelain(&output);
+    let primary = match worktrees.first() {
+        Some(p) => p,
+        None => return,
+    };
+    let primary_path = &primary.path;
+
+    for file in &files {
+        let source = primary_path.join(file);
+        if !source.exists() {
+            continue;
+        }
+        let dest = worktree_path.join(file);
+        if dest.symlink_metadata().is_ok() {
+            continue;
+        }
+        if let Some(parent) = dest.parent()
+            && !parent.exists()
+        {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = symlink(&source, &dest) {
+            eprintln!("wt: cannot auto-link {file}: {e}");
+        } else {
+            eprintln!("wt: auto-linked {file}");
+        }
+    }
 }
 
 fn validate_path(file: &str) -> Result<(), String> {
