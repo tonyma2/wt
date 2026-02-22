@@ -38,6 +38,10 @@ Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives 
 
 `wt path` and `wt rm` resolve names as: branch → ref (tag/SHA) → path. The ref fallback only matches detached HEAD worktrees whose `head` SHA equals the resolved ref. We don't attempt arbitrary SHA prefix matching because git worktrees can share a HEAD commit, making prefix matches ambiguous.
 
+## Hints are TTY-only
+
+After creating a worktree, `new` and `switch` print a `cd "$(wt path ...)"` hint to stderr — but only when stderr is a terminal. Scripts that capture stdout (like `cd "$(wt new ...)"`) pipe stderr to /dev/null or a non-TTY, so the hint is suppressed. This avoids polluting parseable output while helping interactive users.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.

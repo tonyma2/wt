@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::commands::link;
 use crate::fuzzy;
 use crate::git::Git;
+use crate::terminal;
 use crate::worktree;
 
 pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> {
@@ -95,6 +96,10 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     }
 
     link::auto_link(&repo_root, &dest);
+
+    if terminal::is_stderr_tty() {
+        eprintln!("wt: cd \"$(wt path {name})\"");
+    }
 
     println!("{}", dest.display());
     Ok(())

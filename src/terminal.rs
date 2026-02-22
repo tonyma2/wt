@@ -1,3 +1,14 @@
+pub fn is_stderr_tty() -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::isatty(libc::STDERR_FILENO) != 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 pub fn width() -> usize {
     if let Ok(val) = std::env::var("COLUMNS")
         && let Ok(cols) = val.parse::<usize>()
