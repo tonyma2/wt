@@ -95,3 +95,40 @@ fn errors_when_branch_name_is_ambiguous() {
         "expected ambiguity guidance, got: {stderr}",
     );
 }
+
+#[test]
+fn resolves_tag_to_detached_head_worktree() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v1.0"]);
+
+    let wt_path = wt_checkout(home.path(), &repo, "v1.0");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v1.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(
+        output.status.success(),
+        "wt path v1.0 should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    assert_eq!(canonical(&reported), canonical(&wt_path));
+}
+
+#[test]
+fn tag_fallback_not_used_when_branch_matches() {
+    let (home, repo) = setup();
+
+    let wt_path = wt_new(home.path(), &repo, "v2.0");
+
+    assert_git_success(&repo, &["tag", "v2.0"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v2.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    assert_eq!(canonical(&reported), canonical(&wt_path));
+}

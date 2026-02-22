@@ -82,6 +82,13 @@ pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a
         .collect()
 }
 
+pub fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Worktree> {
+    worktrees
+        .iter()
+        .filter(|wt| wt.detached && wt.head == sha && wt.live())
+        .collect()
+}
+
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
     worktrees.iter().find(|wt| wt.path == path)
 }

@@ -52,7 +52,7 @@ Exceptions:
 
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
-**rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, falls back to path resolution.
+**rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
 - Validates: not primary worktree, not cwd, branch exists locally, not checked out elsewhere, not dirty/unmerged (unless `--force`)
 - Removes worktree, then deletes the branch
 - Multiple targets accumulate errors rather than aborting on the first
@@ -63,7 +63,7 @@ Exceptions:
 - Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists. `--base` overrides the auto-detected default branch for merged detection
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
-**path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
+**path** — Looks up branch in parsed worktree list, prints its path to stdout. Falls back to resolving the name as a ref (tag, SHA) and matching against detached HEAD worktrees. Errors on ambiguous matches.
 
 **switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. When creating a new branch, checks for similarly-named local branches using Levenshtein distance and errors with a suggestion if a close match is found. `-c`/`--create` bypasses the fuzzy check. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
 

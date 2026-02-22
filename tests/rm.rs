@@ -647,3 +647,24 @@ fn refuses_branch_checked_out_in_another_worktree() {
     );
     assert!(wt_path.exists());
 }
+
+#[test]
+fn removes_detached_head_worktree_by_tag() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v1.0"]);
+
+    let wt_path = wt_checkout(home.path(), &repo, "v1.0");
+
+    let output = wt_bin()
+        .args(["rm", "v1.0", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm v1.0 should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "worktree directory should be removed");
+}

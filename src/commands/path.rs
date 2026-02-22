@@ -11,8 +11,9 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
     let worktrees = worktree::parse_porcelain(&output);
     let matches = worktree::find_live_by_branch(&worktrees, name);
 
-    if matches.is_empty() {
-        return Err(format!("no worktree found for branch: {name}"));
+    if matches.len() == 1 {
+        println!("{}", matches[0].path.display());
+        return Ok(());
     }
     if matches.len() > 1 {
         eprintln!("wt: ambiguous name '{name}'; matches:");
@@ -22,6 +23,20 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         return Err("multiple worktrees match; specify the full branch name".into());
     }
 
-    println!("{}", matches[0].path.display());
-    Ok(())
+    if let Some(sha) = git.rev_parse(name) {
+        let head_matches = worktree::find_live_by_head(&worktrees, &sha);
+        if head_matches.len() == 1 {
+            println!("{}", head_matches[0].path.display());
+            return Ok(());
+        }
+        if head_matches.len() > 1 {
+            eprintln!("wt: ambiguous ref '{name}'; matches:");
+            for m in &head_matches {
+                eprintln!("  - {}", m.path.display());
+            }
+            return Err("multiple worktrees match; specify a path instead".into());
+        }
+    }
+
+    Err(format!("no worktree found for branch: {name}"))
 }
