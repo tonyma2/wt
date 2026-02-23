@@ -376,3 +376,87 @@ fn switch_cleans_up_on_failure() {
         "no new directories should remain after failed switch",
     );
 }
+
+#[test]
+fn switch_detects_typo_close_match() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/logni", "--repo"]).arg(&repo);
+    });
+
+    assert_exit_code(&output, 1);
+    assert_stdout_empty(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("did you mean 'feat/login'"),
+        "expected typo suggestion, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("wt switch -c feat/logni"),
+        "expected -c hint, got: {stderr}",
+    );
+}
+
+#[test]
+fn switch_creates_when_no_close_match() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/something-completely-different", "--repo"])
+            .arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(
+        &output,
+        "wt: creating branch 'feat/something-completely-different'\n",
+    );
+}
+
+#[test]
+fn switch_create_flag_bypasses_fuzzy_check() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "-c", "feat/logni", "--repo"])
+            .arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "wt: creating branch 'feat/logni'\n");
+    let path = parse_wt_new_path(&output);
+    assert!(path.exists());
+    assert_branch_present(&repo, "feat/logni");
+}
+
+#[test]
+fn switch_create_flag_long_form() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "--create", "feat/logni", "--repo"])
+            .arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "wt: creating branch 'feat/logni'\n");
+}
+
+#[test]
+fn switch_no_fuzzy_check_for_existing_branch() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["branch", "feat/login"]);
+    assert_git_success(&repo, &["branch", "feat/logni"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/logni", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "wt: checking out 'feat/logni'\n");
+}

@@ -1,10 +1,11 @@
 use std::path::Path;
 
 use crate::commands::link;
+use crate::fuzzy;
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
+pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
 
@@ -63,6 +64,15 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         return Err(format!(
             "'{name}' is not a branch; use `wt new {name}` to check out a ref"
         ));
+    }
+
+    if !is_branch && !create {
+        let branches = git.local_branches();
+        if let Some(suggestion) = fuzzy::close_match(name, &branches) {
+            return Err(format!(
+                "did you mean '{suggestion}'? use `wt switch -c {name}` to create a new branch"
+            ));
+        }
     }
 
     let dest = worktree::create_dest(&repo_root)?;

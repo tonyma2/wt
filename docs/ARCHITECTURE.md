@@ -14,10 +14,12 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
 │   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
 │   ├── path.rs         Print worktree path by branch name
+│   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
 │   └── completions.rs  Generate shell completions (zsh gets dynamic branch completion)
 ├── config.rs           Read/write ~/.wt/config TOML (auto-link persistence)
+├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
 └── terminal.rs         Terminal width detection (COLUMNS env, ioctl fallback, then 132)
@@ -63,7 +65,7 @@ Exceptions:
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
 
-**switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
+**switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. When creating a new branch, checks for similarly-named local branches using Levenshtein distance and errors with a suggestion if a close match is found. `-c`/`--create` bypasses the fuzzy check. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
 
 **link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`. Persists linked files to `~/.wt/config` for auto-linking on new worktree creation.
 
