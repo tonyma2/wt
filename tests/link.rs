@@ -365,3 +365,94 @@ fn force_skips_correct_symlink() {
             .is_symlink()
     );
 }
+
+#[test]
+fn link_persists_to_config() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt_path = wt_new(home.path(), &repo, "feat-persist");
+
+    let output = wt_link(home.path(), &repo, &[".env"]);
+    assert!(output.status.success());
+
+    let config_path = home.path().join(".wt").join("config");
+    assert!(
+        config_path.exists(),
+        "config file should be created after linking"
+    );
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains(".env"),
+        "config should contain linked file, got: {content}",
+    );
+}
+
+#[test]
+fn auto_links_on_new_worktree_creation() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt1 = wt_new(home.path(), &repo, "feat-first");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let wt2 = wt_new(home.path(), &repo, "feat-auto");
+
+    let link = wt2.join(".env");
+    assert!(
+        link.symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false),
+        ".env should be auto-linked in new worktree"
+    );
+    assert_eq!(std::fs::read_to_string(&link).unwrap(), "SECRET=abc");
+}
+
+#[test]
+fn auto_links_on_switch_creation() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt1 = wt_new(home.path(), &repo, "feat-switch-first");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/switch-auto", "--repo"])
+            .arg(&repo);
+    });
+    assert!(output.status.success());
+    let wt_path = parse_wt_new_path(&output);
+
+    let link = wt_path.join(".env");
+    assert!(
+        link.symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false),
+        ".env should be auto-linked in switch-created worktree"
+    );
+}
+
+#[test]
+fn unlink_removes_from_config() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt_path = wt_new(home.path(), &repo, "feat-unlink-cfg");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let unlink_out = run_wt(home.path(), |cmd| {
+        cmd.args(["unlink", ".env", "--repo"]).arg(&repo);
+    });
+    assert!(unlink_out.status.success());
+
+    let config_path = home.path().join(".wt").join("config");
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            !content.contains(".env"),
+            "config should not contain unlinked file, got: {content}",
+        );
+    }
+}

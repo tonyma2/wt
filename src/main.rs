@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod config;
 mod fuzzy;
 mod git;
 mod terminal;
@@ -32,6 +33,9 @@ fn main() {
             commands::switch::run(name, *create, repo.as_deref())
         }
         Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
+        Command::Unlink { files, repo, force } => {
+            commands::unlink::run(files, repo.as_deref(), *force)
+        }
     };
 
     if let Err(e) = result {

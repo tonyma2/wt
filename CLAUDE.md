@@ -31,6 +31,7 @@ cargo clippy --all-targets -- -D warnings  # lints
 - Combinators (`map_err`, `and_then`, `is_ok_and`) over match when clearer
 - `let`-chains for multi-condition guards
 - Bool struct fields have no `is_` prefix — `bare`, `locked`, `prunable`
+- Canonicalize paths before using as map keys or persisting to config (`/tmp` → `/private/tmp` on macOS)
 
 ## CLI Norms
 

@@ -154,4 +154,22 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Remove linked files from linked worktrees
+    #[command(
+        long_about = "Remove previously linked files from all linked worktrees.\n\
+            Only removes symlinks that point to the primary worktree's copy.\n\
+            Non-symlink files and symlinks pointing elsewhere are skipped unless --force is used.",
+        after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink .env --force"
+    )]
+    Unlink {
+        /// Files or directories to unlink
+        #[arg(required = true)]
+        files: Vec<String>,
+        /// Repository path
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Remove even if not a symlink to the primary worktree
+        #[arg(long)]
+        force: bool,
+    },
 }
