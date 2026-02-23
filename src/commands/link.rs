@@ -59,7 +59,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
 
     if let Err(e) = config::add_links(
         &repo_root,
-        &files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        files,
     ) {
         eprintln!("wt: cannot save link config: {e}");
     }
@@ -107,7 +107,7 @@ pub fn auto_link(repo_root: &std::path::Path, worktree_path: &std::path::Path) {
     }
 }
 
-fn validate_path(file: &str) -> Result<(), String> {
+pub(crate) fn validate_path(file: &str) -> Result<(), String> {
     let path = Path::new(file);
 
     if path.is_absolute() {
