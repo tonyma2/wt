@@ -25,9 +25,10 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     }
 
     let mut errors = 0usize;
+    let mut file_errors: Vec<bool> = vec![false; files.len()];
 
     for wt in &linked {
-        for file in files {
+        for (i, file) in files.iter().enumerate() {
             let source = primary_path.join(file);
             let dest = wt.path.join(file);
 
@@ -60,18 +61,28 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
             if let Err(e) = result {
                 eprintln!("wt: cannot remove {} in {}: {e}", file, wt.path.display());
                 errors += 1;
+                file_errors[i] = true;
                 continue;
             }
             eprintln!("wt: unlinked {file} ({})", wt.path.display());
         }
     }
 
-    if let Err(e) = config::remove_links(&repo_root, files) {
+    let succeeded: Vec<String> = files
+        .iter()
+        .zip(&file_errors)
+        .filter(|(_, had_error)| !**had_error)
+        .map(|(f, _)| f.clone())
+        .collect();
+
+    if !succeeded.is_empty()
+        && let Err(e) = config::remove_links(&repo_root, &succeeded)
+    {
         eprintln!("wt: cannot update link config: {e}");
     }
 
     if errors > 0 {
-        Err(format!("{errors} file(s) could not be unlinked"))
+        Err(format!("cannot unlink {errors} file(s)"))
     } else {
         Ok(())
     }

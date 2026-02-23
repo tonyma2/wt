@@ -215,3 +215,29 @@ fn no_linked_worktrees() {
         "expected 'no linked worktrees', got: {stderr}",
     );
 }
+
+#[test]
+fn rejects_absolute_path() {
+    let (home, repo) = setup();
+
+    let output = wt_unlink(home.path(), &repo, &["/etc/passwd"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("path must be relative"),
+        "expected 'path must be relative', got: {stderr}",
+    );
+}
+
+#[test]
+fn rejects_dotdot() {
+    let (home, repo) = setup();
+
+    let output = wt_unlink(home.path(), &repo, &["../secret"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must not contain '..'"),
+        "expected 'must not contain ..', got: {stderr}",
+    );
+}

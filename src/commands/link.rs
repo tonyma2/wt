@@ -21,6 +21,10 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
         }
     }
 
+    if let Err(e) = config::add_links(&repo_root, files) {
+        eprintln!("wt: cannot save link config: {e}");
+    }
+
     let linked: Vec<_> = worktrees.iter().skip(1).collect();
     if linked.is_empty() {
         eprintln!("wt: no linked worktrees");
@@ -55,13 +59,6 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
                 .map_err(|e| format!("cannot link {} in {}: {e}", file, wt.path.display()))?;
             eprintln!("wt: linked {file} ({})", wt.path.display());
         }
-    }
-
-    if let Err(e) = config::add_links(
-        &repo_root,
-        files,
-    ) {
-        eprintln!("wt: cannot save link config: {e}");
     }
 
     Ok(())

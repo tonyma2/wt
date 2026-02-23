@@ -35,9 +35,16 @@ fn save(config: &Config) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
+fn repo_key(repo: &Path) -> String {
+    std::fs::canonicalize(repo)
+        .unwrap_or_else(|_| repo.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
 pub fn add_links(repo: &Path, files: &[String]) -> Result<(), String> {
     let mut config = load()?;
-    let key = repo.to_string_lossy().to_string();
+    let key = repo_key(repo);
     let existing = config.links.entry(key).or_default();
     for file in files {
         if !existing.contains(file) {
@@ -49,7 +56,7 @@ pub fn add_links(repo: &Path, files: &[String]) -> Result<(), String> {
 
 pub fn remove_links(repo: &Path, files: &[String]) -> Result<(), String> {
     let mut config = load()?;
-    let key = repo.to_string_lossy().to_string();
+    let key = repo_key(repo);
     if let Some(existing) = config.links.get_mut(&key) {
         existing.retain(|f| !files.contains(f));
         if existing.is_empty() {
@@ -65,7 +72,7 @@ pub fn get_links(repo: &Path) -> Vec<String> {
         .and_then(|config| {
             config
                 .links
-                .get(&repo.to_string_lossy().to_string())
+                .get(&repo_key(repo))
                 .cloned()
         })
         .unwrap_or_default()
