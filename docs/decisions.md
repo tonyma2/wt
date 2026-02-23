@@ -26,6 +26,10 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 
 Clap derives `--help` text from `///` doc comments on CLI structs and fields. Adding doc comments elsewhere sets a false expectation that the codebase documents public APIs — it doesn't. Code is self-documenting; inline comments explain non-obvious *why*, not *what*.
 
+## Switch uses fuzzy matching instead of a `-c` gate
+
+`wt new` requires `-c` to create a branch (see above). `wt switch` is intentionally more lenient — its purpose is "get me into this branch, fast." Requiring `-c` for every new branch would negate the convenience. Instead, `switch` uses Levenshtein distance to detect likely typos and suggests the close match. `-c` bypasses the fuzzy check when the user genuinely wants a new similarly-named branch.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.
