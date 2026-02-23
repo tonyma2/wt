@@ -69,12 +69,7 @@ pub fn remove_links(repo: &Path, files: &[String]) -> Result<(), String> {
 pub fn get_links(repo: &Path) -> Vec<String> {
     load()
         .ok()
-        .and_then(|config| {
-            config
-                .links
-                .get(&repo_key(repo))
-                .cloned()
-        })
+        .and_then(|config| config.links.get(&repo_key(repo)).cloned())
         .unwrap_or_default()
 }
 
