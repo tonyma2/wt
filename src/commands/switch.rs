@@ -69,7 +69,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
         let branches = git.local_branches();
         if let Some(suggestion) = fuzzy::close_match(name, &branches) {
             return Err(format!(
-                "did you mean '{suggestion}'? use 'wt switch -c {name}' to create a new branch"
+                "did you mean '{suggestion}'? use `wt switch -c {name}` to create a new branch"
             ));
         }
     }

@@ -16,7 +16,12 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 pub fn close_match<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
-    let threshold = (name.len() as f64 * 0.3).ceil().max(2.0) as usize;
+    let len = name.chars().count();
+    if len == 0 {
+        return None;
+    }
+    // ~1 edit per 3 chars, min 2 to avoid false positives on short names, capped at half the input length
+    let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
     candidates
         .iter()
         .filter(|c| c.as_str() != name)
@@ -38,7 +43,7 @@ mod tests {
     }
 
     #[test]
-    fn single_edit() {
+    fn transposition() {
         assert_eq!(levenshtein("feat/login", "feat/logni"), 2);
     }
 
@@ -65,5 +70,28 @@ mod tests {
     fn close_match_skips_exact() {
         let branches = vec!["feat/login".into()];
         assert_eq!(close_match("feat/login", &branches), None);
+    }
+
+    #[test]
+    fn close_match_no_false_positive_short_names() {
+        let branches = vec!["bar".into()];
+        assert_eq!(close_match("foo", &branches), None);
+    }
+
+    #[test]
+    fn close_match_empty_candidates() {
+        assert_eq!(close_match("feat/login", &[]), None);
+    }
+
+    #[test]
+    fn close_match_empty_name() {
+        let branches = vec!["a".into()];
+        assert_eq!(close_match("", &branches), None);
+    }
+
+    #[test]
+    fn close_match_picks_closest() {
+        let branches = vec!["feat/logxxx".into(), "feat/logim".into()];
+        assert_eq!(close_match("feat/login", &branches), Some("feat/logim"),);
     }
 }

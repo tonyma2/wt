@@ -121,6 +121,7 @@ impl Git {
                 .lines()
                 .map(str::to_string)
                 .collect(),
+            // Best-effort: fuzzy matching is advisory, so silently degrade on failure
             _ => vec![],
         }
     }
