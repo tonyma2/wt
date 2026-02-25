@@ -251,7 +251,12 @@ fn prune_merged(
     }
 
     let base = if let Some(b) = base_override {
-        Some(b.to_string())
+        if !git.rev_resolves(b) {
+            eprintln!("wt: base branch '{b}' not found; skipping merged worktree pruning");
+            None
+        } else {
+            Some(b.to_string())
+        }
     } else {
         match git.base_ref() {
             Ok(base) => Some(base),
@@ -261,7 +266,8 @@ fn prune_merged(
             }
         }
     };
-    let base_branch = base.as_deref().and_then(|b| b.strip_prefix("origin/"));
+    let base_branch =
+        base_override.or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
 
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);

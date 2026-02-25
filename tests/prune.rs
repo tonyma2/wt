@@ -1494,3 +1494,68 @@ fn base_flag_with_global_prune() {
         "merged worktree should be removed with --base trunk in global mode"
     );
 }
+
+#[test]
+fn base_flag_does_not_prune_base_branch_worktree() {
+    let (home, repo) = setup();
+
+    assert_git_success(&repo, &["checkout", "-b", "develop"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "develop commit"]);
+    // Move main worktree off develop so we can create a worktree for it
+    assert_git_success(&repo, &["checkout", "-b", "holder"]);
+
+    let develop_wt = wt_checkout(home.path(), &repo, "develop");
+
+    let feat_wt = wt_new(home.path(), &repo, "feat-on-develop");
+    std::fs::write(feat_wt.join("file.txt"), "work").unwrap();
+    assert_git_success(&feat_wt, &["add", "file.txt"]);
+    assert_git_success(&feat_wt, &["commit", "-m", "add file"]);
+
+    assert_git_success(&develop_wt, &["merge", "feat-on-develop"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .args(["--base", "develop"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !feat_wt.exists(),
+        "merged feature worktree should be removed"
+    );
+    assert!(
+        develop_wt.exists(),
+        "base branch worktree must not be pruned"
+    );
+}
+
+#[test]
+fn base_flag_warns_on_nonexistent_branch() {
+    let (home, repo) = setup();
+
+    let wt_path = wt_new(home.path(), &repo, "feat-keep");
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .args(["--base", "nonexistent"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("base branch 'nonexistent' not found"),
+        "should warn about nonexistent base branch, got: {stderr}"
+    );
+    assert!(
+        wt_path.exists(),
+        "worktree should be kept when base branch is invalid"
+    );
+}
