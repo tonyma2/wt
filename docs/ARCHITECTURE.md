@@ -13,7 +13,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── list.rs         Tabular worktree listing with terminal-aware column sizing
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
 │   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
-│   ├── path.rs         Print worktree path by branch name
+│   ├── path.rs         Print worktree path by branch name or ref
 │   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
@@ -29,13 +29,13 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 
 **`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exception: `is_dirty()` runs against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
 
-**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_by_branch()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
+**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_live_by_branch()`, `find_live_by_head()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
 
 **`Cli` / `Command`** (`cli.rs`) — Clap derive types. `Command` is a flat enum with one variant per subcommand. `///` doc comments become `--help` text via clap — this is the only file that uses doc comments.
 
 ## Data Flow
 
-Commands that query existing worktrees (list, rm, path, link, prune) follow this pattern:
+Commands that query existing worktrees (list, rm, path, switch, link, prune) follow this pattern:
 
 ```
 Git::find_repo(repo_arg)  →  Git::new(repo_root)  →  git.list_worktrees()
@@ -52,7 +52,7 @@ Exceptions:
 
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
-**rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, falls back to path resolution.
+**rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
 - Validates: not primary worktree, not cwd, branch exists locally, not checked out elsewhere, not dirty/unmerged (unless `--force`)
 - Removes worktree, then deletes the branch
 - Multiple targets accumulate errors rather than aborting on the first
@@ -63,7 +63,7 @@ Exceptions:
 - Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists. `--base` overrides the auto-detected default branch for merged detection
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
-**path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
+**path** — Looks up branch in parsed worktree list, prints its path to stdout. Falls back to resolving the name as a ref (tag, SHA) and matching against detached HEAD worktrees. Errors on ambiguous matches.
 
 **switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. When creating a new branch, checks for similarly-named local branches using Levenshtein distance and errors with a suggestion if a close match is found. `-c`/`--create` bypasses the fuzzy check. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
 

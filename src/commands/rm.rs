@@ -124,6 +124,21 @@ fn resolve_target(
             return Err("multiple worktrees match; specify a path instead".into());
         }
 
+        if let Some(sha) = git.rev_parse(name_or_path) {
+            let head_matches = worktree::find_live_by_head(&worktrees, &sha);
+            if head_matches.len() == 1 {
+                let target = head_matches[0].path.clone();
+                return Ok((target, repo_root, worktrees));
+            }
+            if head_matches.len() > 1 {
+                eprintln!("wt: ambiguous ref '{name_or_path}'; matches:");
+                for m in &head_matches {
+                    eprintln!("  - {}", m.path.display());
+                }
+                return Err("multiple worktrees match; specify a path instead".into());
+            }
+        }
+
         let input = Path::new(name_or_path);
         if input.exists()
             && let Ok(target) = std::fs::canonicalize(input)
@@ -141,7 +156,7 @@ fn resolve_target(
     }
 
     if has_repo {
-        Err(format!("no worktree found for branch: {name_or_path}"))
+        Err(format!("no worktree found for: {name_or_path}"))
     } else {
         Err("not a git repository; use --repo or run inside one".into())
     }

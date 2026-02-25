@@ -34,7 +34,7 @@ fn errors_when_branch_has_no_worktree() {
         cmd.args(["path", "missing", "--repo"]).arg(&repo);
     });
 
-    assert_error(&output, 1, "wt: no worktree found for branch: missing\n");
+    assert_error(&output, 1, "wt: no worktree found for: missing\n");
 }
 
 #[test]
@@ -93,5 +93,63 @@ fn errors_when_branch_name_is_ambiguous() {
     assert!(
         stderr.contains("wt: multiple worktrees match; specify the full branch name\n"),
         "expected ambiguity guidance, got: {stderr}",
+    );
+}
+
+#[test]
+fn resolves_tag_to_detached_head_worktree() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v1.0"]);
+
+    let wt_path = wt_checkout(home.path(), &repo, "v1.0");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v1.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(
+        output.status.success(),
+        "wt path v1.0 should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    assert_eq!(canonical(&reported), canonical(&wt_path));
+}
+
+#[test]
+fn tag_fallback_not_used_when_branch_matches() {
+    let (home, repo) = setup();
+
+    let wt_path = wt_new(home.path(), &repo, "v2.0");
+
+    assert_git_success(&repo, &["tag", "v2.0"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v2.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    assert_eq!(canonical(&reported), canonical(&wt_path));
+}
+
+#[test]
+fn errors_when_ref_matches_multiple_detached_worktrees() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v3.0"]);
+    assert_git_success(&repo, &["tag", "v3.0-alias"]);
+
+    let _wt1 = wt_checkout(home.path(), &repo, "v3.0");
+    let _wt2 = wt_checkout(home.path(), &repo, "v3.0-alias");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v3.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ambiguous ref 'v3.0'"),
+        "expected ambiguous ref error, got: {stderr}",
     );
 }

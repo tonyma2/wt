@@ -280,6 +280,20 @@ impl Git {
             .is_ok_and(|s| s.success())
     }
 
+    pub fn rev_parse(&self, refname: &str) -> Option<String> {
+        let output = self
+            .cmd()
+            .args(["rev-parse", "--verify", "--quiet", refname])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!sha.is_empty()).then_some(sha)
+    }
+
     pub fn rev_resolves(&self, refname: &str) -> bool {
         self.cmd()
             .args(["rev-parse", "--verify", "--quiet", refname])
