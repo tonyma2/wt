@@ -34,7 +34,7 @@ fn errors_when_branch_has_no_worktree() {
         cmd.args(["path", "missing", "--repo"]).arg(&repo);
     });
 
-    assert_error(&output, 1, "wt: no worktree found for branch: missing\n");
+    assert_error(&output, 1, "wt: no worktree found for: missing\n");
 }
 
 #[test]
@@ -131,4 +131,25 @@ fn tag_fallback_not_used_when_branch_matches() {
     assert!(output.status.success());
     let reported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
     assert_eq!(canonical(&reported), canonical(&wt_path));
+}
+
+#[test]
+fn errors_when_ref_matches_multiple_detached_worktrees() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v3.0"]);
+    assert_git_success(&repo, &["tag", "v3.0-alias"]);
+
+    let _wt1 = wt_checkout(home.path(), &repo, "v3.0");
+    let _wt2 = wt_checkout(home.path(), &repo, "v3.0-alias");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "v3.0", "--repo"]).arg(&repo);
+    });
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ambiguous ref 'v3.0'"),
+        "expected ambiguous ref error, got: {stderr}",
+    );
 }

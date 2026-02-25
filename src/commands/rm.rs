@@ -156,7 +156,7 @@ fn resolve_target(
     }
 
     if has_repo {
-        Err(format!("no worktree found for branch: {name_or_path}"))
+        Err(format!("no worktree found for: {name_or_path}"))
     } else {
         Err("not a git repository; use --repo or run inside one".into())
     }

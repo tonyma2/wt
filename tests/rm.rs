@@ -178,7 +178,7 @@ fn removing_multiple_targets_reports_failures_and_removes_successes() {
     assert_exit_code(&output, 1);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("no worktree found for branch: missing-branch"),
+        stderr.contains("no worktree found for: missing-branch"),
         "should report failing target, got: {stderr}",
     );
     assert!(
@@ -667,4 +667,30 @@ fn removes_detached_head_worktree_by_tag() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(!wt_path.exists(), "worktree directory should be removed");
+}
+
+#[test]
+fn errors_when_ref_matches_multiple_detached_worktrees() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v1.0"]);
+    assert_git_success(&repo, &["tag", "v1.0-alias"]);
+
+    let wt1 = wt_checkout(home.path(), &repo, "v1.0");
+    let wt2 = wt_checkout(home.path(), &repo, "v1.0-alias");
+
+    let output = wt_bin()
+        .args(["rm", "v1.0", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ambiguous ref 'v1.0'"),
+        "expected ambiguous ref error, got: {stderr}",
+    );
+    assert!(wt1.exists(), "worktree should not be removed on ambiguity");
+    assert!(wt2.exists(), "worktree should not be removed on ambiguity");
 }

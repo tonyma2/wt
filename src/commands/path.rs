@@ -38,5 +38,5 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         }
     }
 
-    Err(format!("no worktree found for branch: {name}"))
+    Err(format!("no worktree found for: {name}"))
 }

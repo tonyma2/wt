@@ -13,7 +13,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── list.rs         Tabular worktree listing with terminal-aware column sizing
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
 │   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
-│   ├── path.rs         Print worktree path by branch name
+│   ├── path.rs         Print worktree path by branch name or ref
 │   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
@@ -29,13 +29,13 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 
 **`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exception: `is_dirty()` runs against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
 
-**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_by_branch()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
+**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_live_by_branch()`, `find_live_by_head()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
 
 **`Cli` / `Command`** (`cli.rs`) — Clap derive types. `Command` is a flat enum with one variant per subcommand. `///` doc comments become `--help` text via clap — this is the only file that uses doc comments.
 
 ## Data Flow
 
-Commands that query existing worktrees (list, rm, path, link, prune) follow this pattern:
+Commands that query existing worktrees (list, rm, path, switch, link, prune) follow this pattern:
 
 ```
 Git::find_repo(repo_arg)  →  Git::new(repo_root)  →  git.list_worktrees()
