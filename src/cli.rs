@@ -76,9 +76,11 @@ pub enum Command {
             Worktrees whose branch is fully merged into the base branch are also removed.\n\n\
             Use --gone to also remove worktrees whose upstream tracking branch no longer \
             exists (e.g. after a squash-merge deleted the remote branch).\n\n\
+            Use --base to override the auto-detected default branch for merged detection \
+            (useful when the base branch is not main/master, or there is no remote).\n\n\
             By default, discovers all repos from ~/.wt/worktrees/ and prunes each one, \
             then cleans up orphaned directories. Use --repo to target a single repository.",
-        after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
+        after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --base develop\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
     )]
     Prune {
         /// Show what would be done without doing it
@@ -90,6 +92,9 @@ pub enum Command {
         /// Repository path (prune only this repo, skip orphan cleanup)
         #[arg(long)]
         repo: Option<PathBuf>,
+        /// Base branch for merged detection (e.g. develop, trunk)
+        #[arg(long)]
+        base: Option<String>,
     },
     /// Generate shell completions
     #[command(

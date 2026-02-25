@@ -27,7 +27,8 @@ fn main() {
             dry_run,
             gone,
             repo,
-        } => commands::prune::run(*dry_run, *gone, repo.as_deref()),
+            base,
+        } => commands::prune::run(*dry_run, *gone, repo.as_deref(), base.as_deref()),
         Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
         Command::Switch { name, create, repo } => {
             commands::switch::run(name, *create, repo.as_deref())

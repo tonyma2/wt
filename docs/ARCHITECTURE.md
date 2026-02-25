@@ -60,7 +60,7 @@ Exceptions:
 **prune** — Two modes:
 - With `--repo`: prunes a single repo's stale metadata and merged worktrees
 - Without `--repo` (default): discovers all repos from `~/.wt/worktrees/` via recursive `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
-- Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists
+- Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists. `--base` overrides the auto-detected default branch for merged detection
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Errors on ambiguous matches.
