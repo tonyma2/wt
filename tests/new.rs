@@ -495,3 +495,21 @@ fn checkout_error_does_not_fallback_to_creation() {
         "wt new should not leave directories on checkout failure"
     );
 }
+
+#[test]
+fn no_cd_hint_when_stdout_not_tty() {
+    let (home, repo) = setup();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["new", "-c", "feat/hint-test", "--repo"])
+            .arg(&repo);
+    });
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_stderr_exact(&output, "wt: creating branch 'feat/hint-test'\n");
+    assert!(
+        !stderr.contains("cd \"$(wt path"),
+        "cd hint should not appear when stdout is not a TTY, got: {stderr}",
+    );
+}

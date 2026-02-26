@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::commands::link;
 use crate::git::Git;
+use crate::terminal;
 use crate::worktree;
 
 pub fn run(
@@ -43,5 +44,10 @@ pub fn run(
     link::auto_link(&repo_root, &dest);
 
     println!("{}", dest.display());
+
+    if terminal::is_stdout_tty() {
+        let escaped = name.replace("'", r"'\''");
+        eprintln!("wt: cd \"$(wt path '{escaped}')\"");
+    }
     Ok(())
 }

@@ -434,6 +434,23 @@ fn switch_create_flag_bypasses_fuzzy_check() {
 }
 
 #[test]
+fn no_cd_hint_when_stdout_not_tty() {
+    let (home, repo) = setup();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/hint-test", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "wt: creating branch 'feat/hint-test'\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("cd \"$(wt path"),
+        "cd hint should not appear when stdout is not a TTY, got: {stderr}",
+    );
+}
+
+#[test]
 fn switch_create_flag_long_form() {
     let (home, repo) = setup();
     wt_new(home.path(), &repo, "feat/login");

@@ -22,7 +22,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 ├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
-└── terminal.rs         Terminal width detection (COLUMNS env, ioctl fallback, then 132)
+└── terminal.rs         TTY detection and terminal width (COLUMNS env, ioctl fallback, then 132)
 ```
 
 ## Key Types
