@@ -5,8 +5,8 @@
 ## Docs
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow, commands, test harness
-- **[docs/decisions.md](docs/decisions.md)** — intentional choices that look improvable but aren't (read before refactoring)
-- **[docs/git-workflow.md](docs/git-workflow.md)** — commits, PRs, merging (read before any git operation)
+- **[docs/decisions.md](docs/decisions.md)** — You MUST read this file before refactoring or changing existing patterns
+- **[docs/git-workflow.md](docs/git-workflow.md)** — You MUST read this file before committing, pushing, creating PRs, or merging
 
 ## Build & Test
 
