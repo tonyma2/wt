@@ -97,10 +97,10 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
 
     link::auto_link(&repo_root, &dest);
 
-    if terminal::is_stderr_tty() {
-        eprintln!("wt: cd \"$(wt path {name})\"");
-    }
-
     println!("{}", dest.display());
+
+    if terminal::is_stdout_tty() {
+        eprintln!("wt: cd \"$(wt path '{name}')\"");
+    }
     Ok(())
 }

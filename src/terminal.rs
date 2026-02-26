@@ -1,7 +1,7 @@
-pub fn is_stderr_tty() -> bool {
+pub fn is_stdout_tty() -> bool {
     #[cfg(unix)]
     {
-        unsafe { libc::isatty(libc::STDERR_FILENO) != 0 }
+        unsafe { libc::isatty(libc::STDOUT_FILENO) != 0 }
     }
     #[cfg(not(unix))]
     {

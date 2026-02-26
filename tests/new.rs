@@ -497,7 +497,7 @@ fn checkout_error_does_not_fallback_to_creation() {
 }
 
 #[test]
-fn no_cd_hint_when_stderr_not_tty() {
+fn no_cd_hint_when_stdout_not_tty() {
     let (home, repo) = setup();
 
     let output = run_wt(home.path(), |cmd| {
@@ -510,6 +510,6 @@ fn no_cd_hint_when_stderr_not_tty() {
     assert_stderr_exact(&output, "wt: creating branch 'feat/hint-test'\n");
     assert!(
         !stderr.contains("cd \"$(wt path"),
-        "cd hint should not appear when stderr is not a TTY, got: {stderr}",
+        "cd hint should not appear when stdout is not a TTY, got: {stderr}",
     );
 }

@@ -38,9 +38,9 @@ Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives 
 
 `wt path` and `wt rm` resolve names as: branch → ref (tag/SHA) → path. The ref fallback only matches detached HEAD worktrees whose `head` SHA equals the resolved ref. We don't attempt arbitrary SHA prefix matching because git worktrees can share a HEAD commit, making prefix matches ambiguous.
 
-## Hints are TTY-only
+## Hints are TTY-only (stdout, not stderr)
 
-After creating a worktree, `new` and `switch` print a `cd "$(wt path ...)"` hint to stderr — but only when stderr is a terminal. Scripts that capture stdout (like `cd "$(wt new ...)"`) pipe stderr to /dev/null or a non-TTY, so the hint is suppressed. This avoids polluting parseable output while helping interactive users.
+After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to stderr — but only when **stdout** is a terminal. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names.
 
 ## Do not mock git in tests
 
