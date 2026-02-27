@@ -10,12 +10,12 @@ pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     let mut errors = 0usize;
     for name in names {
         if let Err(e) = remove_one(name, repo, force) {
-            eprintln!("wt: {e}");
+            eprintln!("{e}");
             errors += 1;
         }
     }
     if errors > 0 {
-        Err(format!("{errors} worktree(s) could not be removed"))
+        Err(format!("cannot remove {errors} worktree(s)"))
     } else {
         Ok(())
     }
@@ -30,8 +30,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         .ok_or_else(|| format!("not a registered worktree: {}", target.display()))?;
 
     if let Some(main_wt) = worktrees.first() {
-        let main_path =
-            std::fs::canonicalize(&main_wt.path).unwrap_or_else(|_| main_wt.path.clone());
+        let main_path = worktree::canonicalize_or_self(&main_wt.path);
         if main_path == target {
             return Err(format!(
                 "cannot remove the primary worktree: {}",
@@ -41,17 +40,15 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
     }
 
     let branch = wt.branch.clone();
+    let branch_exists = branch.as_ref().is_some_and(|b| git.has_local_branch(b));
 
-    if let Some(branch) = &branch {
-        if !git.has_local_branch(branch) {
-            return Err(format!("local branch not found: {branch}"));
-        }
-
-        if worktree::branch_checked_out_elsewhere(&worktrees, branch, &target) {
-            return Err(format!(
-                "branch '{branch}' is checked out in another worktree; remove that worktree first"
-            ));
-        }
+    if let Some(branch) = &branch
+        && branch_exists
+        && worktree::branch_checked_out_elsewhere(&worktrees, branch, &target)
+    {
+        return Err(format!(
+            "branch '{branch}' is checked out in another worktree, remove that worktree first"
+        ));
     }
 
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
@@ -65,36 +62,33 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     if !force {
         if git.is_dirty(&target) {
-            return Err("worktree has local changes; use --force to remove".into());
+            return Err("worktree has local changes, use --force to remove".into());
         }
         if let Some(branch) = &branch
+            && branch_exists
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
-                "branch '{branch}' has unpushed commits; use --force to remove"
+                "branch '{branch}' has unpushed commits, use --force to remove"
             ));
         }
     }
 
     git.remove_worktree(&target, force)?;
 
-    if let Some(parent) = target.parent()
-        && worktree::is_managed_worktree_dir(parent)
-        && !worktree::is_cwd_inside(parent, cwd.as_deref())
-        && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
-    {
-        let _ = std::fs::remove_dir(parent);
-    }
+    worktree::cleanup_empty_parent(&target, cwd.as_deref());
 
-    if let Some(branch) = &branch {
+    if let Some(branch) = &branch
+        && branch_exists
+    {
         git.delete_branch(branch, force)?;
         eprintln!(
-            "wt: removed worktree and branch '{}' ({})",
+            "removed worktree and branch '{}' ({})",
             branch,
             target.display()
         );
     } else {
-        eprintln!("wt: removed worktree ({})", target.display());
+        eprintln!("removed worktree ({})", target.display());
     }
     Ok(())
 }
@@ -117,11 +111,11 @@ fn resolve_target(
             return Ok((target, repo_root, worktrees));
         }
         if matches.len() > 1 {
-            eprintln!("wt: ambiguous name '{name_or_path}'; matches:");
+            eprintln!("ambiguous name '{name_or_path}'; matches:");
             for m in &matches {
                 eprintln!("  - {}", m.path.display());
             }
-            return Err("multiple worktrees match; specify a path instead".into());
+            return Err("multiple worktrees match, specify a path instead".into());
         }
 
         if let Some(sha) = git.rev_parse(name_or_path) {
@@ -131,11 +125,11 @@ fn resolve_target(
                 return Ok((target, repo_root, worktrees));
             }
             if head_matches.len() > 1 {
-                eprintln!("wt: ambiguous ref '{name_or_path}'; matches:");
+                eprintln!("ambiguous ref '{name_or_path}'; matches:");
                 for m in &head_matches {
                     eprintln!("  - {}", m.path.display());
                 }
-                return Err("multiple worktrees match; specify a path instead".into());
+                return Err("multiple worktrees match, specify a path instead".into());
             }
         }
 
@@ -158,7 +152,7 @@ fn resolve_target(
     if has_repo {
         Err(format!("no worktree found for: {name_or_path}"))
     } else {
-        Err("not a git repository; use --repo or run inside one".into())
+        Err("not a git repository, use --repo or run inside one".into())
     }
 }
 
@@ -169,7 +163,7 @@ fn resolve_path(input: &Path) -> Result<PathBuf, String> {
     let toplevel = Git::find_repo(Some(&abs))
         .map_err(|_| format!("not a worktree root: {}", input.display()))?;
 
-    let toplevel_canon = std::fs::canonicalize(&toplevel).unwrap_or(toplevel);
+    let toplevel_canon = worktree::canonicalize_or_self(&toplevel);
 
     if abs != toplevel_canon {
         return Err(format!("not a worktree root: {}", input.display()));

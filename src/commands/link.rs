@@ -22,12 +22,12 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     }
 
     if let Err(e) = config::add_links(&repo_root, files) {
-        eprintln!("wt: cannot save link config: {e}");
+        eprintln!("cannot save link config: {e}");
     }
 
     let linked: Vec<_> = worktrees.iter().skip(1).collect();
     if linked.is_empty() {
-        eprintln!("wt: no linked worktrees");
+        eprintln!("no linked worktrees");
         return Ok(());
     }
 
@@ -41,7 +41,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
                     continue;
                 }
                 if !force {
-                    eprintln!("wt: skipped {file} ({}): already exists", wt.path.display());
+                    eprintln!("skipped {file} ({}): already exists", wt.path.display());
                     continue;
                 }
                 remove_dest(&dest)
@@ -57,28 +57,26 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
 
             symlink(&source, &dest)
                 .map_err(|e| format!("cannot link {} in {}: {e}", file, wt.path.display()))?;
-            eprintln!("wt: linked {file} ({})", wt.path.display());
+            eprintln!("linked {file} ({})", wt.path.display());
         }
     }
 
     Ok(())
 }
 
-pub fn auto_link(repo_root: &std::path::Path, worktree_path: &std::path::Path) {
+pub fn auto_link(repo_root: &Path, worktree_path: &Path) {
     let files = config::get_links(repo_root);
     if files.is_empty() {
         return;
     }
 
     let git = Git::new(repo_root);
-    let output = match git.list_worktrees() {
-        Ok(o) => o,
-        Err(_) => return,
+    let Ok(output) = git.list_worktrees() else {
+        return;
     };
     let worktrees = worktree::parse_porcelain(&output);
-    let primary = match worktrees.first() {
-        Some(p) => p,
-        None => return,
+    let Some(primary) = worktrees.first() else {
+        return;
     };
     let primary_path = &primary.path;
 
@@ -97,9 +95,9 @@ pub fn auto_link(repo_root: &std::path::Path, worktree_path: &std::path::Path) {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Err(e) = symlink(&source, &dest) {
-            eprintln!("wt: cannot auto-link {file}: {e}");
+            eprintln!("cannot auto-link {file}: {e}");
         } else {
-            eprintln!("wt: auto-linked {file}");
+            eprintln!("auto-linked {file}");
         }
     }
 }

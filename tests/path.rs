@@ -34,7 +34,7 @@ fn errors_when_branch_has_no_worktree() {
         cmd.args(["path", "missing", "--repo"]).arg(&repo);
     });
 
-    assert_error(&output, 1, "wt: no worktree found for: missing\n");
+    assert_error(&output, 1, "no worktree found for: missing\n");
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn errors_when_branch_name_is_ambiguous() {
     assert_stdout_empty(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: ambiguous name 'shared'; matches:\n"),
+        stderr.contains("ambiguous name 'shared'; matches:\n"),
         "expected ambiguity header, got: {stderr}",
     );
     assert!(
@@ -91,7 +91,7 @@ fn errors_when_branch_name_is_ambiguous() {
         "expected linked worktree path, got: {stderr}",
     );
     assert!(
-        stderr.contains("wt: multiple worktrees match; specify the full branch name\n"),
+        stderr.contains("multiple worktrees match, specify the full branch name\n"),
         "expected ambiguity guidance, got: {stderr}",
     );
 }

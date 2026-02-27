@@ -10,7 +10,8 @@ pub struct Config {
 }
 
 fn config_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
+    let home = std::env::var("HOME")
+        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
     Ok(Path::new(&home).join(".wt").join("config"))
 }
 
@@ -39,7 +40,7 @@ fn repo_key(repo: &Path) -> String {
     std::fs::canonicalize(repo)
         .unwrap_or_else(|_| repo.to_path_buf())
         .to_string_lossy()
-        .to_string()
+        .into_owned()
 }
 
 pub fn add_links(repo: &Path, files: &[String]) -> Result<(), String> {

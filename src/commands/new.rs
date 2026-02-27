@@ -21,7 +21,7 @@ pub fn run(
                 .map(|r| format!(" --repo {}", r.display()))
                 .unwrap_or_default();
             Err(format!(
-                "cannot create branch '{name}': already exists; use 'wt new{repo_flag} {name}'"
+                "cannot create branch '{name}': already exists, use 'wt new{repo_flag} {name}'"
             ))
         } else {
             git.add_worktree(name, &dest, base)
@@ -36,18 +36,15 @@ pub fn run(
     }
 
     if create {
-        eprintln!("wt: creating branch '{name}'");
+        eprintln!("creating branch '{name}'");
     } else {
-        eprintln!("wt: checking out '{name}'");
+        eprintln!("checking out '{name}'");
     }
 
     link::auto_link(&repo_root, &dest);
 
     println!("{}", dest.display());
 
-    if terminal::is_stdout_tty() {
-        let escaped = name.replace("'", r"'\''");
-        eprintln!("wt: cd \"$(wt path '{escaped}')\"");
-    }
+    terminal::print_cd_hint(name);
     Ok(())
 }

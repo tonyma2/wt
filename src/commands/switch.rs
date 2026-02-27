@@ -23,26 +23,26 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     match matches.as_slice() {
         [one] => {
             if has_prunable {
-                eprintln!("wt: pruning stale worktree metadata");
+                eprintln!("pruning stale worktree metadata");
                 if let Err(e) = git.prune_worktrees(false) {
-                    eprintln!("wt: {e}");
+                    eprintln!("{e}");
                 }
             }
             println!("{}", one.path.display());
             return Ok(());
         }
         [_, _, ..] => {
-            eprintln!("wt: ambiguous name '{name}'; matches:");
+            eprintln!("ambiguous name '{name}'; matches:");
             for m in &matches {
                 eprintln!("  - {}", m.path.display());
             }
-            return Err("multiple worktrees match; remove duplicates with `wt rm`".into());
+            return Err("multiple worktrees match, remove duplicates with `wt rm`".into());
         }
         [] => {}
     }
 
     if has_prunable {
-        eprintln!("wt: pruning stale worktree metadata");
+        eprintln!("pruning stale worktree metadata");
         git.prune_worktrees(false)?;
     }
 
@@ -55,7 +55,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
 
     if !is_local && remotes.len() > 1 {
         return Err(format!(
-            "branch '{name}' exists on multiple remotes: {}; use `wt new <remote>/{name}` instead",
+            "branch '{name}' exists on multiple remotes: {}, use `wt new <remote>/{name}` instead",
             remotes.join(", ")
         ));
     }
@@ -63,7 +63,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     let is_branch = is_local || !remotes.is_empty();
     if !is_branch && git.rev_resolves(name) {
         return Err(format!(
-            "'{name}' is not a branch; use `wt new {name}` to check out a ref"
+            "'{name}' is not a branch, use `wt new {name}` to check out a ref"
         ));
     }
 
@@ -90,18 +90,15 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     }
 
     if is_branch {
-        eprintln!("wt: checking out '{name}'");
+        eprintln!("checking out '{name}'");
     } else {
-        eprintln!("wt: creating branch '{name}'");
+        eprintln!("creating branch '{name}'");
     }
 
     link::auto_link(&repo_root, &dest);
 
     println!("{}", dest.display());
 
-    if terminal::is_stdout_tty() {
-        let escaped = name.replace("'", r"'\''");
-        eprintln!("wt: cd \"$(wt path '{escaped}')\"");
-    }
+    terminal::print_cd_hint(name);
     Ok(())
 }

@@ -20,7 +20,7 @@ fn creates_worktree() {
         "wt new -c should succeed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert_stderr_exact(&output, "wt: creating branch 'test-branch'\n");
+    assert_stderr_exact(&output, "creating branch 'test-branch'\n");
 
     let wt_path = parse_wt_new_path(&output);
     assert_eq!(
@@ -62,7 +62,7 @@ fn succeeds_with_unreachable_origin() {
         "wt new should succeed with unreachable origin: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert_stderr_exact(&output, "wt: creating branch 'offline-branch'\n");
+    assert_stderr_exact(&output, "creating branch 'offline-branch'\n");
 
     let wt_path = parse_wt_new_path(&output);
     assert_eq!(
@@ -194,7 +194,7 @@ fn fails_when_repo_path_is_not_a_git_repository() {
     assert_error(
         &output,
         1,
-        "wt: not a git repository; use --repo or run inside one\n",
+        "not a git repository, use --repo or run inside one\n",
     );
 }
 
@@ -507,7 +507,7 @@ fn no_cd_hint_when_stdout_not_tty() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_stderr_exact(&output, "wt: creating branch 'feat/hint-test'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/hint-test'\n");
     assert!(
         !stderr.contains("cd \"$(wt path"),
         "cd hint should not appear when stdout is not a TTY, got: {stderr}",

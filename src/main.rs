@@ -6,9 +6,11 @@ mod git;
 mod terminal;
 mod worktree;
 
-use clap::Parser;
-use cli::{Cli, Command};
 use std::process;
+
+use clap::Parser;
+
+use crate::cli::{Cli, Command};
 
 fn main() {
     let cli = Cli::parse();
@@ -40,7 +42,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("wt: {e}");
+        eprintln!("{e}");
         process::exit(1);
     }
 }

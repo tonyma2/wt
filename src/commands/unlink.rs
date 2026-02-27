@@ -20,21 +20,20 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
 
     let linked: Vec<_> = worktrees.iter().skip(1).collect();
     if linked.is_empty() {
-        eprintln!("wt: no linked worktrees");
+        eprintln!("no linked worktrees");
         return Ok(());
     }
 
     let mut errors = 0usize;
-    let mut file_errors: Vec<bool> = vec![false; files.len()];
+    let mut file_errors = vec![false; files.len()];
 
     for wt in &linked {
         for (i, file) in files.iter().enumerate() {
             let source = primary_path.join(file);
             let dest = wt.path.join(file);
 
-            let meta = match dest.symlink_metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
+            let Ok(meta) = dest.symlink_metadata() else {
+                continue;
             };
 
             let is_correct_link = meta.file_type().is_symlink()
@@ -43,11 +42,11 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
             if !is_correct_link && !force {
                 if meta.file_type().is_symlink() {
                     eprintln!(
-                        "wt: skipped {file} ({}): symlink points elsewhere",
+                        "skipped {file} ({}): symlink points elsewhere",
                         wt.path.display()
                     );
                 } else {
-                    eprintln!("wt: skipped {file} ({}): not a symlink", wt.path.display());
+                    eprintln!("skipped {file} ({}): not a symlink", wt.path.display());
                 }
                 continue;
             }
@@ -59,12 +58,12 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
             };
 
             if let Err(e) = result {
-                eprintln!("wt: cannot remove {} in {}: {e}", file, wt.path.display());
+                eprintln!("cannot remove {} in {}: {e}", file, wt.path.display());
                 errors += 1;
                 file_errors[i] = true;
                 continue;
             }
-            eprintln!("wt: unlinked {file} ({})", wt.path.display());
+            eprintln!("unlinked {file} ({})", wt.path.display());
         }
     }
 
@@ -78,7 +77,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     if !succeeded.is_empty()
         && let Err(e) = config::remove_links(&repo_root, &succeeded)
     {
-        eprintln!("wt: cannot update link config: {e}");
+        eprintln!("cannot update link config: {e}");
     }
 
     if errors > 0 {

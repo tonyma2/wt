@@ -1,11 +1,12 @@
 pub fn is_stdout_tty() -> bool {
-    #[cfg(unix)]
-    {
-        unsafe { libc::isatty(libc::STDOUT_FILENO) != 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+pub fn print_cd_hint(name: &str) {
+    if is_stdout_tty() {
+        let escaped = name.replace("'", r"'\''");
+        eprintln!("cd \"$(wt path '{escaped}')\"");
     }
 }
 

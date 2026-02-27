@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::Path;
 
 use crate::git::Git;
@@ -89,10 +90,10 @@ fn worktree_status(git: &Git, wt: &Worktree) -> String {
             && let Some((ahead, behind)) = git.ahead_behind(branch)
         {
             if ahead > 0 {
-                s.push_str(&format!("+{ahead}"));
+                let _ = write!(s, "+{ahead}");
             }
             if behind > 0 {
-                s.push_str(&format!("-{behind}"));
+                let _ = write!(s, "-{behind}");
             }
         }
     }

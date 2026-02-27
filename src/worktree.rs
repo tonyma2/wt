@@ -131,8 +131,7 @@ pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
-    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
-    let wt_base = Path::new(&home).join(".wt").join("worktrees");
+    let wt_base = worktrees_root()?;
     let dest = unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
@@ -146,15 +145,30 @@ pub fn cleanup_dest(dest: &Path) {
     }
 }
 
-fn canonicalize_or_self(path: &Path) -> PathBuf {
+pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
+    Ok(Path::new(&home).join(".wt").join("worktrees"))
+}
+
+pub(crate) fn canonicalize_or_self(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {
+    if let Some(parent) = path.parent()
+        && is_managed_worktree_dir(parent)
+        && !is_cwd_inside(parent, cwd)
+        && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
 pub fn is_managed_worktree_dir(dir: &Path) -> bool {
-    let Ok(home) = std::env::var("HOME") else {
+    let Ok(wt_base) = worktrees_root() else {
         return false;
     };
-    let wt_base = Path::new(&home).join(".wt").join("worktrees");
     let canonical_wt_base = canonicalize_or_self(&wt_base);
     let canonical_dir = canonicalize_or_self(dir);
     canonical_dir.parent() == Some(canonical_wt_base.as_path())

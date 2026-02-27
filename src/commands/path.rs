@@ -16,11 +16,11 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         return Ok(());
     }
     if matches.len() > 1 {
-        eprintln!("wt: ambiguous name '{name}'; matches:");
+        eprintln!("ambiguous name '{name}'; matches:");
         for m in &matches {
             eprintln!("  - {}", m.path.display());
         }
-        return Err("multiple worktrees match; specify the full branch name".into());
+        return Err("multiple worktrees match, specify the full branch name".into());
     }
 
     if let Some(sha) = git.rev_parse(name) {
@@ -30,11 +30,11 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
             return Ok(());
         }
         if head_matches.len() > 1 {
-            eprintln!("wt: ambiguous ref '{name}'; matches:");
+            eprintln!("ambiguous ref '{name}'; matches:");
             for m in &head_matches {
                 eprintln!("  - {}", m.path.display());
             }
-            return Err("multiple worktrees match; specify a path instead".into());
+            return Err("multiple worktrees match, specify a path instead".into());
         }
     }
 

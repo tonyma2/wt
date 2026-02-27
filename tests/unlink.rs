@@ -70,7 +70,7 @@ fn unlinks_symlinked_file() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: unlinked .env"),
+        stderr.contains("unlinked .env"),
         "expected 'unlinked' message, got: {stderr}",
     );
     assert!(!wt_path.join(".env").exists(), "symlink should be removed",);
@@ -143,7 +143,7 @@ fn force_removes_non_symlink() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: unlinked .env"),
+        stderr.contains("unlinked .env"),
         "expected 'unlinked' message, got: {stderr}",
     );
     assert!(
