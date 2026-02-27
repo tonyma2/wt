@@ -25,16 +25,15 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     }
 
     let mut errors = 0usize;
-    let mut file_errors: Vec<bool> = vec![false; files.len()];
+    let mut file_errors = vec![false; files.len()];
 
     for wt in &linked {
         for (i, file) in files.iter().enumerate() {
             let source = primary_path.join(file);
             let dest = wt.path.join(file);
 
-            let meta = match dest.symlink_metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
+            let Ok(meta) = dest.symlink_metadata() else {
+                continue;
             };
 
             let is_correct_link = meta.file_type().is_symlink()
