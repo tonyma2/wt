@@ -131,7 +131,8 @@ pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
-    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
+    let home = std::env::var("HOME")
+        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
     let wt_base = Path::new(&home).join(".wt").join("worktrees");
     let dest = unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
@@ -146,7 +147,7 @@ pub fn cleanup_dest(dest: &Path) {
     }
 }
 
-fn canonicalize_or_self(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize_or_self(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 

@@ -51,7 +51,7 @@ fn switch_checks_out_existing_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: checking out 'feat/checkout-me'\n");
+    assert_stderr_exact(&output, "checking out 'feat/checkout-me'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(
@@ -71,7 +71,7 @@ fn switch_creates_new_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: creating branch 'feat/brand-new'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/brand-new'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(
@@ -96,7 +96,7 @@ fn switch_checks_out_remote_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: checking out 'feat/remote-only'\n");
+    assert_stderr_exact(&output, "checking out 'feat/remote-only'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(
@@ -170,7 +170,7 @@ fn switch_alias_works() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: creating branch 'feat/alias-test'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/alias-test'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(path.exists(), "worktree path should exist");
@@ -193,7 +193,7 @@ fn switch_skips_prunable_worktree() {
     assert!(output.status.success());
     assert_stderr_exact(
         &output,
-        "wt: pruning stale worktree metadata\nwt: checking out 'feat/prunable'\n",
+        "pruning stale worktree metadata\nchecking out 'feat/prunable'\n",
     );
 
     let new_path = parse_wt_new_path(&output);
@@ -228,7 +228,7 @@ fn switch_prunes_stale_metadata_when_live_match_exists() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: pruning stale worktree metadata\n");
+    assert_stderr_exact(&output, "pruning stale worktree metadata\n");
 
     let switch_path = parse_wt_new_path(&output);
     assert_eq!(canonical(&switch_path), canonical(&live_path));
@@ -256,7 +256,7 @@ fn switch_rejects_tag() {
     assert_error(
         &output,
         1,
-        "wt: 'v1.0' is not a branch; use `wt new v1.0` to check out a ref\n",
+        "'v1.0' is not a branch, use `wt new v1.0` to check out a ref\n",
     );
 }
 
@@ -274,7 +274,7 @@ fn switch_rejects_sha() {
     assert_stdout_empty(&output);
     assert_stderr_exact(
         &output,
-        &format!("wt: '{sha}' is not a branch; use `wt new {sha}` to check out a ref\n"),
+        &format!("'{sha}' is not a branch, use `wt new {sha}` to check out a ref\n"),
     );
 }
 
@@ -289,7 +289,7 @@ fn switch_rejects_head() {
     assert_error(
         &output,
         1,
-        "wt: 'HEAD' is not a branch; use `wt new HEAD` to check out a ref\n",
+        "'HEAD' is not a branch, use `wt new HEAD` to check out a ref\n",
     );
 }
 
@@ -412,7 +412,7 @@ fn switch_creates_when_no_close_match() {
     assert!(output.status.success());
     assert_stderr_exact(
         &output,
-        "wt: creating branch 'feat/something-completely-different'\n",
+        "creating branch 'feat/something-completely-different'\n",
     );
 }
 
@@ -427,7 +427,7 @@ fn switch_create_flag_bypasses_fuzzy_check() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: creating branch 'feat/logni'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/logni'\n");
     let path = parse_wt_new_path(&output);
     assert!(path.exists());
     assert_branch_present(&repo, "feat/logni");
@@ -442,7 +442,7 @@ fn no_cd_hint_when_stdout_not_tty() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: creating branch 'feat/hint-test'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/hint-test'\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("cd \"$(wt path"),
@@ -461,7 +461,7 @@ fn switch_create_flag_long_form() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: creating branch 'feat/logni'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/logni'\n");
 }
 
 #[test]
@@ -475,5 +475,5 @@ fn switch_no_fuzzy_check_for_existing_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "wt: checking out 'feat/logni'\n");
+    assert_stderr_exact(&output, "checking out 'feat/logni'\n");
 }

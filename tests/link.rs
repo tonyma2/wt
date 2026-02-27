@@ -70,7 +70,7 @@ fn idempotent_skip() {
     assert!(out1.status.success());
     let err1 = String::from_utf8_lossy(&out1.stderr);
     assert!(
-        err1.contains("wt: linked .env"),
+        err1.contains("linked .env"),
         "first run should create link, got: {err1}",
     );
 
@@ -78,11 +78,11 @@ fn idempotent_skip() {
     assert!(out2.status.success());
     let err2 = String::from_utf8_lossy(&out2.stderr);
     assert!(
-        !err2.contains("wt: linked .env"),
+        !err2.contains("linked .env"),
         "second run should not re-link, got: {err2}",
     );
     assert!(
-        !err2.contains("wt: skipped"),
+        !err2.contains("skipped"),
         "correct symlink should not warn, got: {err2}",
     );
     assert!(
@@ -212,7 +212,7 @@ fn warns_when_regular_file_exists() {
     assert!(output.status.success(), "should still exit 0");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: skipped .env"),
+        stderr.contains("skipped .env"),
         "expected skip warning, got: {stderr}",
     );
     assert!(
@@ -248,7 +248,7 @@ fn warns_when_wrong_symlink_exists() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: skipped .env"),
+        stderr.contains("skipped .env"),
         "expected skip warning for wrong symlink, got: {stderr}",
     );
 }
@@ -269,11 +269,11 @@ fn force_replaces_regular_file() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: linked .env"),
+        stderr.contains("linked .env"),
         "should report linking, got: {stderr}",
     );
     assert!(
-        !stderr.contains("wt: skipped"),
+        !stderr.contains("skipped"),
         "should not warn with --force, got: {stderr}",
     );
 
@@ -300,7 +300,7 @@ fn force_replaces_directory_conflict() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: linked .env"),
+        stderr.contains("linked .env"),
         "should report linking, got: {stderr}",
     );
 
@@ -352,7 +352,7 @@ fn force_skips_correct_symlink() {
     assert!(out2.status.success());
     let stderr = String::from_utf8_lossy(&out2.stderr);
     assert!(
-        !stderr.contains("wt: linked"),
+        !stderr.contains("linked"),
         "should skip correct symlink even with --force, got: {stderr}",
     );
 

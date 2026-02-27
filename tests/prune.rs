@@ -1349,7 +1349,7 @@ fn gone_skips_when_tracking_remote_is_missing() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("remote 'ghost' not found; skipping upstream-gone pruning"),
+        stderr.contains("remote 'ghost' not found, skipping upstream-gone pruning"),
         "expected missing-remote warning, got: {stderr}",
     );
 }
@@ -1379,13 +1379,13 @@ fn reports_repo_prune_failures_with_aggregate_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(&format!(
-            "wt: cannot prune {}: cannot prune worktree metadata",
+            "cannot prune {}: cannot prune worktree metadata",
             broken_repo.display()
         )),
         "expected per-repo prune error, got: {stderr}",
     );
     assert!(
-        stderr.contains("wt: cannot prune 1 repo(s)\n"),
+        stderr.contains("cannot prune 1 repo(s)\n"),
         "expected aggregate prune error, got: {stderr}",
     );
 }
@@ -1409,7 +1409,7 @@ fn warns_and_skips_when_dot_git_file_is_malformed() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: warning: cannot parse"),
+        stderr.contains("cannot parse"),
         "expected malformed .git warning, got: {stderr}",
     );
     assert!(

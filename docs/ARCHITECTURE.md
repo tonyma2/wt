@@ -53,8 +53,8 @@ Exceptions:
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
 **rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
-- Validates: not primary worktree, not cwd, branch exists locally, not checked out elsewhere, not dirty/unmerged (unless `--force`)
-- Removes worktree, then deletes the branch
+- Validates: not primary worktree, not cwd, not checked out elsewhere, not dirty/unmerged (unless `--force`)
+- Removes worktree, then deletes the branch (skips branch deletion if already removed externally)
 - Multiple targets accumulate errors rather than aborting on the first
 
 **prune** — Two modes:

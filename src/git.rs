@@ -37,7 +37,7 @@ impl Git {
         cmd.args(["rev-parse", "--show-toplevel"]);
         let output = cmd.output().map_err(|e| format!("cannot run git: {e}"))?;
         if !output.status.success() {
-            return Err("not a git repository; use --repo or run inside one".into());
+            return Err("not a git repository, use --repo or run inside one".into());
         }
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
         Ok(PathBuf::from(s))
@@ -275,6 +275,7 @@ impl Git {
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.cmd()
             .args(["merge-base", "--is-ancestor", ancestor, descendant])
+            .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|s| s.success())

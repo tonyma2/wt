@@ -140,15 +140,15 @@ _wt_remove_targets() {
         const NAMES_TARGET: &str = "*::names -- Branch names or paths:_default";
         if !script.contains(NAME_TARGET) {
             return Err(
-                "zsh completion generation failed: clap_complete output format changed \
-                 (name target not found); please report this bug"
+                "cannot generate zsh completions: clap_complete output format changed \
+                 (name target not found), please report this bug"
                     .into(),
             );
         }
         if !script.contains(NAMES_TARGET) {
             return Err(
-                "zsh completion generation failed: clap_complete output format changed \
-                 (names target not found); please report this bug"
+                "cannot generate zsh completions: clap_complete output format changed \
+                 (names target not found), please report this bug"
                     .into(),
             );
         }

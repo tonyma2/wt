@@ -40,7 +40,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("wt: {e}");
+        eprintln!("{e}");
         process::exit(1);
     }
 }

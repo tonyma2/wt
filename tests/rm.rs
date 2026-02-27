@@ -57,7 +57,7 @@ fn refuses_dirty_without_force() {
     assert_error(
         &output,
         1,
-        "wt: worktree has local changes; use --force to remove\n",
+        "worktree has local changes, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -98,7 +98,7 @@ fn refuses_unmerged_branch_without_remote() {
     assert_error(
         &output,
         1,
-        "wt: branch 'local-unmerged' has unpushed commits; use --force to remove\n",
+        "branch 'local-unmerged' has unpushed commits, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -128,7 +128,7 @@ fn refuses_unmerged_branch_even_if_other_local_branch_contains_it() {
     assert_error(
         &output,
         1,
-        "wt: branch 'local-unmerged-contained' has unpushed commits; use --force to remove\n",
+        "branch 'local-unmerged-contained' has unpushed commits, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -182,7 +182,7 @@ fn removing_multiple_targets_reports_failures_and_removes_successes() {
         "should report failing target, got: {stderr}",
     );
     assert!(
-        stderr.contains("1 worktree(s) could not be removed"),
+        stderr.contains("cannot remove 1 worktree(s)"),
         "should report aggregate failure count, got: {stderr}",
     );
     assert!(
@@ -209,7 +209,7 @@ fn rejects_ambiguous_branch_name() {
     assert_stdout_empty(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt: ambiguous name 'shared'; matches:\n"),
+        stderr.contains("ambiguous name 'shared'; matches:\n"),
         "expected ambiguity header, got: {stderr}",
     );
     assert!(
@@ -221,7 +221,7 @@ fn rejects_ambiguous_branch_name() {
         "expected linked worktree path, got: {stderr}",
     );
     assert!(
-        stderr.contains("wt: multiple worktrees match; specify a path instead\n"),
+        stderr.contains("multiple worktrees match, specify a path instead\n"),
         "expected ambiguity guidance, got: {stderr}",
     );
     assert!(wt_path.exists());
@@ -693,4 +693,35 @@ fn errors_when_ref_matches_multiple_detached_worktrees() {
     );
     assert!(wt1.exists(), "worktree should not be removed on ambiguity");
     assert!(wt2.exists(), "worktree should not be removed on ambiguity");
+}
+
+#[test]
+fn removes_worktree_when_branch_deleted_externally() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "gone-branch");
+
+    assert_git_success(&repo, &["update-ref", "-d", "refs/heads/gone-branch"]);
+
+    let output = wt_bin()
+        .args(["rm", "--force", "--repo"])
+        .arg(&repo)
+        .arg(&wt_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm should succeed when branch was deleted externally: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("removed worktree ("),
+        "should print worktree-only message, got: {stderr}",
+    );
+    assert!(
+        !stderr.contains("removed worktree and branch"),
+        "should not mention branch deletion, got: {stderr}",
+    );
 }
