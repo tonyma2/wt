@@ -40,7 +40,7 @@ fn repo_key(repo: &Path) -> String {
     std::fs::canonicalize(repo)
         .unwrap_or_else(|_| repo.to_path_buf())
         .to_string_lossy()
-        .to_string()
+        .into_owned()
 }
 
 pub fn add_links(repo: &Path, files: &[String]) -> Result<(), String> {

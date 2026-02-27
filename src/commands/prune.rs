@@ -95,15 +95,13 @@ fn discover_repos(wt_root: &Path) -> BTreeSet<PathBuf> {
 }
 
 fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
 
     for entry in entries.flatten() {
-        let ft = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
+        let Ok(ft) = entry.file_type() else {
+            continue;
         };
         if !ft.is_dir() {
             continue;
@@ -161,9 +159,8 @@ fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
             }
         };
 
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
+        let Ok(file_type) = entry.file_type() else {
+            continue;
         };
         if !file_type.is_dir() {
             continue;
