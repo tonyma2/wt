@@ -64,21 +64,19 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     Ok(())
 }
 
-pub fn auto_link(repo_root: &std::path::Path, worktree_path: &std::path::Path) {
+pub fn auto_link(repo_root: &Path, worktree_path: &Path) {
     let files = config::get_links(repo_root);
     if files.is_empty() {
         return;
     }
 
     let git = Git::new(repo_root);
-    let output = match git.list_worktrees() {
-        Ok(o) => o,
-        Err(_) => return,
+    let Ok(output) = git.list_worktrees() else {
+        return;
     };
     let worktrees = worktree::parse_porcelain(&output);
-    let primary = match worktrees.first() {
-        Some(p) => p,
-        None => return,
+    let Some(primary) = worktrees.first() else {
+        return;
     };
     let primary_path = &primary.path;
 

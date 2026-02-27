@@ -10,7 +10,8 @@ pub struct Config {
 }
 
 fn config_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "$HOME is not set".to_string())?;
+    let home = std::env::var("HOME")
+        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
     Ok(Path::new(&home).join(".wt").join("config"))
 }
 

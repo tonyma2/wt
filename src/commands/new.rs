@@ -45,9 +45,6 @@ pub fn run(
 
     println!("{}", dest.display());
 
-    if terminal::is_stdout_tty() {
-        let escaped = name.replace("'", r"'\''");
-        eprintln!("cd \"$(wt path '{escaped}')\"");
-    }
+    terminal::print_cd_hint(name);
     Ok(())
 }

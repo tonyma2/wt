@@ -99,9 +99,6 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
 
     println!("{}", dest.display());
 
-    if terminal::is_stdout_tty() {
-        let escaped = name.replace("'", r"'\''");
-        eprintln!("cd \"$(wt path '{escaped}')\"");
-    }
+    terminal::print_cd_hint(name);
     Ok(())
 }

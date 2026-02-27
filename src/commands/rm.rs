@@ -76,13 +76,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     git.remove_worktree(&target, force)?;
 
-    if let Some(parent) = target.parent()
-        && worktree::is_managed_worktree_dir(parent)
-        && !worktree::is_cwd_inside(parent, cwd.as_deref())
-        && std::fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
-    {
-        let _ = std::fs::remove_dir(parent);
-    }
+    worktree::cleanup_empty_parent(&target, cwd.as_deref());
 
     if let Some(branch) = &branch
         && branch_exists
@@ -169,7 +163,7 @@ fn resolve_path(input: &Path) -> Result<PathBuf, String> {
     let toplevel = Git::find_repo(Some(&abs))
         .map_err(|_| format!("not a worktree root: {}", input.display()))?;
 
-    let toplevel_canon = std::fs::canonicalize(&toplevel).unwrap_or(toplevel);
+    let toplevel_canon = worktree::canonicalize_or_self(&toplevel);
 
     if abs != toplevel_canon {
         return Err(format!("not a worktree root: {}", input.display()));

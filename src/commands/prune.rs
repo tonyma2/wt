@@ -24,14 +24,12 @@ pub fn run(
         return Ok(());
     }
 
-    let home = std::env::var("HOME")
-        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
-    let wt_root = Path::new(&home).join(".wt").join("worktrees");
+    let wt_root = worktree::worktrees_root()?;
 
     if !wt_root.is_dir() {
         return Ok(());
     }
-    let wt_root = fs::canonicalize(&wt_root).unwrap_or(wt_root);
+    let wt_root = worktree::canonicalize_or_self(&wt_root);
 
     let repos = discover_repos(&wt_root);
     let mut errors = 0usize;
@@ -357,13 +355,7 @@ fn prune_merged(
             continue;
         }
 
-        if let Some(parent) = candidate.path.parent()
-            && worktree::is_managed_worktree_dir(parent)
-            && !worktree::is_cwd_inside(parent, cwd)
-            && fs::read_dir(parent).is_ok_and(|mut d| d.next().is_none())
-        {
-            let _ = fs::remove_dir(parent);
-        }
+        worktree::cleanup_empty_parent(&candidate.path, cwd);
 
         if let Err(e) = git.delete_branch(&candidate.branch, true) {
             eprintln!("{e}");
