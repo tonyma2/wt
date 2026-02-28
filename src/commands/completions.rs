@@ -155,10 +155,7 @@ _wt_remove_targets() {
             PATH_NAME_TARGET,
             ":name -- Branch name, tag, or ref:_wt_path_branches",
         );
-        script = script.replace(
-            SWITCH_NAME_TARGET,
-            ":name -- Branch name:_wt_path_branches",
-        );
+        script = script.replace(SWITCH_NAME_TARGET, ":name -- Branch name:_wt_path_branches");
         script = script.replace(
             NAMES_TARGET,
             "*::names -- Branch names, refs, or paths:_wt_remove_targets",

@@ -36,9 +36,12 @@ fn main() {
             commands::switch::run(name, *create, repo.as_deref())
         }
         Command::Link { files, repo, force } => commands::link::run(files, repo.as_deref(), *force),
-        Command::Unlink { files, repo, force } => {
-            commands::unlink::run(files, repo.as_deref(), *force)
-        }
+        Command::Unlink {
+            files,
+            repo,
+            force,
+            all,
+        } => commands::unlink::run(files, repo.as_deref(), *force, *all),
     };
 
     if let Err(e) = result {
