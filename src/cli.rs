@@ -167,8 +167,8 @@ pub enum Command {
     /// Remove linked files from linked worktrees
     #[command(
         long_about = "Remove previously linked files from all linked worktrees.\n\
-            Only removes symlinks that point to the primary worktree's copy.\n\
-            Non-symlink files and symlinks pointing elsewhere are skipped unless --force is used.\n\
+            Only removes symlinks that point back to the primary worktree.\n\
+            Non-symlinks and symlinks pointing elsewhere are skipped unless --force is used.\n\
             Use --all to unlink every file listed in the config.",
         after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink .env --force\n  wt unlink --all"
     )]

@@ -36,7 +36,7 @@ fn save(config: &Config) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
-fn repo_key(repo: &Path) -> String {
+pub fn repo_key(repo: &Path) -> String {
     std::fs::canonicalize(repo)
         .unwrap_or_else(|_| repo.to_path_buf())
         .to_string_lossy()

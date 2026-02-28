@@ -9,7 +9,12 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
     let repo_root = Git::find_repo(repo)?;
 
     let files = if all {
-        let linked = config::get_links(&repo_root);
+        let cfg = config::load()?;
+        let linked = cfg
+            .links
+            .get(&config::repo_key(&repo_root))
+            .cloned()
+            .unwrap_or_default();
         if linked.is_empty() {
             eprintln!("no linked files in config");
             return Ok(());
