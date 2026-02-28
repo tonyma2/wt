@@ -294,6 +294,24 @@ fn all_unlinks_files_from_config() {
 }
 
 #[test]
+fn all_no_linked_worktrees() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let output = wt_unlink_all(home.path(), &repo);
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no linked worktrees"),
+        "expected 'no linked worktrees', got: {stderr}",
+    );
+}
+
+#[test]
 fn all_with_empty_config() {
     let (home, repo) = setup();
     let _wt_path = wt_new(home.path(), &repo, "feat-all-empty");
