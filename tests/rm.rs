@@ -98,7 +98,7 @@ fn refuses_unmerged_branch_without_remote() {
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged' has unpushed commits, use --force to remove\n",
+        "branch 'local-unmerged' is not fully merged, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -128,7 +128,7 @@ fn refuses_unmerged_branch_even_if_other_local_branch_contains_it() {
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged-contained' has unpushed commits, use --force to remove\n",
+        "branch 'local-unmerged-contained' is not fully merged, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }

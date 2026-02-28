@@ -69,7 +69,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
-                "branch '{branch}' has unpushed commits, use --force to remove"
+                "branch '{branch}' is not fully merged, use --force to remove"
             ));
         }
     }

@@ -91,7 +91,7 @@ fn errors_when_branch_name_is_ambiguous() {
         "expected linked worktree path, got: {stderr}",
     );
     assert!(
-        stderr.contains("multiple worktrees match, specify the full branch name\n"),
+        stderr.contains("multiple worktrees match, specify a path instead\n"),
         "expected ambiguity guidance, got: {stderr}",
     );
 }

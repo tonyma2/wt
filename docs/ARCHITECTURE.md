@@ -35,7 +35,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 
 ## Data Flow
 
-Commands that query existing worktrees (list, rm, path, switch, link, prune) follow this pattern:
+Commands that query existing worktrees (list, rm, path, switch, link, unlink, prune) follow this pattern:
 
 ```
 Git::find_repo(repo_arg)  →  Git::new(repo_root)  →  git.list_worktrees()
@@ -52,7 +52,7 @@ Exceptions:
 
 **list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
 
-**rm** — Accepts branch names or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
+**rm** — Accepts branch names, refs, or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
 - Validates: not primary worktree, not cwd, not checked out elsewhere, not dirty/unmerged (unless `--force`)
 - Removes worktree, then deletes the branch (skips branch deletion if already removed externally)
 - Multiple targets accumulate errors rather than aborting on the first
@@ -60,7 +60,7 @@ Exceptions:
 **prune** — Two modes:
 - With `--repo`: prunes a single repo's stale metadata and merged worktrees
 - Without `--repo` (default): discovers all repos from `~/.wt/worktrees/` via recursive `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
-- Merged-worktree pruning skips dirty worktrees; skipped entirely if no remote exists. `--base` overrides the auto-detected default branch for merged detection
+- Merged-worktree pruning skips dirty worktrees; skipped if no default branch can be detected (no remote, no `--base`). `--base` overrides the auto-detected default branch
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Falls back to resolving the name as a ref (tag, SHA) and matching against detached HEAD worktrees. Errors on ambiguous matches.
