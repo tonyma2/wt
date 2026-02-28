@@ -48,9 +48,11 @@ _wt_collect_worktree_rows() {
     local -a cmd flags
     local line wt_path branch
     typeset -ga _wt_completion_branches _wt_completion_paths _wt_completion_flags
+    typeset -g _wt_main_path
     _wt_completion_branches=()
     _wt_completion_paths=()
     _wt_completion_flags=()
+    _wt_main_path=""
     _wt_extract_repo_args
     cmd=(command wt list --porcelain "${_wt_repo_args[@]}")
     while IFS= read -r line; do
@@ -61,6 +63,7 @@ _wt_collect_worktree_rows() {
                 _wt_completion_flags+=("${flags[*]}")
             fi
             wt_path=${line#worktree }
+            [[ -z $_wt_main_path ]] && _wt_main_path="$wt_path"
             branch=""
             flags=()
         elif [[ $line == branch\ refs/heads/* ]]; then
@@ -94,6 +97,7 @@ _wt_collect_local_branches() {
     local -a cmd
     typeset -ga _wt_local_branches
     _wt_local_branches=()
+    _wt_extract_repo_args
     cmd=(git)
     if (( ${#_wt_repo_args[@]} > 0 )); then
         cmd+=(-C "${_wt_repo_args[2]}")
@@ -140,7 +144,7 @@ _wt_complete_branches_with_paths() {
             path_display="...${path_display[-$((max_path - 3)),-1]}"
         fi
         details="$path_display"
-        if [[ $idx -eq 1 ]]; then
+        if [[ ${_wt_completion_paths[idx]} == "$_wt_main_path" ]]; then
             details="$details [main]"
         fi
         if [[ -n ${_wt_completion_flags[idx]} ]]; then
@@ -208,7 +212,7 @@ _wt_switch_targets() {
             path_display="...${path_display[-$((max_path - 3)),-1]}"
         fi
         details="$path_display"
-        if [[ $idx -eq 1 ]]; then
+        if [[ ${_wt_completion_paths[idx]} == "$_wt_main_path" ]]; then
             details="$details [main]"
         fi
         if [[ -n ${_wt_completion_flags[idx]} ]]; then
@@ -258,7 +262,6 @@ _wt_new_name() {
 }
 
 _wt_new_base() {
-    _wt_extract_repo_args
     _wt_collect_local_branches
     (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
 }
