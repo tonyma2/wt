@@ -20,7 +20,7 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         for m in &matches {
             eprintln!("  - {}", m.path.display());
         }
-        return Err("multiple worktrees match, specify the full branch name".into());
+        return Err("multiple worktrees match, specify a path instead".into());
     }
 
     if let Some(sha) = git.rev_parse(name) {

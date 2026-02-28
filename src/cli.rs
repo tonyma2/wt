@@ -49,17 +49,18 @@ pub enum Command {
         #[arg(long)]
         porcelain: bool,
     },
-    /// Remove worktrees by name or path
+    /// Remove worktrees by name, ref, or path
     #[command(
         visible_alias = "rm",
-        long_about = "Remove linked worktrees by branch name or exact worktree root path.\n\
+        long_about = "Remove worktrees by branch name, ref, or worktree root path.\n\
+            Tags and other non-branch refs are resolved to detached HEAD worktrees.\n\
             Name lookup requires repository context (current repo or --repo).\n\
-            Also deletes the linked local branch by default.\n\
+            Also deletes the local branch by default.\n\
             Use --force to remove dirty worktrees and force-delete the branch.",
-        after_help = "Examples:\n  wt rm feat/login\n  wt rm feat/a feat/b feat/c\n  wt rm /Users/me/.wt/worktrees/a3f2/my-repo\n  wt rm feat/login --force"
+        after_help = "Examples:\n  wt rm feat/login\n  wt rm v1.0\n  wt rm feat/a feat/b feat/c\n  wt rm /Users/me/.wt/worktrees/a3f2/my-repo\n  wt rm feat/login --force"
     )]
     Remove {
-        /// Branch names or paths
+        /// Branch names, refs, or paths
         #[arg(required = true)]
         names: Vec<String>,
         /// Repository path
@@ -69,18 +70,18 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Clean up stale worktree metadata and orphaned directories
+    /// Clean up merged, stale, and orphaned worktrees
     #[command(
-        long_about = "Remove stale worktree metadata for missing directories, \
-            and remove orphaned worktree directories whose backing repository \
-            has been deleted.\n\n\
-            Worktrees whose branch is fully merged into the base branch are also removed.\n\n\
+        long_about = "Clean up merged, stale, and orphaned worktrees.\n\n\
+            Removes worktrees whose branch is fully merged into the base branch. \
+            Also prunes stale worktree metadata for missing directories, and removes \
+            orphaned worktree directories whose backing repository has been deleted.\n\n\
             Use --gone to also remove worktrees whose upstream tracking branch no longer \
             exists (e.g. after a squash-merge deleted the remote branch).\n\n\
             Use --base to override the auto-detected default branch for merged detection \
             (useful when the base branch is not main/master, or there is no remote).\n\n\
-            By default, discovers all repos from ~/.wt/worktrees/ and prunes each one, \
-            then cleans up orphaned directories. Use --repo to target a single repository.",
+            By default, discovers all repos from ~/.wt/worktrees/ and prunes each one. \
+            Use --repo to target a single repository.",
         after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --base develop\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
     )]
     Prune {
@@ -110,10 +111,13 @@ pub enum Command {
     /// Print the path to a worktree
     #[command(
         visible_alias = "p",
-        after_help = "Examples:\n  wt path feat/login\n  cd \"$(wt p feat/login)\""
+        long_about = "Print the path to a worktree.\n\
+            Looks up by branch name. Tags and other non-branch refs are resolved \
+            to a commit SHA and matched against detached HEAD worktrees.",
+        after_help = "Examples:\n  wt path feat/login\n  wt path v1.0\n  cd \"$(wt p feat/login)\""
     )]
     Path {
-        /// Worktree branch name
+        /// Branch name, tag, or ref
         name: String,
         /// Repository path
         #[arg(long)]
@@ -132,7 +136,7 @@ pub enum Command {
         after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  wt switch -c feat/new-branch\n  cd \"$(wt switch feat/login)\""
     )]
     Switch {
-        /// Worktree branch name
+        /// Branch name
         name: String,
         /// Create a new branch, skipping the similar-name check
         #[arg(short = 'c', long = "create")]
@@ -146,7 +150,7 @@ pub enum Command {
         visible_alias = "ln",
         long_about = "Link files from the primary worktree into all linked worktrees.\n\
             Source files must exist in the primary worktree.\n\
-            Correct symlinks are skipped. Non-symlink conflicts warn and skip unless --force is used.",
+            Correct symlinks are left in place. Conflicts are skipped unless --force is used.",
         after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force"
     )]
     Link {
@@ -163,8 +167,8 @@ pub enum Command {
     /// Remove linked files from linked worktrees
     #[command(
         long_about = "Remove previously linked files from all linked worktrees.\n\
-            Only removes symlinks that point to the primary worktree's copy.\n\
-            Non-symlink files and symlinks pointing elsewhere are skipped unless --force is used.",
+            Only removes symlinks that point back to the primary worktree.\n\
+            Non-symlinks and symlinks pointing elsewhere are skipped unless --force is used.",
         after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink .env --force"
     )]
     Unlink {

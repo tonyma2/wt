@@ -20,7 +20,7 @@ Shell wrappers depend on `cd "$(wt new ...)"` capturing stdout as a path. Any no
 
 ## Do not replace string replacement with a custom clap completer
 
-Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust. **Caveat:** the replacement strings are coupled to the `///` help text on the `name` and `names` args in `cli.rs`. Changing those docstrings silently degrades completion. The unit test `zsh_path_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
+Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust. **Caveat:** the replacement strings are coupled to the `///` help text on the `name` args (separate targets for `path` and `switch`) and the `names` arg in `cli.rs`. Changing those docstrings silently degrades completion. The unit test `zsh_path_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
 
 ## Do not add doc comments outside `cli.rs`
 

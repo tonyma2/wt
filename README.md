@@ -1,6 +1,16 @@
 # wt
 
-Git worktree manager. Creates worktrees under `~/.wt/worktrees/<id>/<repo>/` and manages their lifecycle.
+Git worktree manager.
+
+`wt` creates worktrees under `~/.wt/worktrees/`, manages branch lifecycle, and keeps shared files in sync across worktrees.
+
+## Features
+
+- **Create and switch** — check out branches into isolated worktrees with `wt new`, or use `wt switch` to find an existing worktree or create one
+- **Clean up** — `wt prune` removes worktrees whose branches are merged or whose upstream is gone
+- **Link shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
+- **Typo detection** — `wt switch` catches misspelled branch names with fuzzy matching before creating a new branch
+- **Script-friendly** — stdout is always data (paths, porcelain output); messages go to stderr
 
 ## Install
 
@@ -8,12 +18,35 @@ Git worktree manager. Creates worktrees under `~/.wt/worktrees/<id>/<repo>/` and
 cargo install --path .
 ```
 
-Add a shell wrapper to get `cd` behavior after `wt new` and `wt path`:
+## Usage
+
+```sh
+wt new my-feature                # check out existing branch
+wt new -c my-feature             # create new branch from HEAD
+wt new -c my-feature develop     # create from base
+wt new v2.0                      # check out tag (detached HEAD)
+wt switch my-feature             # get or create worktree
+wt list                          # list worktrees
+wt remove my-feature             # remove worktree and branch
+wt path my-feature               # print worktree path
+wt prune                         # remove merged worktrees
+wt prune --gone                  # also remove upstream-gone
+wt link .env .env.local          # symlink into all worktrees
+wt unlink .env                   # remove symlinks
+```
+
+Short aliases: `n`, `s`, `ls`, `rm`, `p`, `ln`.
+
+All commands accept `--repo <path>`. Run `wt <command> --help` for full options.
+
+## Shell Integration
+
+`new`, `switch`, and `path` print the worktree path to stdout. Add this function to your shell config to cd automatically:
 
 ```sh
 wt() {
   case "$1" in
-    new|n|path|p)
+    new|n|path|p|switch|s)
       local out
       out=$(command wt "$@") || return
       if [[ -n "$out" && -d "$out" ]]; then
@@ -27,30 +60,10 @@ wt() {
 }
 ```
 
-Enable zsh tab completion:
+### Tab Completion
 
 ```sh
 wt completions zsh > "$(brew --prefix)/share/zsh/site-functions/_wt"
 ```
 
-## Usage
-
-```
-wt new <name> [--repo <path>]                      Check out an existing branch or ref (alias: n)
-wt new -c <name> [base] [--repo <path>]            Create a new branch (optionally from [base]) (alias: n)
-wt remove <branch>... [--force] [--repo <path>]    Remove worktrees and their branches (alias: rm)
-wt link <file>... [--force] [--repo <path>]        Link files from primary worktree (alias: ln)
-wt list [--repo <path>]                            List worktrees (alias: ls)
-wt path <branch> [--repo <path>]                   Print worktree path (alias: p)
-wt prune [--dry-run] [--repo <path>]               Clean up stale and orphaned worktrees
-wt completions <shell>                             Generate shell completions (bash/zsh/fish)
-```
-
-### Options
-
-```
---repo <path>    Specify repository (default: current repo)
---force          Force operation (rm: remove dirty worktrees; link: replace conflicting targets)
---dry-run, -n    Show what prune would do without doing it
--c, --create     Create a new branch (wt new only; [base] requires --create)
-```
+Also available for bash and fish — see `wt completions --help`.

@@ -17,7 +17,7 @@ Conventional commits — imperative mood, lowercase, no period. No additional de
 | Field     | Detail                                                                                    |
 |-----------|-------------------------------------------------------------------------------------------|
 | **Type**  | `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`                                  |
-| **Scope** | Optional — subcommand or module name (`prune`, `new`, `list`, `rm`, `link`, `path`)       |
+| **Scope** | Optional — subcommand or module name (`new`, `switch`, `rm`, `list`, `path`, `prune`, `link`, `unlink`, `completions`) |
 | **`!`**   | Before `:` to signal a breaking change                                                    |
 | **Footer**| `BREAKING CHANGE: explanation` when impact isn't obvious; git trailers (`Co-Authored-By`) |
 

@@ -136,29 +136,32 @@ _wt_remove_targets() {
         } else {
             script.push_str(helper);
         }
-        const NAME_TARGET: &str = ":name -- Worktree branch name:_default";
-        const NAMES_TARGET: &str = "*::names -- Branch names or paths:_default";
-        if !script.contains(NAME_TARGET) {
-            return Err(
-                "cannot generate zsh completions: clap_complete output format changed \
-                 (name target not found), please report this bug"
-                    .into(),
-            );
-        }
-        if !script.contains(NAMES_TARGET) {
-            return Err(
-                "cannot generate zsh completions: clap_complete output format changed \
-                 (names target not found), please report this bug"
-                    .into(),
-            );
+        const PATH_NAME_TARGET: &str = ":name -- Branch name, tag, or ref:_default";
+        const SWITCH_NAME_TARGET: &str = ":name -- Branch name:_default";
+        const NAMES_TARGET: &str = "*::names -- Branch names, refs, or paths:_default";
+        for (label, target) in [
+            ("path name", PATH_NAME_TARGET),
+            ("switch name", SWITCH_NAME_TARGET),
+            ("names", NAMES_TARGET),
+        ] {
+            if !script.contains(target) {
+                return Err(format!(
+                    "cannot generate zsh completions: clap_complete output format changed \
+                     ({label} target not found), please report this bug"
+                ));
+            }
         }
         script = script.replace(
-            NAME_TARGET,
-            ":name -- Worktree branch name:_wt_path_branches",
+            PATH_NAME_TARGET,
+            ":name -- Branch name, tag, or ref:_wt_path_branches",
+        );
+        script = script.replace(
+            SWITCH_NAME_TARGET,
+            ":name -- Branch name:_wt_path_branches",
         );
         script = script.replace(
             NAMES_TARGET,
-            "*::names -- Branch names or paths:_wt_remove_targets",
+            "*::names -- Branch names, refs, or paths:_wt_remove_targets",
         );
     }
 
@@ -184,13 +187,19 @@ mod tests {
         );
         assert_eq!(
             script
-                .matches(":name -- Worktree branch name:_wt_path_branches")
+                .matches(":name -- Branch name, tag, or ref:_wt_path_branches")
                 .count(),
-            4
+            2
         );
         assert_eq!(
             script
-                .matches("*::names -- Branch names or paths:_wt_remove_targets")
+                .matches(":name -- Branch name:_wt_path_branches")
+                .count(),
+            2
+        );
+        assert_eq!(
+            script
+                .matches("*::names -- Branch names, refs, or paths:_wt_remove_targets")
                 .count(),
             2
         );
