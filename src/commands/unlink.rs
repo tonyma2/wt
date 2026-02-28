@@ -5,13 +5,25 @@ use crate::config;
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
+pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
+
+    let files = if all {
+        let linked = config::get_links(&repo_root);
+        if linked.is_empty() {
+            eprintln!("no linked files in config");
+            return Ok(());
+        }
+        linked
+    } else {
+        files.to_vec()
+    };
+
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    for file in files {
+    for file in &files {
         validate_path(file)?;
     }
 

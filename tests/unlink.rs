@@ -20,6 +20,14 @@ fn wt_unlink(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
     })
 }
 
+fn wt_unlink_all(home: &Path, repo: &Path) -> std::process::Output {
+    run_wt(home, |cmd| {
+        cmd.arg("unlink");
+        cmd.arg("--all");
+        cmd.args(["--repo"]).arg(repo);
+    })
+}
+
 fn unlink_force(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
     run_wt(home, |cmd| {
         cmd.arg("unlink");
@@ -240,4 +248,147 @@ fn rejects_dotdot() {
         stderr.contains("must not contain '..'"),
         "expected 'must not contain ..', got: {stderr}",
     );
+}
+
+#[test]
+fn all_unlinks_files_from_config() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    std::fs::write(repo.join(".env.local"), "LOCAL=xyz").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-all-unlink");
+
+    let link_out = wt_link(home.path(), &repo, &[".env", ".env.local"]);
+    assert!(link_out.status.success());
+    assert!(
+        wt_path
+            .join(".env")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        wt_path
+            .join(".env.local")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let output = wt_unlink_all(home.path(), &repo);
+    assert!(
+        output.status.success(),
+        "wt unlink --all failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(
+        !wt_path.join(".env").exists(),
+        ".env symlink should be removed"
+    );
+    assert!(
+        !wt_path.join(".env.local").exists(),
+        ".env.local symlink should be removed"
+    );
+}
+
+#[test]
+fn all_with_empty_config() {
+    let (home, repo) = setup();
+    let _wt_path = wt_new(home.path(), &repo, "feat-all-empty");
+
+    let output = wt_unlink_all(home.path(), &repo);
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no linked files in config"),
+        "expected 'no linked files in config', got: {stderr}",
+    );
+}
+
+#[test]
+fn all_conflicts_with_files() {
+    let (home, repo) = setup();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["unlink", ".env", "--all", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 2);
+}
+
+#[test]
+fn no_files_and_no_all_errors() {
+    let (home, repo) = setup();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["unlink", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 2);
+}
+
+#[test]
+fn all_removes_config_entries() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt_path = wt_new(home.path(), &repo, "feat-all-cfg");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let config_path = home.path().join(".wt").join("config");
+    let before = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        before.contains(".env"),
+        "config should contain .env before unlink"
+    );
+
+    let output = wt_unlink_all(home.path(), &repo);
+    assert!(
+        output.status.success(),
+        "wt unlink --all failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let after = std::fs::read_to_string(&config_path).unwrap_or_default();
+    assert!(
+        !after.contains(".env"),
+        "config should not contain .env after unlink --all, got: {after}",
+    );
+}
+
+#[test]
+fn all_unlinks_from_multiple_worktrees() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let wt1 = wt_new(home.path(), &repo, "feat-all-multi-a");
+    let wt2 = wt_new(home.path(), &repo, "feat-all-multi-b");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+    assert!(
+        wt1.join(".env")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        wt2.join(".env")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let output = wt_unlink_all(home.path(), &repo);
+    assert!(
+        output.status.success(),
+        "wt unlink --all failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(!wt1.join(".env").exists(), "symlink removed from wt1");
+    assert!(!wt2.join(".env").exists(), "symlink removed from wt2");
 }

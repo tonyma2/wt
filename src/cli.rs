@@ -167,13 +167,14 @@ pub enum Command {
     /// Remove linked files from linked worktrees
     #[command(
         long_about = "Remove previously linked files from all linked worktrees.\n\
-            Only removes symlinks that point back to the primary worktree.\n\
-            Non-symlinks and symlinks pointing elsewhere are skipped unless --force is used.",
-        after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink .env --force"
+            Only removes symlinks that point to the primary worktree's copy.\n\
+            Non-symlink files and symlinks pointing elsewhere are skipped unless --force is used.\n\
+            Use --all to unlink every file listed in the config.",
+        after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink .env --force\n  wt unlink --all"
     )]
     Unlink {
         /// Files or directories to unlink
-        #[arg(required = true)]
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
         files: Vec<String>,
         /// Repository path
         #[arg(long)]
@@ -181,5 +182,8 @@ pub enum Command {
         /// Remove even if not a symlink to the primary worktree
         #[arg(long)]
         force: bool,
+        /// Unlink all files listed in the config
+        #[arg(long)]
+        all: bool,
     },
 }
