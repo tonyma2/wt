@@ -94,7 +94,6 @@ _wt_collect_local_branches() {
     local -a cmd
     typeset -ga _wt_local_branches
     _wt_local_branches=()
-    _wt_extract_repo_args
     cmd=(git)
     if (( ${#_wt_repo_args[@]} > 0 )); then
         cmd+=(-C "${_wt_repo_args[2]}")
@@ -105,27 +104,37 @@ _wt_collect_local_branches() {
 
 _wt_complete_branches_with_paths() {
     local -a values descs
-    local idx max_branch=0 details path_display
+    local idx max_branch=0 details path_display sigil current_branch="" b
     local cols=${COLUMNS:-0}
     local max_path=72
+    local worktree_color=$'\e[1;36m' reset=$'\e[0m'
 
     _wt_collect_worktree_rows || return 1
 
+    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
+        if [[ $PWD == ${_wt_completion_paths[idx]} || $PWD == ${_wt_completion_paths[idx]}/* ]]; then
+            current_branch="${_wt_completion_branches[idx]}"
+            break
+        fi
+    done
+
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
-        [[ -z ${_wt_completion_branches[idx]} ]] && continue
-        values+=("${_wt_completion_branches[idx]}")
-        (( ${#_wt_completion_branches[idx]} > max_branch )) && max_branch=${#_wt_completion_branches[idx]}
+        b="${_wt_completion_branches[idx]}"
+        [[ -z $b ]] && continue
+        values+=("$b")
+        (( ${#b} > max_branch )) && max_branch=${#b}
     done
     if (( ${#values[@]} == 0 )); then
         return 1
     fi
-    if (( cols > max_branch + 12 )); then
-        max_path=$(( cols - max_branch - 8 ))
+    if (( cols > max_branch + 14 )); then
+        max_path=$(( cols - max_branch - 10 ))
     fi
     (( max_path < 24 )) && max_path=24
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
-        [[ -z ${_wt_completion_branches[idx]} ]] && continue
+        b="${_wt_completion_branches[idx]}"
+        [[ -z $b ]] && continue
         path_display="${_wt_completion_paths[idx]}"
         if (( ${#path_display} > max_path )); then
             path_display="...${path_display[-$((max_path - 3)),-1]}"
@@ -137,7 +146,12 @@ _wt_complete_branches_with_paths() {
         if [[ -n ${_wt_completion_flags[idx]} ]]; then
             details="$details [${_wt_completion_flags[idx]}]"
         fi
-        descs+=("$(printf "%-${max_branch}s  %s" "${_wt_completion_branches[idx]}" "$details")")
+        if [[ $b == "$current_branch" ]]; then
+            sigil="* "
+        else
+            sigil="+ "
+        fi
+        descs+=("${worktree_color}${sigil}${(r:$max_branch:)b}${reset}  $details")
     done
     compadd -l -d descs -- "${values[@]}"
 }
@@ -152,27 +166,43 @@ _wt_remove_targets() {
 
 _wt_switch_targets() {
     local -A wt_set
-    local -a wt_values wt_descs other_values
-    local idx max_branch=0 details path_display branch
+    local -a wt_values wt_descs other_values other_descs
+    local idx max_branch=0 details path_display branch sigil current_branch="" b
     local cols=${COLUMNS:-0}
     local max_path=72
+    local worktree_color=$'\e[1;36m' dim=$'\e[2m' reset=$'\e[0m'
 
     _wt_collect_worktree_rows
     _wt_collect_local_branches
 
-    for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
-        [[ -z ${_wt_completion_branches[idx]} ]] && continue
-        wt_set[${_wt_completion_branches[idx]}]=1
-        wt_values+=("${_wt_completion_branches[idx]}")
-        (( ${#_wt_completion_branches[idx]} > max_branch )) && max_branch=${#_wt_completion_branches[idx]}
+    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
+        if [[ $PWD == ${_wt_completion_paths[idx]} || $PWD == ${_wt_completion_paths[idx]}/* ]]; then
+            current_branch="${_wt_completion_branches[idx]}"
+            break
+        fi
     done
-    if (( cols > max_branch + 12 )); then
-        max_path=$(( cols - max_branch - 8 ))
+
+    for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
+        b="${_wt_completion_branches[idx]}"
+        [[ -z $b ]] && continue
+        wt_set[$b]=1
+        wt_values+=("$b")
+        (( ${#b} > max_branch )) && max_branch=${#b}
+    done
+    for branch in "${_wt_local_branches[@]}"; do
+        [[ -z $branch ]] && continue
+        (( ${+wt_set[$branch]} )) && continue
+        other_values+=("$branch")
+        (( ${#branch} > max_branch )) && max_branch=${#branch}
+    done
+    if (( cols > max_branch + 14 )); then
+        max_path=$(( cols - max_branch - 10 ))
     fi
     (( max_path < 24 )) && max_path=24
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
-        [[ -z ${_wt_completion_branches[idx]} ]] && continue
+        b="${_wt_completion_branches[idx]}"
+        [[ -z $b ]] && continue
         path_display="${_wt_completion_paths[idx]}"
         if (( ${#path_display} > max_path )); then
             path_display="...${path_display[-$((max_path - 3)),-1]}"
@@ -184,17 +214,19 @@ _wt_switch_targets() {
         if [[ -n ${_wt_completion_flags[idx]} ]]; then
             details="$details [${_wt_completion_flags[idx]}]"
         fi
-        wt_descs+=("$(printf "%-${max_branch}s  %s" "${_wt_completion_branches[idx]}" "$details")")
+        if [[ $b == "$current_branch" ]]; then
+            sigil="* "
+        else
+            sigil="+ "
+        fi
+        wt_descs+=("${worktree_color}${sigil}${(r:$max_branch:)b}${reset}  $details")
     done
-
-    for branch in "${_wt_local_branches[@]}"; do
-        [[ -z $branch ]] && continue
-        (( ${+wt_set[$branch]} )) && continue
-        other_values+=("$branch")
+    for branch in "${other_values[@]}"; do
+        other_descs+=("  ${dim}${branch}${reset}")
     done
 
     (( ${#wt_values[@]} > 0 )) && compadd -V worktrees -l -d wt_descs -- "${wt_values[@]}"
-    (( ${#other_values[@]} > 0 )) && compadd -V branches -- "${other_values[@]}"
+    (( ${#other_values[@]} > 0 )) && compadd -V branches -l -d other_descs -- "${other_values[@]}"
     (( ${#wt_values[@]} + ${#other_values[@]} > 0 ))
 }
 
@@ -226,6 +258,7 @@ _wt_new_name() {
 }
 
 _wt_new_base() {
+    _wt_extract_repo_args
     _wt_collect_local_branches
     (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
 }
