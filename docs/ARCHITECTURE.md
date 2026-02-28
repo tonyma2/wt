@@ -71,7 +71,7 @@ Exceptions:
 
 **unlink** — Removes symlinks from linked worktrees. Only removes symlinks that point to the primary worktree's copy of the file. Non-symlink files and symlinks pointing elsewhere are skipped with a warning unless `--force` is used.
 
-**completions** — Generates clap_complete output. For zsh, injects four custom functions (`_wt_collect_worktree_rows`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`) and patches the generated script via string replacement.
+**completions** — Generates clap_complete output. For zsh, injects nine custom functions (`_wt_extract_repo_args`, `_wt_collect_worktree_rows`, `_wt_collect_local_branches`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`, `_wt_switch_targets`, `_wt_new_name`, `_wt_new_base`) and patches the generated script via string replacement.
 
 ## Filesystem Layout
 

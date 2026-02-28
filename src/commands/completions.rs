@@ -16,14 +16,10 @@ fn render(shell: clap_complete::Shell) -> Result<String, String> {
     if shell == clap_complete::Shell::Zsh {
         let helper = r#"
 
-_wt_collect_worktree_rows() {
-    local -a cmd flags
-    local i line wt_path branch repo_arg
-    typeset -ga _wt_completion_branches _wt_completion_paths _wt_completion_flags
-    _wt_completion_branches=()
-    _wt_completion_paths=()
-    _wt_completion_flags=()
-    cmd=(command wt list --porcelain)
+_wt_extract_repo_args() {
+    local i repo_arg
+    typeset -ga _wt_repo_args
+    _wt_repo_args=()
     for (( i = 1; i <= ${#words[@]}; i++ )); do
         if [[ ${words[i]} == --repo=* ]]; then
             repo_arg="${words[i]#--repo=}"
@@ -32,8 +28,8 @@ _wt_collect_worktree_rows() {
             elif [[ $repo_arg == "~/"* ]]; then
                 repo_arg="$HOME/${repo_arg#~/}"
             fi
-            cmd+=(--repo "$repo_arg")
-            break
+            _wt_repo_args=(--repo "$repo_arg")
+            return
         fi
         if [[ ${words[i]} == "--repo" && -n ${words[i+1]:-} ]]; then
             repo_arg="${words[i+1]}"
@@ -42,10 +38,21 @@ _wt_collect_worktree_rows() {
             elif [[ $repo_arg == "~/"* ]]; then
                 repo_arg="$HOME/${repo_arg#~/}"
             fi
-            cmd+=(--repo "$repo_arg")
-            break
+            _wt_repo_args=(--repo "$repo_arg")
+            return
         fi
     done
+}
+
+_wt_collect_worktree_rows() {
+    local -a cmd flags
+    local line wt_path branch
+    typeset -ga _wt_completion_branches _wt_completion_paths _wt_completion_flags
+    _wt_completion_branches=()
+    _wt_completion_paths=()
+    _wt_completion_flags=()
+    _wt_extract_repo_args
+    cmd=(command wt list --porcelain "${_wt_repo_args[@]}")
     while IFS= read -r line; do
         if [[ $line == worktree\ * ]]; then
             if [[ -n ${wt_path:-} ]]; then
@@ -81,6 +88,19 @@ _wt_collect_worktree_rows() {
         _wt_completion_flags+=("${flags[*]}")
     fi
     (( ${#_wt_completion_paths[@]} > 0 ))
+}
+
+_wt_collect_local_branches() {
+    local -a cmd
+    typeset -ga _wt_local_branches
+    _wt_local_branches=()
+    _wt_extract_repo_args
+    cmd=(git)
+    if (( ${#_wt_repo_args[@]} > 0 )); then
+        cmd+=(-C "${_wt_repo_args[2]}")
+    fi
+    cmd+=(for-each-ref --format='%(refname:short)' refs/heads/)
+    _wt_local_branches=("${(@f)$(${cmd[@]} 2>/dev/null)}")
 }
 
 _wt_complete_branches_with_paths() {
@@ -129,6 +149,86 @@ _wt_path_branches() {
 _wt_remove_targets() {
     _wt_complete_branches_with_paths
 }
+
+_wt_switch_targets() {
+    local -A wt_set
+    local -a wt_values wt_descs other_values
+    local idx max_branch=0 details path_display branch
+    local cols=${COLUMNS:-0}
+    local max_path=72
+
+    _wt_collect_worktree_rows
+    _wt_collect_local_branches
+
+    for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
+        [[ -z ${_wt_completion_branches[idx]} ]] && continue
+        wt_set[${_wt_completion_branches[idx]}]=1
+        wt_values+=("${_wt_completion_branches[idx]}")
+        (( ${#_wt_completion_branches[idx]} > max_branch )) && max_branch=${#_wt_completion_branches[idx]}
+    done
+    if (( cols > max_branch + 12 )); then
+        max_path=$(( cols - max_branch - 8 ))
+    fi
+    (( max_path < 24 )) && max_path=24
+
+    for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
+        [[ -z ${_wt_completion_branches[idx]} ]] && continue
+        path_display="${_wt_completion_paths[idx]}"
+        if (( ${#path_display} > max_path )); then
+            path_display="...${path_display[-$((max_path - 3)),-1]}"
+        fi
+        details="$path_display"
+        if [[ $idx -eq 1 ]]; then
+            details="$details [main]"
+        fi
+        if [[ -n ${_wt_completion_flags[idx]} ]]; then
+            details="$details [${_wt_completion_flags[idx]}]"
+        fi
+        wt_descs+=("$(printf "%-${max_branch}s  %s" "${_wt_completion_branches[idx]}" "$details")")
+    done
+
+    for branch in "${_wt_local_branches[@]}"; do
+        [[ -z $branch ]] && continue
+        (( ${+wt_set[$branch]} )) && continue
+        other_values+=("$branch")
+    done
+
+    (( ${#wt_values[@]} > 0 )) && compadd -V worktrees -l -d wt_descs -- "${wt_values[@]}"
+    (( ${#other_values[@]} > 0 )) && compadd -V branches -- "${other_values[@]}"
+    (( ${#wt_values[@]} + ${#other_values[@]} > 0 ))
+}
+
+_wt_new_name() {
+    local -A wt_set
+    local -a results
+    local i branch
+
+    for (( i = 1; i <= ${#words[@]}; i++ )); do
+        if [[ ${words[i]} == "-c" || ${words[i]} == "--create" ]]; then
+            return 1
+        fi
+    done
+
+    _wt_collect_worktree_rows
+    _wt_collect_local_branches
+
+    for (( i = 1; i <= ${#_wt_completion_branches[@]}; i++ )); do
+        [[ -n ${_wt_completion_branches[i]} ]] && wt_set[${_wt_completion_branches[i]}]=1
+    done
+
+    for branch in "${_wt_local_branches[@]}"; do
+        [[ -z $branch ]] && continue
+        (( ${+wt_set[$branch]} )) && continue
+        results+=("$branch")
+    done
+
+    (( ${#results[@]} > 0 )) && compadd -- "${results[@]}"
+}
+
+_wt_new_base() {
+    _wt_collect_local_branches
+    (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
+}
 "#;
         let dispatch_marker = "if [ \"$funcstack[1]\" = \"_wt\" ]; then";
         if let Some(idx) = script.find(dispatch_marker) {
@@ -138,11 +238,16 @@ _wt_remove_targets() {
         }
         const PATH_NAME_TARGET: &str = ":name -- Branch name, tag, or ref:_default";
         const SWITCH_NAME_TARGET: &str = ":name -- Branch name:_default";
+        const NEW_NAME_TARGET: &str = ":name -- Branch name or ref:_default";
+        const NEW_BASE_TARGET: &str =
+            "::base -- Start point for created branch (requires --create):_default";
         const NAMES_TARGET: &str = "*::names -- Branch names, refs, or paths:_default";
         for (label, target) in [
             ("path name", PATH_NAME_TARGET),
             ("switch name", SWITCH_NAME_TARGET),
-            ("names", NAMES_TARGET),
+            ("new name", NEW_NAME_TARGET),
+            ("new base", NEW_BASE_TARGET),
+            ("remove names", NAMES_TARGET),
         ] {
             if !script.contains(target) {
                 return Err(format!(
@@ -155,7 +260,15 @@ _wt_remove_targets() {
             PATH_NAME_TARGET,
             ":name -- Branch name, tag, or ref:_wt_path_branches",
         );
-        script = script.replace(SWITCH_NAME_TARGET, ":name -- Branch name:_wt_path_branches");
+        script = script.replace(
+            SWITCH_NAME_TARGET,
+            ":name -- Branch name:_wt_switch_targets",
+        );
+        script = script.replace(NEW_NAME_TARGET, ":name -- Branch name or ref:_wt_new_name");
+        script = script.replace(
+            NEW_BASE_TARGET,
+            "::base -- Start point for created branch (requires --create):_wt_new_base",
+        );
         script = script.replace(
             NAMES_TARGET,
             "*::names -- Branch names, refs, or paths:_wt_remove_targets",
@@ -170,18 +283,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zsh_path_completion_is_dynamic() {
+    fn zsh_completion_is_dynamic() {
         let script = render(clap_complete::Shell::Zsh).unwrap();
-        assert!(script.contains("_wt_path_branches()"));
-        assert!(script.contains("_wt_remove_targets()"));
-        assert!(script.contains("_wt_collect_worktree_rows()"));
-        assert!(script.contains("_wt_complete_branches_with_paths()"));
-        assert!(
-            script.find("_wt_path_branches()").unwrap()
-                < script
-                    .find("if [ \"$funcstack[1]\" = \"_wt\" ]; then")
-                    .unwrap()
-        );
+        for func in [
+            "_wt_extract_repo_args()",
+            "_wt_collect_worktree_rows()",
+            "_wt_collect_local_branches()",
+            "_wt_complete_branches_with_paths()",
+            "_wt_path_branches()",
+            "_wt_remove_targets()",
+            "_wt_switch_targets()",
+            "_wt_new_name()",
+            "_wt_new_base()",
+        ] {
+            assert!(script.contains(func), "missing helper: {func}");
+        }
+        let dispatch = script
+            .find("if [ \"$funcstack[1]\" = \"_wt\" ]; then")
+            .unwrap();
+        assert!(script.find("_wt_path_branches()").unwrap() < dispatch);
         assert_eq!(
             script
                 .matches(":name -- Branch name, tag, or ref:_wt_path_branches")
@@ -190,7 +310,21 @@ mod tests {
         );
         assert_eq!(
             script
-                .matches(":name -- Branch name:_wt_path_branches")
+                .matches(":name -- Branch name:_wt_switch_targets")
+                .count(),
+            2
+        );
+        assert_eq!(
+            script
+                .matches(":name -- Branch name or ref:_wt_new_name")
+                .count(),
+            2
+        );
+        assert_eq!(
+            script
+                .matches(
+                    "::base -- Start point for created branch (requires --create):_wt_new_base"
+                )
                 .count(),
             2
         );
@@ -200,12 +334,19 @@ mod tests {
                 .count(),
             2
         );
-        assert!(!script.contains("[path target]"));
+        assert!(!script.contains("Branch name, tag, or ref:_default"));
+        assert!(!script.contains("Branch name:_default"));
+        assert!(!script.contains("Branch name or ref:_default"));
+        assert!(!script.contains("Start point for created branch (requires --create):_default"));
+        assert!(!script.contains("Branch names, refs, or paths:_default"));
     }
 
     #[test]
     fn bash_completion_does_not_include_zsh_helper() {
         let script = render(clap_complete::Shell::Bash).unwrap();
         assert!(!script.contains("_wt_path_branches()"));
+        assert!(!script.contains("_wt_switch_targets()"));
+        assert!(!script.contains("_wt_new_name()"));
+        assert!(!script.contains("_wt_new_base()"));
     }
 }

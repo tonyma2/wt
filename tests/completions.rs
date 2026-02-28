@@ -17,7 +17,13 @@ fn zsh_completion_includes_dynamic_worktree_helpers() {
     assert!(stdout.contains("_wt_path_branches()"));
     assert!(stdout.contains("_wt_remove_targets()"));
     assert!(stdout.contains("_wt_collect_worktree_rows()"));
+    assert!(stdout.contains("_wt_extract_repo_args()"));
+    assert!(stdout.contains("_wt_collect_local_branches()"));
+    assert!(stdout.contains("_wt_switch_targets()"));
+    assert!(stdout.contains("_wt_new_name()"));
+    assert!(stdout.contains("_wt_new_base()"));
     assert!(stdout.contains("command wt list --porcelain"));
+    assert!(stdout.contains("for-each-ref"));
 }
 
 #[test]
@@ -33,4 +39,7 @@ fn bash_completion_excludes_zsh_specific_helpers() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("_wt_path_branches()"));
     assert!(!stdout.contains("_wt_collect_worktree_rows()"));
+    assert!(!stdout.contains("_wt_switch_targets()"));
+    assert!(!stdout.contains("_wt_new_name()"));
+    assert!(!stdout.contains("_wt_new_base()"));
 }
