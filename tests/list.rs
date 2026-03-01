@@ -59,7 +59,6 @@ fn list_human_output_matches_golden() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 3, "expected 3 lines, got: {stdout}");
 
-    // New header: no HEAD column, STATUS instead of STATE
     let header = format!("{:<1} {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
     assert_eq!(lines[0], header);
 
@@ -112,7 +111,6 @@ fn shows_dirty_status_for_dirty_worktree() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "dirty-status");
-    // dirty marker appears in STATUS column (after branch separator)
     assert!(
         row.contains("  *"),
         "dirty worktree should show '*' in STATUS column, got: {row}"

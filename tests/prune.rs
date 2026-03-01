@@ -613,7 +613,6 @@ fn dry_run_skips_merged_worktree() {
         wt_path.exists(),
         "dry-run should not remove merged worktree"
     );
-    // dry-run output goes to stdout (data about what would happen)
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("would remove"),
@@ -1015,7 +1014,6 @@ fn gone_dry_run_reports_without_removing() {
         wt_path.exists(),
         "dry-run should not remove upstream-gone worktree"
     );
-    // dry-run output goes to stdout (data about what would happen)
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("would remove"),
