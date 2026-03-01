@@ -133,6 +133,14 @@ _wt_collect_tags() {
         refs/tags/ 2>/dev/null)
 }
 
+_wt_setup_colors() {
+    typeset -g worktree_color=$'\e[36m' current_color=$'\e[32m' bold_yellow=$'\e[1;33m'
+    typeset -g prunable_color=$'\e[31m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
+    if [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]]; then
+        typeset -g worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
+    fi
+}
+
 _wt_find_current_branch() {
     local physical_pwd=${PWD:A}
     local idx p best_len=0 best_idx=0
@@ -154,9 +162,7 @@ _wt_complete_branches_with_paths() {
     local idx max_branch=0 details path_display branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m'
-    local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' dim=$'\e[2m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
+    _wt_setup_colors
 
     _wt_collect_worktree_rows || return 1
 
@@ -208,8 +214,7 @@ _wt_path_branches() {
     _wt_collect_tags
     local -a detached_values detached_descs
     local idx tag_idx head tag
-    local worktree_color=$'\e[36m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" dim="" dim_yellow="" reset=""
+    _wt_setup_colors
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         [[ -n ${_wt_completion_branches[idx]} ]] && continue
         head="${_wt_completion_heads[idx]}"
@@ -228,9 +233,7 @@ _wt_remove_targets() {
     local idx max_branch=0 details path_display branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m' bold_yellow=$'\e[1;33m'
-    local prunable_color=$'\e[31m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
+    _wt_setup_colors
     local -A seen_set
     local i w
 
@@ -318,9 +321,7 @@ _wt_switch_targets() {
     local idx max_branch=0 details path_display branch branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m'
-    local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
+    _wt_setup_colors
 
     _wt_collect_worktree_rows
     _wt_collect_local_branches
@@ -533,6 +534,7 @@ mod tests {
             "_wt_collect_worktree_rows()",
             "_wt_collect_local_branches()",
             "_wt_collect_tags()",
+            "_wt_setup_colors()",
             "_wt_find_current_branch()",
             "_wt_complete_branches_with_paths()",
             "_wt_path_branches()",
