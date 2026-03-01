@@ -399,6 +399,45 @@ _wt_prune_base() {
     _wt_collect_local_branches
     (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
 }
+
+_wt_link_files() {
+    _wt_collect_worktree_rows || return 1
+    _path_files -W "$_wt_main_path"
+}
+
+_wt_unlink_files() {
+    local -A seen_set
+    local i w
+    for (( i = 1; i <= ${#words[@]}; i++ )); do
+        [[ $i -eq $CURRENT ]] && continue
+        w="${words[i]}"
+        [[ $w == wt || $w == unlink ]] && continue
+        [[ $w == --* || $w == -* ]] && continue
+        [[ -n $w ]] && seen_set[$w]=1
+    done
+
+    _wt_collect_worktree_rows || return 1
+    local primary_path
+    primary_path=$(cd "$_wt_main_path" 2>/dev/null && pwd -P 2>/dev/null) || return 1
+
+    local config="$HOME/.wt/config"
+    [[ -f $config ]] || return 1
+
+    local entry
+    entry=$(grep -F "\"$primary_path\"" "$config" 2>/dev/null) || return 1
+    local arr="${entry#*\[}"
+    arr="${arr%\]*}"
+
+    local -a results
+    local item
+    for item in "${(@s:", ":)arr}"; do
+        item="${item//\"/}"
+        [[ -z $item ]] && continue
+        (( ${+seen_set[$item]} )) && continue
+        results+=("$item")
+    done
+    (( ${#results[@]} > 0 )) && compadd -- "${results[@]}"
+}
 "#;
         let dispatch_marker = "if [ \"$funcstack[1]\" = \"_wt\" ]; then";
         if let Some(idx) = script.find(dispatch_marker) {
@@ -406,6 +445,8 @@ _wt_prune_base() {
         } else {
             script.push_str(helper);
         }
+        const LINK_FILES_TARGET: &str = "*::files -- Files or directories to link:_default";
+        const UNLINK_FILES_TARGET: &str = "*::files -- Files or directories to unlink:_default";
         const PATH_NAME_TARGET: &str = ":name -- Branch name, tag, or ref:_default";
         const SWITCH_NAME_TARGET: &str = ":name -- Branch name:_default";
         const NEW_NAME_TARGET: &str = ":name -- Branch name or ref:_default";
@@ -415,6 +456,8 @@ _wt_prune_base() {
         const PRUNE_BASE_TARGET: &str =
             "--base=[Base branch for merged detection (e.g. develop, trunk)]:BASE:_default";
         for (label, target) in [
+            ("link files", LINK_FILES_TARGET),
+            ("unlink files", UNLINK_FILES_TARGET),
             ("path name", PATH_NAME_TARGET),
             ("switch name", SWITCH_NAME_TARGET),
             ("new name", NEW_NAME_TARGET),
@@ -449,6 +492,14 @@ _wt_prune_base() {
         script = script.replace(
             PRUNE_BASE_TARGET,
             "--base=[Base branch for merged detection (e.g. develop, trunk)]:BASE:_wt_prune_base",
+        );
+        script = script.replace(
+            LINK_FILES_TARGET,
+            "*::files -- Files or directories to link:_wt_link_files",
+        );
+        script = script.replace(
+            UNLINK_FILES_TARGET,
+            "*::files -- Files or directories to unlink:_wt_unlink_files",
         );
     }
 
@@ -530,6 +581,27 @@ mod tests {
         assert!(
             !script
                 .contains("Base branch for merged detection (e.g. develop, trunk)]:BASE:_default")
+        );
+    }
+
+    #[test]
+    fn zsh_link_unlink_completions_are_dynamic() {
+        let script = render(clap_complete::Shell::Zsh).unwrap();
+        assert!(script.contains("_wt_link_files()"));
+        assert!(script.contains("_wt_unlink_files()"));
+        assert!(!script.contains("Files or directories to link:_default"));
+        assert!(!script.contains("Files or directories to unlink:_default"));
+        assert!(
+            script
+                .matches("*::files -- Files or directories to link:_wt_link_files")
+                .count()
+                >= 1
+        );
+        assert!(
+            script
+                .matches("*::files -- Files or directories to unlink:_wt_unlink_files")
+                .count()
+                >= 1
         );
     }
 
