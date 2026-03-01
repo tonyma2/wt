@@ -186,7 +186,8 @@ _wt_complete_branches_with_paths() {
         else
             branch_color="$worktree_color"
         fi
-        descs+=("${branch_color}${(r:$max_branch:)b}${reset}  $details")
+        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
+        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     compadd -l -d descs -- "${values[@]}"
 }
@@ -282,7 +283,8 @@ _wt_remove_targets() {
         else
             branch_color="$worktree_color"
         fi
-        descs+=("${branch_color}${(r:$max_branch:)b}${reset}  $details")
+        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
+        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
 
     _wt_collect_tags
@@ -363,7 +365,8 @@ _wt_switch_targets() {
         else
             branch_color="$worktree_color"
         fi
-        wt_descs+=("${branch_color}${(r:$max_branch:)b}${reset}  $details")
+        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
+        wt_descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     for branch in "${other_values[@]}"; do
         other_descs+=("${dim}${branch}${reset}")
