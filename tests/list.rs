@@ -60,7 +60,7 @@ fn list_human_output_matches_golden() {
     assert_eq!(lines.len(), 3, "expected 3 lines, got: {stdout}");
 
     // New header: no HEAD column, STATUS instead of STATE
-    let header = format!("{:<1}  {:<24}  {:<10}  PATH", "", "BRANCH", "STATUS");
+    let header = format!("{:<1}   {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
     assert_eq!(lines[0], header);
 
     assert!(

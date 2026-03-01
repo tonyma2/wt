@@ -56,7 +56,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     };
 
     println!(
-        "{:<cur_w$}  {:<branch_w$}  {:<status_w$}  PATH",
+        "{:<cur_w$}   {:<branch_w$}   {:<status_w$}   PATH",
         "", "BRANCH", "STATUS",
     );
 
@@ -93,7 +93,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
         };
 
         println!(
-            "{cur_col}  {branch_col}  {:<status_w$}  {row_suffix}",
+            "{cur_col}   {branch_col}   {:<status_w$}   {row_suffix}",
             status_trunc,
         );
     }
