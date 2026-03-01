@@ -41,7 +41,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     let branch_max: usize = 24;
     let status_w: usize = 10;
     let path_min: usize = 24;
-    let avail = cols.saturating_sub(cur_w + status_w + 9);
+    let avail = cols.saturating_sub(cur_w + status_w + 7);
 
     let (branch_w, path_w) = if avail <= path_min + branch_min {
         let bw = branch_min;
@@ -56,7 +56,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     };
 
     println!(
-        "{:<cur_w$}   {:<branch_w$}   {:<status_w$}   PATH",
+        "{:<cur_w$} {:<branch_w$}   {:<status_w$}   PATH",
         "", "BRANCH", "STATUS",
     );
 
@@ -93,7 +93,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
         };
 
         println!(
-            "{cur_col}   {branch_col}   {:<status_w$}   {row_suffix}",
+            "{cur_col} {branch_col}   {:<status_w$}   {row_suffix}",
             status_trunc,
         );
     }

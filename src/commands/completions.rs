@@ -161,8 +161,8 @@ _wt_complete_branches_with_paths() {
     if (( ${#values[@]} == 0 )); then
         return 1
     fi
-    if (( cols > max_branch + 15 )); then
-        max_path=$(( cols - max_branch - 11 ))
+    if (( cols > max_branch + 14 )); then
+        max_path=$(( cols - max_branch - 10 ))
     fi
     (( max_path < 24 )) && max_path=24
 
@@ -206,7 +206,7 @@ _wt_path_branches() {
             [[ ${_wt_tag_shas[tag_idx]} == "$head" ]] || continue
             tag="${_wt_tags[tag_idx]}"
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}   (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
         done
     done
     (( ${#detached_values[@]} > 0 )) && compadd -V detached -l -d detached_descs -- "${detached_values[@]}"
@@ -256,8 +256,8 @@ _wt_remove_targets() {
         wt_values+=("$b")
         (( ${#b} > max_branch )) && max_branch=${#b}
     done
-    if (( cols > max_branch + 15 )); then
-        max_path=$(( cols - max_branch - 11 ))
+    if (( cols > max_branch + 14 )); then
+        max_path=$(( cols - max_branch - 10 ))
     fi
     (( max_path < 24 )) && max_path=24
 
@@ -298,7 +298,7 @@ _wt_remove_targets() {
             tag="${_wt_tags[tag_idx]}"
             (( ${+seen_set[$tag]} )) && continue
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}   (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
         done
     done
 
@@ -340,8 +340,8 @@ _wt_switch_targets() {
         other_values+=("$branch")
         (( ${#branch} > max_branch )) && max_branch=${#branch}
     done
-    if (( cols > max_branch + 15 )); then
-        max_path=$(( cols - max_branch - 11 ))
+    if (( cols > max_branch + 14 )); then
+        max_path=$(( cols - max_branch - 10 ))
     fi
     (( max_path < 24 )) && max_path=24
 

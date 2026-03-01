@@ -60,7 +60,7 @@ fn list_human_output_matches_golden() {
     assert_eq!(lines.len(), 3, "expected 3 lines, got: {stdout}");
 
     // New header: no HEAD column, STATUS instead of STATE
-    let header = format!("{:<1}   {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
+    let header = format!("{:<1} {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
     assert_eq!(lines[0], header);
 
     assert!(
@@ -92,7 +92,7 @@ fn marks_current_worktree_when_cwd_is_inside_linked_worktree() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "feat-cwd-marker");
     assert!(
-        row.starts_with("*  "),
+        row.starts_with("* "),
         "linked worktree should be marked as current, got row: {row}",
     );
 }
@@ -221,12 +221,12 @@ fn does_not_mark_main_as_current_when_cwd_is_nested_worktree_inside_repo() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let main_row = find_row(&stdout, "main");
     assert!(
-        !main_row.starts_with("*  "),
+        !main_row.starts_with("* "),
         "main should not be marked as current when cwd is a nested worktree, got: {main_row}",
     );
     let feat_row = find_row(&stdout, "feat-inside");
     assert!(
-        feat_row.starts_with("*  "),
+        feat_row.starts_with("* "),
         "feat-inside should be marked as current, got: {feat_row}",
     );
 }
