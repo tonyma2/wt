@@ -134,10 +134,10 @@ _wt_collect_tags() {
 }
 
 _wt_setup_colors() {
-    typeset -g worktree_color=$'\e[36m' current_color=$'\e[32m' bold_yellow=$'\e[1;33m'
+    typeset -g current_color=$'\e[32m' bold_yellow=$'\e[1;33m'
     typeset -g prunable_color=$'\e[31m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
     if [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]]; then
-        typeset -g worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
+        typeset -g current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
     fi
 }
 
@@ -201,7 +201,7 @@ _wt_complete_branches_with_paths() {
         if [[ $b == "$current_branch" ]]; then
             branch_color="$current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
         descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
@@ -222,7 +222,7 @@ _wt_path_branches() {
             [[ ${_wt_tag_shas[tag_idx]} == "$head" ]] || continue
             tag="${_wt_tags[tag_idx]}"
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
         done
     done
     (( ${#detached_values[@]} > 0 )) && compadd -V detached -l -d detached_descs -- "${detached_values[@]}"
@@ -290,7 +290,7 @@ _wt_remove_targets() {
         if [[ $b == "$current_branch" ]]; then
             branch_color="$current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
         descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
@@ -307,7 +307,7 @@ _wt_remove_targets() {
             tag="${_wt_tags[tag_idx]}"
             (( ${+seen_set[$tag]} )) && continue
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
         done
     done
 
@@ -365,7 +365,7 @@ _wt_switch_targets() {
         if [[ $b == "$current_branch" ]]; then
             branch_color="$current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
         wt_descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")

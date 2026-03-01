@@ -5,7 +5,6 @@ pub fn is_stdout_tty() -> bool {
 
 pub struct Colors {
     pub green: &'static str,
-    pub cyan: &'static str,
     pub bold_yellow: &'static str,
     pub red: &'static str,
     pub dim: &'static str,
@@ -19,7 +18,6 @@ pub fn colors() -> Colors {
     if enabled {
         Colors {
             green: "\x1b[32m",
-            cyan: "\x1b[36m",
             bold_yellow: "\x1b[1;33m",
             red: "\x1b[31m",
             dim: "\x1b[2m",
@@ -28,7 +26,6 @@ pub fn colors() -> Colors {
     } else {
         Colors {
             green: "",
-            cyan: "",
             bold_yellow: "",
             red: "",
             dim: "",

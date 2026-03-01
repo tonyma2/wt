@@ -75,7 +75,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
         let badges = worktree_badges(wt, &clr);
 
         let branch_pad = branch_w.saturating_sub(branch_trunc.chars().count());
-        let branch_color = if is_current { clr.green } else { clr.cyan };
+        let branch_color = if is_current { clr.green } else { "" };
         let branch_col = format!(
             "{}{}{}{}",
             branch_color,
