@@ -140,11 +140,13 @@ _wt_complete_branches_with_paths() {
     local max_path=72
     local worktree_color=$'\e[36m' current_color=$'\e[32m'
     local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' dim=$'\e[2m' reset=$'\e[0m'
+    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
 
     _wt_collect_worktree_rows || return 1
 
+    local physical_pwd=${PWD:A}
     for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $PWD == ${_wt_completion_paths[idx]} || $PWD == ${_wt_completion_paths[idx]}/* ]]; then
+        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
             current_branch="${_wt_completion_branches[idx]}"
             break
         fi
@@ -195,6 +197,7 @@ _wt_path_branches() {
     local -a detached_values detached_descs
     local idx tag_idx head tag
     local worktree_color=$'\e[36m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
+    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" dim="" dim_yellow="" reset=""
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         [[ -n ${_wt_completion_branches[idx]} ]] && continue
         head="${_wt_completion_heads[idx]}"
@@ -215,6 +218,7 @@ _wt_remove_targets() {
     local max_path=72
     local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m' bold_yellow=$'\e[1;33m'
     local prunable_color=$'\e[31m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
+    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
     local -A seen_set
     local i w
 
@@ -230,9 +234,14 @@ _wt_remove_targets() {
         fi
         [[ -n $w ]] && seen_set[$w]=1
     done
-
     for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $PWD == ${_wt_completion_paths[idx]} || $PWD == ${_wt_completion_paths[idx]}/* ]]; then
+        (( ${+seen_set[${_wt_completion_paths[idx]}]} )) || continue
+        [[ -n ${_wt_completion_branches[idx]} ]] && seen_set[${_wt_completion_branches[idx]}]=1
+    done
+
+    local physical_pwd=${PWD:A}
+    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
+        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
             current_branch="${_wt_completion_branches[idx]}"
             break
         fi
@@ -303,12 +312,14 @@ _wt_switch_targets() {
     local max_path=72
     local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m'
     local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' reset=$'\e[0m'
+    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
 
     _wt_collect_worktree_rows
     _wt_collect_local_branches
 
+    local physical_pwd=${PWD:A}
     for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $PWD == ${_wt_completion_paths[idx]} || $PWD == ${_wt_completion_paths[idx]}/* ]]; then
+        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
             current_branch="${_wt_completion_branches[idx]}"
             break
         fi
@@ -424,8 +435,8 @@ _wt_unlink_files() {
     [[ -f $config ]] || return 1
 
     local entry
-    entry=$(grep -F "\"$primary_path\"" "$config" 2>/dev/null) || return 1
-    local arr="${entry#*\[}"
+    entry=$(grep -F "\"$primary_path\" = [" "$config" 2>/dev/null) || return 1
+    local arr="${entry#*\" = \[}"
     arr="${arr%\]*}"
 
     local -a results
