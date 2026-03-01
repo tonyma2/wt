@@ -133,6 +133,22 @@ _wt_collect_tags() {
         refs/tags/ 2>/dev/null)
 }
 
+_wt_find_current_branch() {
+    local physical_pwd=${PWD:A}
+    local idx p best_len=0 best_idx=0
+    typeset -g _wt_current_branch=""
+    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
+        p="${_wt_completion_paths[idx]}"
+        if [[ $physical_pwd == $p || $physical_pwd == $p/* ]]; then
+            if (( ${#p} > best_len )); then
+                best_len=${#p}
+                best_idx=$idx
+            fi
+        fi
+    done
+    (( best_idx > 0 )) && _wt_current_branch="${_wt_completion_branches[best_idx]}"
+}
+
 _wt_complete_branches_with_paths() {
     local -a values descs
     local idx max_branch=0 details path_display branch_color current_branch="" b flag
@@ -144,13 +160,8 @@ _wt_complete_branches_with_paths() {
 
     _wt_collect_worktree_rows || return 1
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -240,13 +251,8 @@ _wt_remove_targets() {
         [[ -n ${_wt_completion_branches[idx]} ]] && seen_set[${_wt_completion_branches[idx]}]=1
     done
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -319,13 +325,8 @@ _wt_switch_targets() {
     _wt_collect_worktree_rows
     _wt_collect_local_branches
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -532,6 +533,7 @@ mod tests {
             "_wt_collect_worktree_rows()",
             "_wt_collect_local_branches()",
             "_wt_collect_tags()",
+            "_wt_find_current_branch()",
             "_wt_complete_branches_with_paths()",
             "_wt_path_branches()",
             "_wt_remove_targets()",
