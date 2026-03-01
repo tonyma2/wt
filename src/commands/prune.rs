@@ -342,7 +342,7 @@ fn prune_merged(
         }
 
         if dry_run {
-            eprintln!("would remove {label} ({reason})");
+            println!("would remove {label} ({reason})");
             continue;
         }
 

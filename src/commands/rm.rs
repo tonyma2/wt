@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
+use crate::terminal;
 use crate::worktree::{self, Worktree};
 
 pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
@@ -78,17 +79,17 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
 
     worktree::cleanup_empty_parent(&target, cwd.as_deref());
 
+    let path_display = terminal::tilde_path(&target);
     if let Some(branch) = &branch
         && branch_exists
     {
         git.delete_branch(branch, force)?;
         eprintln!(
             "removed worktree and branch '{}' ({})",
-            branch,
-            target.display()
+            branch, path_display
         );
     } else {
-        eprintln!("removed worktree ({})", target.display());
+        eprintln!("removed worktree ({})", path_display);
     }
     Ok(())
 }
