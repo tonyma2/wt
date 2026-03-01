@@ -22,6 +22,8 @@ fn zsh_completion_includes_dynamic_worktree_helpers() {
     assert!(stdout.contains("_wt_switch_targets()"));
     assert!(stdout.contains("_wt_new_name()"));
     assert!(stdout.contains("_wt_new_base()"));
+    assert!(stdout.contains("_wt_link_files()"));
+    assert!(stdout.contains("_wt_unlink_files()"));
     assert!(stdout.contains("command wt list --porcelain"));
     assert!(stdout.contains("for-each-ref"));
 }

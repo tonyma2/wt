@@ -525,6 +525,8 @@ mod tests {
             "_wt_new_name()",
             "_wt_new_base()",
             "_wt_prune_base()",
+            "_wt_link_files()",
+            "_wt_unlink_files()",
         ] {
             assert!(script.contains(func), "missing helper: {func}");
         }
@@ -564,7 +566,6 @@ mod tests {
                 .count(),
             2
         );
-        // prune has no alias, so --base appears exactly once (not 2x like positional args)
         assert_eq!(
             script
                 .matches(
@@ -591,17 +592,17 @@ mod tests {
         assert!(script.contains("_wt_unlink_files()"));
         assert!(!script.contains("Files or directories to link:_default"));
         assert!(!script.contains("Files or directories to unlink:_default"));
-        assert!(
+        assert_eq!(
             script
                 .matches("*::files -- Files or directories to link:_wt_link_files")
-                .count()
-                >= 1
+                .count(),
+            2
         );
-        assert!(
+        assert_eq!(
             script
                 .matches("*::files -- Files or directories to unlink:_wt_unlink_files")
-                .count()
-                >= 1
+                .count(),
+            1
         );
     }
 
@@ -612,5 +613,7 @@ mod tests {
         assert!(!script.contains("_wt_switch_targets()"));
         assert!(!script.contains("_wt_new_name()"));
         assert!(!script.contains("_wt_new_base()"));
+        assert!(!script.contains("_wt_link_files()"));
+        assert!(!script.contains("_wt_unlink_files()"));
     }
 }
