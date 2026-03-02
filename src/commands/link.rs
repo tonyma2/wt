@@ -4,8 +4,21 @@ use crate::config;
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
+pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
+
+    if list {
+        let links = config::get_links(&repo_root);
+        if links.is_empty() {
+            eprintln!("no links configured");
+        } else {
+            for link in &links {
+                println!("{link}");
+            }
+        }
+        return Ok(());
+    }
+
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
@@ -77,8 +90,11 @@ pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
         if dest.symlink_metadata().is_ok() {
             continue;
         }
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Some(parent) = dest.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("cannot auto-link {file}, cannot create {}: {e}", parent.display());
+            continue;
         }
         if let Err(e) = symlink(&source, &dest) {
             eprintln!("cannot auto-link {file}: {e}");

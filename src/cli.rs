@@ -151,11 +151,11 @@ pub enum Command {
         long_about = "Link files from the primary worktree into all linked worktrees.\n\
             Source files must exist in the primary worktree.\n\
             Correct symlinks are left in place. Conflicts are skipped unless --force is used.",
-        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force"
+        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force\n  wt link --list"
     )]
     Link {
         /// Files or directories to link
-        #[arg(required = true)]
+        #[arg(required_unless_present = "list", conflicts_with = "list")]
         files: Vec<String>,
         /// Repository path
         #[arg(long)]
@@ -163,6 +163,9 @@ pub enum Command {
         /// Replace existing destinations that are not correct symlinks
         #[arg(long)]
         force: bool,
+        /// List currently configured links for this repository
+        #[arg(long)]
+        list: bool,
     },
     /// Remove linked files from linked worktrees
     #[command(
