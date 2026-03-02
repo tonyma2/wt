@@ -36,15 +36,16 @@ pub fn colors() -> Colors {
 
 pub fn tilde_path(path: &std::path::Path) -> String {
     let path_str = path.to_string_lossy();
-    if let Ok(home) = std::env::var("HOME")
-        && let Some(rest) = path_str.strip_prefix(&home)
+    let Ok(home) = std::env::var("HOME") else {
+        return path_str.into_owned();
+    };
+    if let Some(rest) = path_str.strip_prefix(&home)
         && (rest.is_empty() || rest.starts_with('/'))
     {
         return format!("~{rest}");
     }
     // Also match the canonical form of HOME (e.g. /private/var vs /var on macOS)
-    if let Ok(home) = std::env::var("HOME")
-        && let Ok(canon) = std::path::Path::new(&home).canonicalize()
+    if let Ok(canon) = std::path::Path::new(&home).canonicalize()
         && let Some(rest) = path_str.strip_prefix(canon.to_string_lossy().as_ref())
         && (rest.is_empty() || rest.starts_with('/'))
     {

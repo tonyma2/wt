@@ -134,10 +134,10 @@ _wt_collect_tags() {
 }
 
 _wt_setup_colors() {
-    typeset -g current_color=$'\e[32m' bold_yellow=$'\e[1;33m'
-    typeset -g prunable_color=$'\e[31m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
+    typeset -g _wt_current_color=$'\e[32m' _wt_bold_yellow=$'\e[1;33m'
+    typeset -g _wt_prunable_color=$'\e[31m' _wt_dim=$'\e[2m' _wt_dim_yellow=$'\e[2;33m' _wt_reset=$'\e[0m'
     if [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]]; then
-        typeset -g current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
+        typeset -g _wt_current_color="" _wt_bold_yellow="" _wt_prunable_color="" _wt_dim="" _wt_dim_yellow="" _wt_reset=""
     fi
 }
 
@@ -193,18 +193,18 @@ _wt_complete_branches_with_paths() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
             branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     compadd -l -d descs -- "${values[@]}"
 }
@@ -214,7 +214,6 @@ _wt_path_branches() {
     _wt_collect_tags
     local -a detached_values detached_descs
     local idx tag_idx head tag
-    _wt_setup_colors
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         [[ -n ${_wt_completion_branches[idx]} ]] && continue
         head="${_wt_completion_heads[idx]}"
@@ -222,7 +221,7 @@ _wt_path_branches() {
             [[ ${_wt_tag_shas[tag_idx]} == "$head" ]] || continue
             tag="${_wt_tags[tag_idx]}"
             detached_values+=("$tag")
-            detached_descs+=("${tag}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${_wt_dim_yellow}${head[1,8]}${_wt_reset}) [${_wt_dim}detached${_wt_reset}]")
         done
     done
     (( ${#detached_values[@]} > 0 )) && compadd -V detached -l -d detached_descs -- "${detached_values[@]}"
@@ -282,18 +281,18 @@ _wt_remove_targets() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
             branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
 
     _wt_collect_tags
@@ -307,7 +306,7 @@ _wt_remove_targets() {
             tag="${_wt_tags[tag_idx]}"
             (( ${+seen_set[$tag]} )) && continue
             detached_values+=("$tag")
-            detached_descs+=("${tag}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${_wt_dim_yellow}${head[1,8]}${_wt_reset}) [${_wt_dim}detached${_wt_reset}]")
         done
     done
 
@@ -357,21 +356,21 @@ _wt_switch_targets() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
             branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        wt_descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        wt_descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     for branch in "${other_values[@]}"; do
-        other_descs+=("${dim}${branch}${reset}")
+        other_descs+=("${_wt_dim}${branch}${_wt_reset}")
     done
 
     (( ${#wt_values[@]} > 0 )) && compadd -V worktrees -l -d wt_descs -- "${wt_values[@]}"

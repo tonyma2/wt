@@ -43,17 +43,9 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     let path_min: usize = 24;
     let avail = cols.saturating_sub(cur_w + status_w + 7);
 
-    let (branch_w, path_w) = if avail <= path_min + branch_min {
-        let bw = branch_min;
-        let pw = avail.saturating_sub(bw).max(12);
-        (bw, pw)
-    } else {
-        let extra = avail - path_min - branch_min;
-        let branch_extra = extra / 8;
-        let bw = (branch_min + branch_extra).min(branch_max);
-        let pw = avail - bw;
-        (bw, pw)
-    };
+    let extra = avail.saturating_sub(path_min + branch_min);
+    let branch_w = (branch_min + extra / 8).min(branch_max);
+    let path_w = avail.saturating_sub(branch_w);
 
     println!(
         "{:<cur_w$} {:<branch_w$}   {:<status_w$}   PATH",
@@ -74,6 +66,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
 
         let badges = worktree_badges(wt, &clr);
 
+        // manual padding: format width counts bytes so ANSI codes would misalign
         let branch_pad = branch_w.saturating_sub(branch_trunc.chars().count());
         let branch_color = if is_current { clr.green } else { "" };
         let branch_col = format!(
@@ -132,6 +125,9 @@ fn worktree_status(git: &Git, wt: &Worktree) -> String {
 }
 
 fn worktree_badges(wt: &Worktree, clr: &Colors) -> String {
+    if wt.bare {
+        return String::new();
+    }
     let mut badges = Vec::new();
     if wt.detached {
         badges.push(format!("{}[detached]{}", clr.dim, clr.reset));

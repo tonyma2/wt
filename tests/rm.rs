@@ -1,6 +1,8 @@
 pub mod common;
 
 use common::*;
+#[cfg(unix)]
+use tempfile::TempDir;
 
 #[test]
 fn success_message_uses_tilde_for_path() {
@@ -27,9 +29,6 @@ fn success_message_uses_tilde_for_path() {
         "success message should use ~ for home path, got: {stderr}",
     );
 }
-
-#[cfg(unix)]
-use tempfile::TempDir;
 
 #[test]
 fn removes_worktree_and_branch() {

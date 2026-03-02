@@ -112,7 +112,7 @@ fn shows_dirty_status_for_dirty_worktree() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "dirty-status");
     assert!(
-        row.contains("  *"),
+        row.contains("   *"),
         "dirty worktree should show '*' in STATUS column, got: {row}"
     );
 }
@@ -273,10 +273,11 @@ fn truncates_branch_and_path_in_narrow_terminal() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // With no HEAD column the branch gets a bit more room, but still truncates
+    // At 72 cols: avail=54, branch_w=16, so 50-char branch truncates to 13 chars + "..."
+    let truncated = "feature/very-...";
     assert!(
-        stdout.contains("..."),
-        "long branch or path should be truncated in narrow mode, got: {stdout}",
+        stdout.contains(truncated),
+        "branch should be truncated to '{truncated}', got: {stdout}",
     );
     assert!(
         !stdout.contains(long_branch),
