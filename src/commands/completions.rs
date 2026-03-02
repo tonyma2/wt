@@ -133,24 +133,41 @@ _wt_collect_tags() {
         refs/tags/ 2>/dev/null)
 }
 
+_wt_setup_colors() {
+    typeset -g _wt_current_color=$'\e[32m' _wt_bold_yellow=$'\e[1;33m'
+    typeset -g _wt_prunable_color=$'\e[31m' _wt_dim=$'\e[2m' _wt_dim_yellow=$'\e[2;33m' _wt_reset=$'\e[0m'
+    if [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]]; then
+        typeset -g _wt_current_color="" _wt_bold_yellow="" _wt_prunable_color="" _wt_dim="" _wt_dim_yellow="" _wt_reset=""
+    fi
+}
+
+_wt_find_current_branch() {
+    local physical_pwd=${PWD:A}
+    local idx p best_len=0 best_idx=0
+    typeset -g _wt_current_branch=""
+    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
+        p="${_wt_completion_paths[idx]}"
+        if [[ $physical_pwd == $p || $physical_pwd == $p/* ]]; then
+            if (( ${#p} > best_len )); then
+                best_len=${#p}
+                best_idx=$idx
+            fi
+        fi
+    done
+    (( best_idx > 0 )) && _wt_current_branch="${_wt_completion_branches[best_idx]}"
+}
+
 _wt_complete_branches_with_paths() {
     local -a values descs
     local idx max_branch=0 details path_display branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m'
-    local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' dim=$'\e[2m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
+    _wt_setup_colors
 
     _wt_collect_worktree_rows || return 1
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -176,18 +193,18 @@ _wt_complete_branches_with_paths() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     compadd -l -d descs -- "${values[@]}"
 }
@@ -197,8 +214,6 @@ _wt_path_branches() {
     _wt_collect_tags
     local -a detached_values detached_descs
     local idx tag_idx head tag
-    local worktree_color=$'\e[36m' dim=$'\e[2m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" dim="" dim_yellow="" reset=""
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         [[ -n ${_wt_completion_branches[idx]} ]] && continue
         head="${_wt_completion_heads[idx]}"
@@ -206,7 +221,7 @@ _wt_path_branches() {
             [[ ${_wt_tag_shas[tag_idx]} == "$head" ]] || continue
             tag="${_wt_tags[tag_idx]}"
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${_wt_dim_yellow}${head[1,8]}${_wt_reset}) [${_wt_dim}detached${_wt_reset}]")
         done
     done
     (( ${#detached_values[@]} > 0 )) && compadd -V detached -l -d detached_descs -- "${detached_values[@]}"
@@ -217,9 +232,7 @@ _wt_remove_targets() {
     local idx max_branch=0 details path_display branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m' bold_yellow=$'\e[1;33m'
-    local prunable_color=$'\e[31m' dim_yellow=$'\e[2;33m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" dim_yellow="" reset=""
+    _wt_setup_colors
     local -A seen_set
     local i w
 
@@ -240,13 +253,8 @@ _wt_remove_targets() {
         [[ -n ${_wt_completion_branches[idx]} ]] && seen_set[${_wt_completion_branches[idx]}]=1
     done
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -273,18 +281,18 @@ _wt_remove_targets() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
 
     _wt_collect_tags
@@ -298,7 +306,7 @@ _wt_remove_targets() {
             tag="${_wt_tags[tag_idx]}"
             (( ${+seen_set[$tag]} )) && continue
             detached_values+=("$tag")
-            detached_descs+=("${worktree_color}${tag}${reset}  (${dim_yellow}${head[1,8]}${reset}) [${dim}detached${reset}]")
+            detached_descs+=("${tag}  (${_wt_dim_yellow}${head[1,8]}${_wt_reset}) [${_wt_dim}detached${_wt_reset}]")
         done
     done
 
@@ -312,20 +320,13 @@ _wt_switch_targets() {
     local idx max_branch=0 details path_display branch branch_color current_branch="" b flag
     local cols=${COLUMNS:-0}
     local max_path=72
-    local worktree_color=$'\e[36m' current_color=$'\e[32m' dim=$'\e[2m'
-    local bold_yellow=$'\e[1;33m' prunable_color=$'\e[31m' reset=$'\e[0m'
-    [[ -n ${NO_COLOR+x} || ${TERM:-} == dumb ]] && worktree_color="" current_color="" bold_yellow="" prunable_color="" dim="" reset=""
+    _wt_setup_colors
 
     _wt_collect_worktree_rows
     _wt_collect_local_branches
 
-    local physical_pwd=${PWD:A}
-    for (( idx = 1; idx <= ${#_wt_completion_paths[@]}; idx++ )); do
-        if [[ $physical_pwd == ${_wt_completion_paths[idx]} || $physical_pwd == ${_wt_completion_paths[idx]}/* ]]; then
-            current_branch="${_wt_completion_branches[idx]}"
-            break
-        fi
-    done
+    _wt_find_current_branch
+    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -355,21 +356,21 @@ _wt_switch_targets() {
         details="($path_display)"
         for flag in ${(s: :)_wt_completion_flags[idx]}; do
             case $flag in
-                locked)   details="$details [${bold_yellow}locked${reset}]" ;;
-                detached) details="$details [${dim}detached${reset}]" ;;
-                prunable) details="$details [${prunable_color}prunable${reset}]" ;;
+                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
             esac
         done
         if [[ $b == "$current_branch" ]]; then
-            branch_color="$current_color"
+            branch_color="$_wt_current_color"
         else
-            branch_color="$worktree_color"
+            branch_color=""
         fi
         # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        wt_descs+=("${branch_color}${b}${reset}${(r:$((max_branch-${#b})):):-}  $details")
+        wt_descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
     done
     for branch in "${other_values[@]}"; do
-        other_descs+=("${dim}${branch}${reset}")
+        other_descs+=("${_wt_dim}${branch}${_wt_reset}")
     done
 
     (( ${#wt_values[@]} > 0 )) && compadd -V worktrees -l -d wt_descs -- "${wt_values[@]}"
@@ -532,6 +533,8 @@ mod tests {
             "_wt_collect_worktree_rows()",
             "_wt_collect_local_branches()",
             "_wt_collect_tags()",
+            "_wt_setup_colors()",
+            "_wt_find_current_branch()",
             "_wt_complete_branches_with_paths()",
             "_wt_path_branches()",
             "_wt_remove_targets()",

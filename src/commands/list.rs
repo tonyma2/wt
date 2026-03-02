@@ -1,8 +1,7 @@
-use std::fmt::Write;
 use std::path::Path;
 
 use crate::git::Git;
-use crate::terminal;
+use crate::terminal::{self, Colors};
 use crate::worktree::{self, Worktree};
 
 pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
@@ -21,55 +20,74 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
         .ok()
         .and_then(|p| p.canonicalize().ok());
 
+    let current_path = cwd.as_deref().and_then(|cwd| {
+        worktrees
+            .iter()
+            .filter(|wt| !wt.prunable)
+            .filter_map(|wt| {
+                let canonical = worktree::canonicalize_or_self(&wt.path);
+                cwd.starts_with(&canonical)
+                    .then_some((wt.path.as_path(), canonical))
+            })
+            .max_by_key(|(_, canonical)| canonical.components().count())
+            .map(|(path, _)| path)
+    });
+
     let cols = terminal::width();
+    let clr = terminal::colors();
 
     let cur_w: usize = 1;
     let branch_min: usize = 14;
     let branch_max: usize = 24;
-    let head_w: usize = 8;
-    let flags_w: usize = 8;
+    let status_w: usize = 10;
     let path_min: usize = 24;
-    let avail = cols.saturating_sub(cur_w + head_w + flags_w + 11);
+    let avail = cols.saturating_sub(cur_w + status_w + 7);
 
-    let (branch_w, path_w) = if avail <= path_min + branch_min {
-        let bw = branch_min;
-        let pw = avail.saturating_sub(bw).max(12);
-        (bw, pw)
-    } else {
-        let extra = avail - path_min - branch_min;
-        let branch_extra = extra / 8;
-        let bw = (branch_min + branch_extra).min(branch_max);
-        let pw = avail - bw;
-        (bw, pw)
-    };
+    let extra = avail.saturating_sub(path_min + branch_min);
+    let branch_w = (branch_min + extra / 8).min(branch_max);
+    let path_w = avail.saturating_sub(branch_w);
 
     println!(
-        "{:<cur_w$}  {:<branch_w$}  {:<head_w$}  {:<flags_w$}  PATH",
-        "", "BRANCH", "HEAD", "STATE",
+        "{:<cur_w$} {:<branch_w$}   {:<status_w$}   PATH",
+        "", "BRANCH", "STATUS",
     );
 
     for wt in &worktrees {
-        let is_current = !wt.prunable && worktree::is_cwd_inside(&wt.path, cwd.as_deref());
-        let cur_marker = if is_current { "*" } else { "" };
+        let is_current = current_path == Some(wt.path.as_path());
 
         let branch = wt.branch.as_deref().unwrap_or("(detached)");
         let branch_trunc = trunc(branch, branch_w);
 
-        let head_trunc = if wt.head.bytes().all(|b| b == b'0') {
-            "-".to_string()
-        } else if wt.head.len() > head_w {
-            wt.head[..head_w].to_string()
-        } else {
-            wt.head.clone()
-        };
         let status = worktree_status(&git, wt);
-        let flags_trunc = trunc(&status, flags_w);
-        let path_str = wt.path.to_string_lossy();
+        let status_trunc = trunc(&status, status_w);
+
+        let path_str = terminal::tilde_path(&wt.path);
         let path_trunc = trunc_tail(&path_str, path_w);
 
+        let badges = worktree_badges(wt, &clr);
+
+        // manual padding: format width counts bytes so ANSI codes would misalign
+        let branch_pad = branch_w.saturating_sub(branch_trunc.chars().count());
+        let branch_color = if is_current { clr.green } else { "" };
+        let branch_col = format!(
+            "{}{}{}{}",
+            branch_color,
+            branch_trunc,
+            clr.reset,
+            " ".repeat(branch_pad)
+        );
+
+        let cur_col = if is_current { "*" } else { " " };
+
+        let row_suffix = if badges.is_empty() {
+            path_trunc
+        } else {
+            format!("{path_trunc}  {badges}")
+        };
+
         println!(
-            "{:<cur_w$}  {:<branch_w$}  {:<head_w$}  {:<flags_w$}  {}",
-            cur_marker, branch_trunc, head_trunc, flags_trunc, path_trunc,
+            "{cur_col} {branch_col}   {:<status_w$}   {row_suffix}",
+            status_trunc,
         );
     }
 
@@ -80,40 +98,47 @@ fn worktree_status(git: &Git, wt: &Worktree) -> String {
     if wt.bare {
         return "bare".into();
     }
+    if wt.prunable {
+        return "-".into();
+    }
 
-    let mut s = String::new();
-    if !wt.prunable {
-        if git.is_dirty(&wt.path) {
-            s.push('*');
+    let mut parts: Vec<String> = Vec::new();
+    if git.is_dirty(&wt.path) {
+        parts.push("*".into());
+    }
+    if let Some(branch) = &wt.branch
+        && let Some((ahead, behind)) = git.ahead_behind(branch)
+    {
+        if ahead > 0 {
+            parts.push(format!("↑{ahead}"));
         }
-        if let Some(branch) = &wt.branch
-            && let Some((ahead, behind)) = git.ahead_behind(branch)
-        {
-            if ahead > 0 {
-                let _ = write!(s, "+{ahead}");
-            }
-            if behind > 0 {
-                let _ = write!(s, "-{behind}");
-            }
+        if behind > 0 {
+            parts.push(format!("↓{behind}"));
         }
     }
 
-    let mut flags = Vec::new();
+    if parts.is_empty() {
+        "-".into()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn worktree_badges(wt: &Worktree, clr: &Colors) -> String {
+    if wt.bare {
+        return String::new();
+    }
+    let mut badges = Vec::new();
     if wt.detached {
-        flags.push("detached");
+        badges.push(format!("{}[detached]{}", clr.dim, clr.reset));
     }
     if wt.locked {
-        flags.push("locked");
+        badges.push(format!("{}[locked]{}", clr.bold_yellow, clr.reset));
     }
     if wt.prunable {
-        flags.push("prunable");
+        badges.push(format!("{}[prunable]{}", clr.red, clr.reset));
     }
-    if !s.is_empty() && !flags.is_empty() {
-        s.push(',');
-    }
-    s.push_str(&flags.join(","));
-
-    if s.is_empty() { "-".into() } else { s }
+    badges.join(" ")
 }
 
 fn trunc(s: &str, max: usize) -> String {

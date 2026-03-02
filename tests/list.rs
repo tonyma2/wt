@@ -23,11 +23,6 @@ fn find_row<'a>(output: &'a str, needle: &str) -> &'a str {
         .unwrap_or_else(|| panic!("could not find row containing '{needle}' in:\n{output}"))
 }
 
-fn state_col(row: &str) -> &str {
-    let prefix = row.rsplit_once("  ").map_or(row, |(left, _)| left);
-    prefix.split_whitespace().last().unwrap_or("")
-}
-
 #[test]
 fn porcelain_matches_git_worktree_list() {
     let (home, repo) = setup();
@@ -60,26 +55,21 @@ fn list_human_output_matches_golden() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let normalized = normalize_home_paths(&String::from_utf8_lossy(&output.stdout), home.path());
-    let lines: Vec<&str> = normalized.lines().collect();
-    assert_eq!(lines.len(), 3, "expected 3 lines, got: {normalized}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "expected 3 lines, got: {stdout}");
 
-    let header = format!(
-        "{:<1}  {:<24}  {:<8}  {:<8}  PATH",
-        "", "BRANCH", "HEAD", "STATE"
-    );
+    let header = format!("{:<1} {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
     assert_eq!(lines[0], header);
 
     assert!(
-        lines[1].contains("main") && lines[1].contains("$HOME/repo"),
-        "expected main row, got: {}",
+        lines[1].contains("main") && lines[1].contains("~/repo"),
+        "expected main row with tilde path, got: {}",
         lines[1]
     );
     assert!(
-        lines[2].contains("feat-list")
-            && lines[2].contains("$HOME/.wt/worktrees/")
-            && lines[2].contains("/repo"),
-        "expected feat-list row with random path, got: {}",
+        lines[2].contains("feat-list") && lines[2].contains("~/.wt/"),
+        "expected feat-list row with tilde worktree path, got: {}",
         lines[2]
     );
 }
@@ -98,10 +88,10 @@ fn marks_current_worktree_when_cwd_is_inside_linked_worktree() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let normalized = normalize_home_paths(&String::from_utf8_lossy(&output.stdout), home.path());
-    let row = find_row(&normalized, "feat-cwd-marker");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = find_row(&stdout, "feat-cwd-marker");
     assert!(
-        row.starts_with("*  "),
+        row.starts_with("* "),
         "linked worktree should be marked as current, got row: {row}",
     );
 }
@@ -121,11 +111,14 @@ fn shows_dirty_status_for_dirty_worktree() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "dirty-status");
-    assert_eq!(state_col(row), "*", "dirty worktree should show '*' state");
+    assert!(
+        row.contains("   *"),
+        "dirty worktree should show '*' in STATUS column, got: {row}"
+    );
 }
 
 #[test]
-fn shows_ahead_behind_for_diverged_branch() {
+fn shows_ahead_behind_arrows_for_diverged_branch() {
     let (home, repo, origin) = setup_with_origin();
     let wt_path = wt_new(home.path(), &repo, "status-diverge");
     assert_git_success(&wt_path, &["push", "-u", "origin", "status-diverge"]);
@@ -153,15 +146,18 @@ fn shows_ahead_behind_for_diverged_branch() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "status-diverge");
-    assert_eq!(
-        state_col(row),
-        "+1-1",
-        "diverged branch should show ahead/behind state"
+    assert!(
+        row.contains("↑1"),
+        "diverged branch should show ↑ for ahead, got: {row}"
+    );
+    assert!(
+        row.contains("↓1"),
+        "diverged branch should show ↓ for behind, got: {row}"
     );
 }
 
 #[test]
-fn shows_detached_locked_and_prunable_states() {
+fn shows_detached_locked_and_prunable_as_badges() {
     let (home, repo) = setup();
     let wt_locked = wt_new(home.path(), &repo, "state-locked");
     let wt_detached = wt_new(home.path(), &repo, "state-detached");
@@ -181,17 +177,85 @@ fn shows_detached_locked_and_prunable_states() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+
     let locked_row = find_row(&stdout, "state-locked");
-    assert_eq!(state_col(locked_row), "locked");
+    assert!(
+        locked_row.contains("[locked]"),
+        "locked worktree should show [locked] badge, got: {locked_row}",
+    );
 
     let detached_row = find_row(&stdout, "(detached)");
-    assert_eq!(state_col(detached_row), "detached");
+    assert!(
+        detached_row.contains("[detached]"),
+        "detached worktree should show [detached] badge, got: {detached_row}",
+    );
 
     let prunable_row = find_row(&stdout, "state-prunable");
-    let state = state_col(prunable_row);
     assert!(
-        state.contains("pru"),
-        "prunable state should be present (possibly truncated), got: {state}",
+        prunable_row.contains("[prunable]"),
+        "prunable worktree should show [prunable] badge, got: {prunable_row}",
+    );
+}
+
+#[test]
+fn does_not_mark_main_as_current_when_cwd_is_nested_worktree_inside_repo() {
+    let (home, repo) = setup();
+    // Create a worktree nested inside the repo directory — its path will start
+    // with the repo root, so a naive starts_with check incorrectly matches main.
+    let inside = repo.join(".worktrees").join("feat-inside");
+    std::fs::create_dir_all(&inside).unwrap();
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "feat-inside"])
+            .arg(&inside);
+    });
+
+    let output = run_list(home.path(), &repo, "200", Some(&inside));
+    assert!(
+        output.status.success(),
+        "wt list failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let main_row = find_row(&stdout, "main");
+    assert!(
+        !main_row.starts_with("* "),
+        "main should not be marked as current when cwd is a nested worktree, got: {main_row}",
+    );
+    let feat_row = find_row(&stdout, "feat-inside");
+    assert!(
+        feat_row.starts_with("* "),
+        "feat-inside should be marked as current, got: {feat_row}",
+    );
+}
+
+#[test]
+fn paths_use_tilde_for_home_directory() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "tilde-check");
+
+    let output = run_list(home.path(), &repo, "200", None);
+    assert!(
+        output.status.success(),
+        "wt list failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let home_str = home.path().to_string_lossy();
+    // The home path itself should not appear in the output (it should be ~-substituted)
+    let data_lines: Vec<&str> = stdout.lines().skip(1).collect();
+    for line in &data_lines {
+        assert!(
+            !line.contains(home_str.as_ref()),
+            "path should use ~ instead of raw home, got: {line}",
+        );
+    }
+    // The linked worktree path should start with ~/
+    let row = find_row(&stdout, "tilde-check");
+    assert!(
+        row.contains("~/.wt/"),
+        "linked worktree path should be tilde-prefixed, got: {row}",
     );
 }
 
@@ -209,11 +273,14 @@ fn truncates_branch_and_path_in_narrow_terminal() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branch_prefix: String = long_branch.chars().take(11).collect();
-    let expected_branch = format!("{branch_prefix}...");
-    let row = find_row(&stdout, &expected_branch);
+    // At 72 cols: avail=54, branch_w=16, so 50-char branch truncates to 13 chars + "..."
+    let truncated = "feature/very-...";
     assert!(
-        !row.contains(long_branch),
-        "branch should be truncated in narrow mode, got row: {row}",
+        stdout.contains(truncated),
+        "branch should be truncated to '{truncated}', got: {stdout}",
+    );
+    assert!(
+        !stdout.contains(long_branch),
+        "full long branch name should not appear in narrow mode, got: {stdout}",
     );
 }

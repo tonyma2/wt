@@ -5,6 +5,32 @@ use common::*;
 use tempfile::TempDir;
 
 #[test]
+fn success_message_uses_tilde_for_path() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "tilde-msg");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "tilde-msg", "--force", "--repo"])
+            .arg(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "wt rm failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let home_str = home.path().to_string_lossy();
+    assert!(
+        !stderr.contains(home_str.as_ref()),
+        "success message should not contain raw home path, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("~/"),
+        "success message should use ~ for home path, got: {stderr}",
+    );
+}
+
+#[test]
 fn removes_worktree_and_branch() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "test-branch");
