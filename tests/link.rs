@@ -12,6 +12,12 @@ fn wt_link(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
     })
 }
 
+fn wt_link_list(home: &Path, repo: &Path) -> std::process::Output {
+    run_wt(home, |cmd| {
+        cmd.args(["link", "--list", "--repo"]).arg(repo);
+    })
+}
+
 fn link_force(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
     run_wt(home, |cmd| {
         cmd.arg("link");
@@ -34,6 +40,37 @@ fn create_symlink(source: &Path, dest: &Path) {
             std::os::windows::fs::symlink_file(source, dest).unwrap();
         }
     }
+}
+
+#[test]
+fn list_with_no_links_prints_nothing_to_stdout() {
+    let (home, repo) = setup();
+
+    let output = wt_link_list(home.path(), &repo);
+    assert!(output.status.success());
+    assert_stdout_empty(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no links configured"),
+        "expected 'no links configured', got: {stderr}",
+    );
+}
+
+#[test]
+fn list_shows_configured_links() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let output = wt_link_list(home.path(), &repo);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        ".env",
+        "stdout should contain exactly the linked file",
+    );
 }
 
 #[test]

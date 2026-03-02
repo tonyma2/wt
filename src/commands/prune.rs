@@ -69,7 +69,8 @@ pub fn run(
 
     if dry_run {
         for orphan in &orphans {
-            println!("{}", orphan.display());
+            let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
+            eprintln!("would remove {} (orphan)", label.display());
         }
     } else {
         for orphan in &orphans {
@@ -82,7 +83,10 @@ pub fn run(
     }
 
     if errors > 0 {
-        return Err(format!("cannot prune {} repo(s)", errors));
+        return Err(format!(
+            "cannot prune {errors} {}",
+            if errors == 1 { "repo" } else { "repos" }
+        ));
     }
 
     Ok(())
@@ -137,11 +141,11 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
 
 fn find_orphans(wt_root: &Path) -> Vec<PathBuf> {
     let mut orphans = Vec::new();
-    scan_dir(wt_root, &mut orphans);
+    scan_dir(wt_root, wt_root, &mut orphans);
     orphans
 }
 
-fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
+fn scan_dir(dir: &Path, wt_root: &Path, orphans: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => {
@@ -178,7 +182,16 @@ fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
                 eprintln!("cannot parse {}, skipping", dot_git.display());
             }
         } else if !dot_git.is_dir() {
-            scan_dir(&path, orphans);
+            if dir.parent() == Some(wt_root) {
+                // sole empty dir at the <id> level → zombie from interrupted create_dest
+                if fs::read_dir(&path).is_ok_and(|mut d| d.next().is_none())
+                    && fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some() && d.next().is_none())
+                {
+                    orphans.push(path);
+                }
+            } else {
+                scan_dir(&path, wt_root, orphans);
+            }
         }
     }
 }
@@ -259,8 +272,9 @@ fn prune_merged(
             }
         }
     };
-    let base_branch =
-        base_override.or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
+    let base_branch = base_override
+        .map(|b| b.strip_prefix("origin/").unwrap_or(b))
+        .or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
 
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
@@ -296,6 +310,7 @@ fn prune_merged(
                 eprintln!("remote '{remote}' not found, skipping upstream-gone pruning");
                 false
             } else {
+                eprintln!("fetching from '{remote}'");
                 git.fetch_remote(&remote)
                     .inspect_err(|e| eprintln!("{e}, skipping upstream-gone pruning"))
                     .is_ok()
@@ -364,7 +379,10 @@ fn prune_merged(
     }
 
     if errors > 0 {
-        return Err(format!("cannot clean up {errors} worktree(s)"));
+        return Err(format!(
+            "cannot clean up {errors} {}",
+            if errors == 1 { "worktree" } else { "worktrees" }
+        ));
     }
 
     Ok(())

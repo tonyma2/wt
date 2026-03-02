@@ -16,7 +16,10 @@ pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
         }
     }
     if errors > 0 {
-        Err(format!("cannot remove {errors} worktree(s)"))
+        Err(format!(
+            "cannot remove {errors} {}",
+            if errors == 1 { "worktree" } else { "worktrees" }
+        ))
     } else {
         Ok(())
     }

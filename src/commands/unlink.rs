@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::commands::link::validate_path;
+use crate::commands::link::{is_expected_link, remove_dest, validate_path};
 use crate::config;
 use crate::git::Git;
 use crate::worktree;
@@ -53,8 +53,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
                 continue;
             };
 
-            let is_correct_link = meta.file_type().is_symlink()
-                && std::fs::read_link(&dest).is_ok_and(|t| t == source);
+            let is_correct_link = is_expected_link(&dest, &source);
 
             if !is_correct_link && !force {
                 if meta.file_type().is_symlink() {
@@ -68,13 +67,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
                 continue;
             }
 
-            let result = if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
-                std::fs::remove_dir_all(&dest)
-            } else {
-                std::fs::remove_file(&dest)
-            };
-
-            if let Err(e) = result {
+            if let Err(e) = remove_dest(&dest) {
                 eprintln!("cannot remove {} in {}: {e}", file, wt.path.display());
                 errors += 1;
                 file_errors[i] = true;
@@ -98,7 +91,10 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
     }
 
     if errors > 0 {
-        Err(format!("cannot unlink {errors} file(s)"))
+        Err(format!(
+            "cannot unlink {errors} {}",
+            if errors == 1 { "file" } else { "files" }
+        ))
     } else {
         Ok(())
     }

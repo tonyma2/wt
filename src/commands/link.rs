@@ -4,8 +4,21 @@ use crate::config;
 use crate::git::Git;
 use crate::worktree;
 
-pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
+pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
+
+    if list {
+        let links = config::get_links(&repo_root);
+        if links.is_empty() {
+            eprintln!("no links configured");
+        } else {
+            for link in &links {
+                println!("{link}");
+            }
+        }
+        return Ok(());
+    }
+
     let git = Git::new(&repo_root);
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
@@ -48,9 +61,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
                     .map_err(|e| format!("cannot remove {} in {}: {e}", file, wt.path.display()))?;
             }
 
-            if let Some(parent) = dest.parent()
-                && !parent.exists()
-            {
+            if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("cannot create directory {}: {e}", parent.display()))?;
             }
@@ -64,21 +75,11 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     Ok(())
 }
 
-pub fn auto_link(repo_root: &Path, worktree_path: &Path) {
+pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
     let files = config::get_links(repo_root);
     if files.is_empty() {
         return;
     }
-
-    let git = Git::new(repo_root);
-    let Ok(output) = git.list_worktrees() else {
-        return;
-    };
-    let worktrees = worktree::parse_porcelain(&output);
-    let Some(primary) = worktrees.first() else {
-        return;
-    };
-    let primary_path = &primary.path;
 
     for file in &files {
         let source = primary_path.join(file);
@@ -90,9 +91,13 @@ pub fn auto_link(repo_root: &Path, worktree_path: &Path) {
             continue;
         }
         if let Some(parent) = dest.parent()
-            && !parent.exists()
+            && let Err(e) = std::fs::create_dir_all(parent)
         {
-            let _ = std::fs::create_dir_all(parent);
+            eprintln!(
+                "cannot auto-link {file}, cannot create {}: {e}",
+                parent.display()
+            );
+            continue;
         }
         if let Err(e) = symlink(&source, &dest) {
             eprintln!("cannot auto-link {file}: {e}");
@@ -119,11 +124,11 @@ pub(crate) fn validate_path(file: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_expected_link(dest: &Path, source: &Path) -> bool {
+pub(crate) fn is_expected_link(dest: &Path, source: &Path) -> bool {
     std::fs::read_link(dest).is_ok_and(|target| target == *source)
 }
 
-fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
+pub(crate) fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
     if dest
         .symlink_metadata()
         .is_ok_and(|m| m.file_type().is_dir())

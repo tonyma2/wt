@@ -18,7 +18,7 @@ pub fn run(
     let result = if create {
         if git.has_local_branch(name) {
             let repo_flag = repo
-                .map(|r| format!(" --repo {}", r.display()))
+                .map(|r| format!(" --repo '{}'", r.display()))
                 .unwrap_or_default();
             Err(format!(
                 "cannot create branch '{name}': already exists, use 'wt new{repo_flag} {name}'"
@@ -41,7 +41,7 @@ pub fn run(
         eprintln!("checking out '{name}'");
     }
 
-    link::auto_link(&repo_root, &dest);
+    link::auto_link(&repo_root, &dest, &repo_root);
 
     println!("{}", dest.display());
 

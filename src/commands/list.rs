@@ -55,7 +55,10 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     for wt in &worktrees {
         let is_current = current_path == Some(wt.path.as_path());
 
-        let branch = wt.branch.as_deref().unwrap_or("(detached)");
+        let branch = wt
+            .branch
+            .as_deref()
+            .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
         let status = worktree_status(&git, wt);

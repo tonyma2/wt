@@ -1,12 +1,22 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-fn stderr_msg(output: &Output) -> String {
-    let s = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if s.is_empty() {
-        "unknown error".into()
+fn git_err(context: impl AsRef<str>, output: &Output) -> String {
+    let context = context.as_ref();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let msg = line
+        .strip_prefix("fatal: ")
+        .or_else(|| line.strip_prefix("error: "))
+        .unwrap_or(line);
+    if msg.is_empty() {
+        context.into()
     } else {
-        s
+        format!("{context}: {msg}")
     }
 }
 
@@ -60,10 +70,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git fetch: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot fetch from '{remote}': {}",
-                stderr_msg(&output)
-            ));
+            return Err(git_err(format!("cannot fetch from '{remote}'"), &output));
         }
         Ok(())
     }
@@ -137,7 +144,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git remote: {e}"))?;
         if !output.status.success() {
-            return Err(format!("cannot list remotes: {}", stderr_msg(&output)));
+            return Err(git_err("cannot list remotes", &output));
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -163,7 +170,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
+            return Err(git_err("cannot create worktree", &output));
         }
         Ok(())
     }
@@ -178,7 +185,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree add: {e}"))?;
         if !output.status.success() {
-            return Err(format!("cannot create worktree: {}", stderr_msg(&output)));
+            return Err(git_err("cannot create worktree", &output));
         }
         Ok(())
     }
@@ -190,7 +197,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree list: {e}"))?;
         if !output.status.success() {
-            return Err(format!("cannot list worktrees: {}", stderr_msg(&output)));
+            return Err(git_err("cannot list worktrees", &output));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -207,10 +214,9 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree remove: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot remove worktree: {}: {}",
-                path.display(),
-                stderr_msg(&output)
+            return Err(git_err(
+                format!("cannot remove worktree: {}", path.display()),
+                &output,
             ));
         }
         Ok(())
@@ -226,9 +232,9 @@ impl Git {
             .map_err(|e| format!("cannot run git branch: {e}"))?;
         if !output.status.success() {
             let action = if force { "force-delete" } else { "delete" };
-            return Err(format!(
-                "worktree removed but cannot {action} branch '{branch}': {}",
-                stderr_msg(&output)
+            return Err(git_err(
+                format!("worktree removed but cannot {action} branch '{branch}'"),
+                &output,
             ));
         }
         Ok(())
@@ -244,10 +250,7 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree prune: {e}"))?;
         if !output.status.success() {
-            return Err(format!(
-                "cannot prune worktree metadata: {}",
-                stderr_msg(&output)
-            ));
+            return Err(git_err("cannot prune worktree metadata", &output));
         }
         Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
@@ -353,5 +356,64 @@ impl Git {
             .ok()?;
         let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
         (!upstream.is_empty()).then_some(upstream)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Output;
+
+    fn fake_output(stderr: &str) -> Output {
+        Output {
+            status: std::process::ExitStatus::default(),
+            stdout: vec![],
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn git_err_strips_fatal_prefix() {
+        let out = fake_output("fatal: invalid reference: aaaa\n");
+        assert_eq!(
+            git_err("cannot create worktree", &out),
+            "cannot create worktree: invalid reference: aaaa"
+        );
+    }
+
+    #[test]
+    fn git_err_strips_error_prefix() {
+        let out = fake_output("error: branch 'x' not found\n");
+        assert_eq!(
+            git_err("cannot delete branch", &out),
+            "cannot delete branch: branch 'x' not found"
+        );
+    }
+
+    #[test]
+    fn git_err_preserves_warning_prefix() {
+        let out = fake_output("warning: something unexpected\n");
+        assert_eq!(
+            git_err("cannot remove worktree", &out),
+            "cannot remove worktree: warning: something unexpected"
+        );
+    }
+
+    #[test]
+    fn git_err_empty_stderr_returns_context_only() {
+        let out = fake_output("");
+        assert_eq!(
+            git_err("cannot list worktrees", &out),
+            "cannot list worktrees"
+        );
+    }
+
+    #[test]
+    fn git_err_multiline_uses_first_nonempty_line() {
+        let out = fake_output("\nfatal: bad object: abc\nhint: use --force\n");
+        assert_eq!(
+            git_err("cannot create worktree", &out),
+            "cannot create worktree: bad object: abc"
+        );
     }
 }

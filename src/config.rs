@@ -17,12 +17,13 @@ fn config_path() -> Result<PathBuf, String> {
 
 pub fn load() -> Result<Config, String> {
     let path = config_path()?;
-    if !path.exists() {
-        return Ok(Config::default());
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            toml::from_str(&content).map_err(|e| format!("cannot parse {}: {e}", path.display()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    toml::from_str(&content).map_err(|e| format!("cannot parse {}: {e}", path.display()))
 }
 
 fn save(config: &Config) -> Result<(), String> {
@@ -33,7 +34,11 @@ fn save(config: &Config) -> Result<(), String> {
     }
     let content =
         toml::to_string_pretty(config).map_err(|e| format!("cannot serialize config: {e}"))?;
-    std::fs::write(&path, content).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    // Write to a sibling tmp file then rename for atomicity: a crash between
+    // truncation and a completed write would otherwise corrupt the config.
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, content).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 pub(crate) fn repo_key(repo: &Path) -> String {
