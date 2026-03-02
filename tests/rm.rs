@@ -208,7 +208,7 @@ fn removing_multiple_targets_reports_failures_and_removes_successes() {
         "should report failing target, got: {stderr}",
     );
     assert!(
-        stderr.contains("cannot remove 1 worktree(s)"),
+        stderr.contains("cannot remove 1 worktree"),
         "should report aggregate failure count, got: {stderr}",
     );
     assert!(

@@ -98,7 +98,10 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
     }
 
     if errors > 0 {
-        Err(format!("cannot unlink {errors} file(s)"))
+        Err(format!(
+            "cannot unlink {errors} {}",
+            if errors == 1 { "file" } else { "files" }
+        ))
     } else {
         Ok(())
     }

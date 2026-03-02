@@ -1385,7 +1385,7 @@ fn reports_repo_prune_failures_with_aggregate_error() {
         "expected per-repo prune error, got: {stderr}",
     );
     assert!(
-        stderr.contains("cannot prune 1 repo(s)\n"),
+        stderr.contains("cannot prune 1 repo\n"),
         "expected aggregate prune error, got: {stderr}",
     );
 }
@@ -1557,5 +1557,50 @@ fn base_flag_warns_on_nonexistent_branch() {
     assert!(
         wt_path.exists(),
         "worktree should be kept when base branch is invalid"
+    );
+}
+
+#[test]
+fn dry_run_orphan_output_goes_to_stderr_not_stdout() {
+    let home = TempDir::new().unwrap();
+
+    let repo = home.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+
+    let wt_path = wt_new(home.path(), &repo, "orphan-dry");
+    let _anchor = wt_new(home.path(), &repo, "anchor");
+
+    // Delete the backing repo to make the worktree an orphan
+    std::fs::remove_dir_all(&repo).unwrap();
+
+    assert!(wt_path.exists(), "worktree dir should exist before dry-run");
+
+    let output = wt_bin()
+        .args(["prune", "--dry-run"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --dry-run should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(
+        output.stdout.is_empty(),
+        "dry-run should produce no stdout, got: {}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("would remove") && stderr.contains("orphan"),
+        "dry-run should report orphan on stderr, got: {stderr}",
+    );
+
+    assert!(
+        wt_path.exists(),
+        "dry-run should not remove the orphan directory"
     );
 }

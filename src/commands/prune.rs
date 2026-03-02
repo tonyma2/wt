@@ -69,7 +69,8 @@ pub fn run(
 
     if dry_run {
         for orphan in &orphans {
-            println!("{}", orphan.display());
+            let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
+            eprintln!("would remove {} (orphan)", label.display());
         }
     } else {
         for orphan in &orphans {
@@ -82,7 +83,10 @@ pub fn run(
     }
 
     if errors > 0 {
-        return Err(format!("cannot prune {} repo(s)", errors));
+        return Err(format!(
+            "cannot prune {errors} {}",
+            if errors == 1 { "repo" } else { "repos" }
+        ));
     }
 
     Ok(())
@@ -364,7 +368,10 @@ fn prune_merged(
     }
 
     if errors > 0 {
-        return Err(format!("cannot clean up {errors} worktree(s)"));
+        return Err(format!(
+            "cannot clean up {errors} {}",
+            if errors == 1 { "worktree" } else { "worktrees" }
+        ));
     }
 
     Ok(())

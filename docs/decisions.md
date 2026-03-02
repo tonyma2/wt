@@ -24,7 +24,7 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 
 ## Do not add doc comments outside `cli.rs`
 
-Clap derives `--help` text from `///` doc comments on CLI structs and fields. Adding doc comments elsewhere sets a false expectation that the codebase documents public APIs — it doesn't. Code is self-documenting; inline comments explain non-obvious *why*, not *what*.
+`///` doc comments in `cli.rs` serve a concrete purpose: clap derives `--help` text from them on structs that derive `Parser`/`Subcommand`. Everywhere else they have no mechanical effect — they'd just be prose attached to internal functions in a binary that has no public API consumers. Code is self-documenting; inline `//` comments explain non-obvious *why*, not *what*.
 
 ## Config is per-repo keyed in a single global file
 
@@ -38,9 +38,9 @@ Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives 
 
 `wt path` and `wt rm` resolve names as: branch → ref (tag/SHA) → path. The ref fallback only matches detached HEAD worktrees whose `head` SHA equals the resolved ref. We don't attempt arbitrary SHA prefix matching because git worktrees can share a HEAD commit, making prefix matches ambiguous.
 
-## Hints are TTY-only (stdout, not stderr)
+## The cd hint goes to stderr, gated on stdout being a TTY
 
-After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to stderr — but only when **stdout** is a terminal. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names.
+After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to **stderr** — but only when **stdout** is a TTY. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names.
 
 ## Do not mock git in tests
 

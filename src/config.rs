@@ -33,7 +33,11 @@ fn save(config: &Config) -> Result<(), String> {
     }
     let content =
         toml::to_string_pretty(config).map_err(|e| format!("cannot serialize config: {e}"))?;
-    std::fs::write(&path, content).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    // Write to a sibling tmp file then rename for atomicity: a crash between
+    // truncation and a completed write would otherwise corrupt the config.
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, content).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 pub(crate) fn repo_key(repo: &Path) -> String {
