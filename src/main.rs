@@ -35,9 +35,12 @@ fn main() {
         Command::Switch { name, create, repo } => {
             commands::switch::run(name, *create, repo.as_deref())
         }
-        Command::Link { files, repo, force, list } => {
-            commands::link::run(files, repo.as_deref(), *force, *list)
-        }
+        Command::Link {
+            files,
+            repo,
+            force,
+            list,
+        } => commands::link::run(files, repo.as_deref(), *force, *list),
         Command::Unlink {
             files,
             repo,

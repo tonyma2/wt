@@ -93,7 +93,10 @@ pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
         if let Some(parent) = dest.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
-            eprintln!("cannot auto-link {file}, cannot create {}: {e}", parent.display());
+            eprintln!(
+                "cannot auto-link {file}, cannot create {}: {e}",
+                parent.display()
+            );
             continue;
         }
         if let Err(e) = symlink(&source, &dest) {

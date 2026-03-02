@@ -1604,3 +1604,72 @@ fn dry_run_orphan_output_goes_to_stderr_not_stdout() {
         "dry-run should not remove the orphan directory"
     );
 }
+
+#[test]
+fn prune_removes_zombie_worktree_directory() {
+    let home = TempDir::new().unwrap();
+
+    // Simulate an interrupted create_dest: <wt_root>/<id>/<repo>/ exists but has no .git
+    let zombie = home
+        .path()
+        .join(".wt")
+        .join("worktrees")
+        .join("abc123")
+        .join("myrepo");
+    std::fs::create_dir_all(&zombie).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(
+        !zombie.exists(),
+        "zombie worktree dir should be removed by prune"
+    );
+    assert!(
+        !zombie.parent().unwrap().exists(),
+        "zombie id dir should be removed by prune"
+    );
+}
+
+#[test]
+fn dry_run_reports_zombie_directory() {
+    let home = TempDir::new().unwrap();
+
+    let zombie = home
+        .path()
+        .join(".wt")
+        .join("worktrees")
+        .join("deadbeef")
+        .join("myrepo");
+    std::fs::create_dir_all(&zombie).unwrap();
+
+    let output = wt_bin()
+        .args(["prune", "--dry-run"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --dry-run should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("would remove"),
+        "dry-run should report zombie on stderr, got: {stderr}",
+    );
+
+    assert!(
+        zombie.exists(),
+        "dry-run should not remove the zombie directory"
+    );
+}

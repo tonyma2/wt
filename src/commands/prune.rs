@@ -141,11 +141,11 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
 
 fn find_orphans(wt_root: &Path) -> Vec<PathBuf> {
     let mut orphans = Vec::new();
-    scan_dir(wt_root, &mut orphans);
+    scan_dir(wt_root, wt_root, &mut orphans);
     orphans
 }
 
-fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
+fn scan_dir(dir: &Path, wt_root: &Path, orphans: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => {
@@ -182,7 +182,16 @@ fn scan_dir(dir: &Path, orphans: &mut Vec<PathBuf>) {
                 eprintln!("cannot parse {}, skipping", dot_git.display());
             }
         } else if !dot_git.is_dir() {
-            scan_dir(&path, orphans);
+            if dir.parent() == Some(wt_root) {
+                // sole empty dir at the <id> level → zombie from interrupted create_dest
+                if fs::read_dir(&path).is_ok_and(|mut d| d.next().is_none())
+                    && fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some() && d.next().is_none())
+                {
+                    orphans.push(path);
+                }
+            } else {
+                scan_dir(&path, wt_root, orphans);
+            }
         }
     }
 }
@@ -301,6 +310,7 @@ fn prune_merged(
                 eprintln!("remote '{remote}' not found, skipping upstream-gone pruning");
                 false
             } else {
+                eprintln!("fetching from '{remote}'");
                 git.fetch_remote(&remote)
                     .inspect_err(|e| eprintln!("{e}, skipping upstream-gone pruning"))
                     .is_ok()
