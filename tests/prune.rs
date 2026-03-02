@@ -613,10 +613,10 @@ fn dry_run_skips_merged_worktree() {
         wt_path.exists(),
         "dry-run should not remove merged worktree"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stdout.contains("would remove"),
-        "should report what would be removed on stdout, got: {stdout}",
+        stderr.contains("would remove"),
+        "should report what would be removed, got: {stderr}",
     );
 
     let branch_exists = git(&repo)
@@ -1014,14 +1014,14 @@ fn gone_dry_run_reports_without_removing() {
         wt_path.exists(),
         "dry-run should not remove upstream-gone worktree"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stdout.contains("would remove"),
-        "should report what would be removed on stdout, got: {stdout}",
+        stderr.contains("would remove"),
+        "should report what would be removed, got: {stderr}",
     );
     assert!(
-        stdout.contains("upstream gone"),
-        "should mention upstream gone reason on stdout, got: {stdout}",
+        stderr.contains("upstream gone"),
+        "should mention upstream gone reason, got: {stderr}",
     );
     let branch_exists = git(&repo)
         .args(["show-ref", "--verify", "--quiet", "refs/heads/dry-gone"])
