@@ -41,7 +41,7 @@ pub fn run(
         eprintln!("checking out '{name}'");
     }
 
-    link::auto_link(&repo_root, &dest);
+    link::auto_link(&repo_root, &dest, &repo_root);
 
     println!("{}", dest.display());
 

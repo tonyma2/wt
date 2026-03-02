@@ -64,21 +64,11 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     Ok(())
 }
 
-pub fn auto_link(repo_root: &Path, worktree_path: &Path) {
+pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
     let files = config::get_links(repo_root);
     if files.is_empty() {
         return;
     }
-
-    let git = Git::new(repo_root);
-    let Ok(output) = git.list_worktrees() else {
-        return;
-    };
-    let worktrees = worktree::parse_porcelain(&output);
-    let Some(primary) = worktrees.first() else {
-        return;
-    };
-    let primary_path = &primary.path;
 
     for file in &files {
         let source = primary_path.join(file);
@@ -119,7 +109,7 @@ pub(crate) fn validate_path(file: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_expected_link(dest: &Path, source: &Path) -> bool {
+pub(crate) fn is_expected_link(dest: &Path, source: &Path) -> bool {
     std::fs::read_link(dest).is_ok_and(|target| target == *source)
 }
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::commands::link::validate_path;
+use crate::commands::link::{is_expected_link, validate_path};
 use crate::config;
 use crate::git::Git;
 use crate::worktree;
@@ -53,8 +53,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
                 continue;
             };
 
-            let is_correct_link = meta.file_type().is_symlink()
-                && std::fs::read_link(&dest).is_ok_and(|t| t == source);
+            let is_correct_link = is_expected_link(&dest, &source);
 
             if !is_correct_link && !force {
                 if meta.file_type().is_symlink() {

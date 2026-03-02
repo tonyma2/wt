@@ -263,8 +263,9 @@ fn prune_merged(
             }
         }
     };
-    let base_branch =
-        base_override.or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
+    let base_branch = base_override
+        .map(|b| b.strip_prefix("origin/").unwrap_or(b))
+        .or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
 
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
