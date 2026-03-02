@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::commands::link::{is_expected_link, validate_path};
+use crate::commands::link::{is_expected_link, remove_dest, validate_path};
 use crate::config;
 use crate::git::Git;
 use crate::worktree;
@@ -67,13 +67,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
                 continue;
             }
 
-            let result = if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
-                std::fs::remove_dir_all(&dest)
-            } else {
-                std::fs::remove_file(&dest)
-            };
-
-            if let Err(e) = result {
+            if let Err(e) = remove_dest(&dest) {
                 eprintln!("cannot remove {} in {}: {e}", file, wt.path.display());
                 errors += 1;
                 file_errors[i] = true;

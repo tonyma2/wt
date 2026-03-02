@@ -4,7 +4,11 @@ use std::process::{Command, Output, Stdio};
 fn git_err(context: impl AsRef<str>, output: &Output) -> String {
     let context = context.as_ref();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let line = stderr.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     let msg = line
         .strip_prefix("fatal: ")
         .or_else(|| line.strip_prefix("error: "))
@@ -210,7 +214,10 @@ impl Git {
             .output()
             .map_err(|e| format!("cannot run git worktree remove: {e}"))?;
         if !output.status.success() {
-            return Err(git_err(format!("cannot remove worktree: {}", path.display()), &output));
+            return Err(git_err(
+                format!("cannot remove worktree: {}", path.display()),
+                &output,
+            ));
         }
         Ok(())
     }
@@ -368,30 +375,45 @@ mod tests {
     #[test]
     fn git_err_strips_fatal_prefix() {
         let out = fake_output("fatal: invalid reference: aaaa\n");
-        assert_eq!(git_err("cannot create worktree", &out), "cannot create worktree: invalid reference: aaaa");
+        assert_eq!(
+            git_err("cannot create worktree", &out),
+            "cannot create worktree: invalid reference: aaaa"
+        );
     }
 
     #[test]
     fn git_err_strips_error_prefix() {
         let out = fake_output("error: branch 'x' not found\n");
-        assert_eq!(git_err("cannot delete branch", &out), "cannot delete branch: branch 'x' not found");
+        assert_eq!(
+            git_err("cannot delete branch", &out),
+            "cannot delete branch: branch 'x' not found"
+        );
     }
 
     #[test]
     fn git_err_preserves_warning_prefix() {
         let out = fake_output("warning: something unexpected\n");
-        assert_eq!(git_err("cannot remove worktree", &out), "cannot remove worktree: warning: something unexpected");
+        assert_eq!(
+            git_err("cannot remove worktree", &out),
+            "cannot remove worktree: warning: something unexpected"
+        );
     }
 
     #[test]
     fn git_err_empty_stderr_returns_context_only() {
         let out = fake_output("");
-        assert_eq!(git_err("cannot list worktrees", &out), "cannot list worktrees");
+        assert_eq!(
+            git_err("cannot list worktrees", &out),
+            "cannot list worktrees"
+        );
     }
 
     #[test]
     fn git_err_multiline_uses_first_nonempty_line() {
         let out = fake_output("\nfatal: bad object: abc\nhint: use --force\n");
-        assert_eq!(git_err("cannot create worktree", &out), "cannot create worktree: bad object: abc");
+        assert_eq!(
+            git_err("cannot create worktree", &out),
+            "cannot create worktree: bad object: abc"
+        );
     }
 }

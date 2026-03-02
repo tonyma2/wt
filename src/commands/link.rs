@@ -48,9 +48,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
                     .map_err(|e| format!("cannot remove {} in {}: {e}", file, wt.path.display()))?;
             }
 
-            if let Some(parent) = dest.parent()
-                && !parent.exists()
-            {
+            if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("cannot create directory {}: {e}", parent.display()))?;
             }
@@ -79,9 +77,7 @@ pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
         if dest.symlink_metadata().is_ok() {
             continue;
         }
-        if let Some(parent) = dest.parent()
-            && !parent.exists()
-        {
+        if let Some(parent) = dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Err(e) = symlink(&source, &dest) {
@@ -113,7 +109,7 @@ pub(crate) fn is_expected_link(dest: &Path, source: &Path) -> bool {
     std::fs::read_link(dest).is_ok_and(|target| target == *source)
 }
 
-fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
+pub(crate) fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
     if dest
         .symlink_metadata()
         .is_ok_and(|m| m.file_type().is_dir())
