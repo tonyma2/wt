@@ -131,9 +131,7 @@ fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
 fn parse_repo_name(url: &str) -> Option<&str> {
     let url = url.trim_end_matches('/');
     let url = url.strip_suffix(".git").unwrap_or(url);
-    url.rsplit(|c: char| c == '/' || c == ':')
-        .next()
-        .filter(|s| !s.is_empty())
+    url.rsplit(['/', ':']).next().filter(|s| !s.is_empty())
 }
 
 pub fn create_dest(repo_root: &Path, git: &Git) -> Result<PathBuf, String> {
@@ -142,7 +140,7 @@ pub fn create_dest(repo_root: &Path, git: &Git) -> Result<PathBuf, String> {
         .as_deref()
         .and_then(parse_repo_name)
         .or_else(|| repo_root.file_name().and_then(|n| n.to_str()))
-        .unwrap_or("repo");
+        .ok_or_else(|| format!("cannot determine repo name from {}", repo_root.display()))?;
     let wt_base = worktrees_root()?;
     let dest = unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
