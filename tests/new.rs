@@ -497,6 +497,45 @@ fn checkout_error_does_not_fallback_to_creation() {
 }
 
 #[test]
+fn remote_name_wins_over_local_dir_name() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("local-name");
+    std::fs::create_dir(&repo).unwrap();
+    common::init_repo(&repo);
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args([
+            "remote",
+            "add",
+            "origin",
+            "https://0.0.0.0/org/remote-name.git",
+        ]);
+    });
+
+    let wt_path = wt_new(home.path(), &repo, "feat/remote-test");
+    assert!(
+        wt_path.ends_with("remote-name"),
+        "leaf directory should be remote repo name, got: {}",
+        wt_path.display(),
+    );
+}
+
+#[test]
+fn fallback_to_dir_name_when_no_remote() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("my-project");
+    std::fs::create_dir(&repo).unwrap();
+    common::init_repo(&repo);
+
+    let wt_path = wt_new(home.path(), &repo, "feat/no-remote");
+    assert!(
+        wt_path.ends_with("my-project"),
+        "leaf directory should fall back to dir name, got: {}",
+        wt_path.display(),
+    );
+}
+
+#[test]
 fn no_cd_hint_when_stdout_not_tty() {
     let (home, repo) = setup();
 

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::git::Git;
+
 #[derive(Debug, Clone)]
 pub struct Worktree {
     pub path: PathBuf,
@@ -126,11 +128,22 @@ fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
     Err("cannot generate unique worktree path".into())
 }
 
-pub fn create_dest(repo_root: &Path) -> Result<PathBuf, String> {
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+fn parse_repo_name(url: &str) -> Option<&str> {
+    let url = url.trim_end_matches('/');
+    url.strip_suffix(".git")
+        .unwrap_or(url)
+        .rsplit(['/', ':'])
+        .next()
+        .filter(|s| !s.is_empty())
+}
+
+pub fn create_dest(repo_root: &Path, git: &Git) -> Result<PathBuf, String> {
+    let origin_url = git.remote_url("origin");
+    let repo_name = origin_url
+        .as_deref()
+        .and_then(parse_repo_name)
+        .or_else(|| repo_root.file_name().and_then(|n| n.to_str()))
+        .ok_or_else(|| format!("cannot determine repo name from {}", repo_root.display()))?;
     let wt_base = worktrees_root()?;
     let dest = unique_dest(&wt_base, repo_name)?;
     std::fs::create_dir_all(&dest)
@@ -177,6 +190,42 @@ pub fn is_managed_worktree_dir(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_repo_name_ssh_with_git() {
+        assert_eq!(parse_repo_name("git@github.com:org/repo.git"), Some("repo"));
+    }
+
+    #[test]
+    fn parse_repo_name_https_nested() {
+        assert_eq!(
+            parse_repo_name("https://gitlab.com/group/sub/project.git"),
+            Some("project")
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_https_no_git_suffix() {
+        assert_eq!(parse_repo_name("https://github.com/org/repo"), Some("repo"));
+    }
+
+    #[test]
+    fn parse_repo_name_ssh_no_git_suffix() {
+        assert_eq!(parse_repo_name("git@github.com:org/repo"), Some("repo"));
+    }
+
+    #[test]
+    fn parse_repo_name_azure() {
+        assert_eq!(
+            parse_repo_name("https://dev.azure.com/org/project/_git/repo"),
+            Some("repo")
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_empty() {
+        assert_eq!(parse_repo_name(""), None);
+    }
 
     #[test]
     fn basic_worktree() {
