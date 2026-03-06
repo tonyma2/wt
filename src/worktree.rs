@@ -130,8 +130,11 @@ fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
 
 fn parse_repo_name(url: &str) -> Option<&str> {
     let url = url.trim_end_matches('/');
-    let url = url.strip_suffix(".git").unwrap_or(url);
-    url.rsplit(['/', ':']).next().filter(|s| !s.is_empty())
+    url.strip_suffix(".git")
+        .unwrap_or(url)
+        .rsplit(['/', ':'])
+        .next()
+        .filter(|s| !s.is_empty())
 }
 
 pub fn create_dest(repo_root: &Path, git: &Git) -> Result<PathBuf, String> {
@@ -204,6 +207,11 @@ mod tests {
     #[test]
     fn parse_repo_name_https_no_git_suffix() {
         assert_eq!(parse_repo_name("https://github.com/org/repo"), Some("repo"));
+    }
+
+    #[test]
+    fn parse_repo_name_ssh_no_git_suffix() {
+        assert_eq!(parse_repo_name("git@github.com:org/repo"), Some("repo"));
     }
 
     #[test]

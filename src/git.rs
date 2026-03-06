@@ -63,7 +63,7 @@ impl Git {
             return None;
         }
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if s.is_empty() { None } else { Some(s) }
+        (!s.is_empty()).then_some(s)
     }
 
     pub fn has_remote(&self, remote: &str) -> bool {
