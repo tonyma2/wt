@@ -465,6 +465,30 @@ fn switch_create_flag_long_form() {
 }
 
 #[test]
+fn remote_name_wins_over_local_dir_name() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("local-name");
+    std::fs::create_dir(&repo).unwrap();
+    common::init_repo(&repo);
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args([
+            "remote",
+            "add",
+            "origin",
+            "https://0.0.0.0/org/remote-name.git",
+        ]);
+    });
+
+    let wt_path = wt_switch(home.path(), &repo, "feat/remote-test");
+    assert!(
+        wt_path.ends_with("remote-name"),
+        "leaf directory should be remote repo name, got: {}",
+        wt_path.display(),
+    );
+}
+
+#[test]
 fn switch_no_fuzzy_check_for_existing_branch() {
     let (home, repo) = setup();
     assert_git_success(&repo, &["branch", "feat/login"]);
