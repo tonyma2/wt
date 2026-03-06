@@ -67,12 +67,7 @@ impl Git {
     }
 
     pub fn has_remote(&self, remote: &str) -> bool {
-        self.cmd()
-            .args(["remote", "get-url", remote])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        self.remote_url(remote).is_some()
     }
 
     pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
