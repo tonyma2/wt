@@ -76,7 +76,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
         }
     }
 
-    let dest = worktree::create_dest(&repo_root)?;
+    let dest = worktree::create_dest(&repo_root, &git)?;
 
     let result = if is_branch {
         git.checkout_worktree(name, &dest)

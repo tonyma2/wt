@@ -53,6 +53,19 @@ impl Git {
         Ok(PathBuf::from(s))
     }
 
+    pub fn remote_url(&self, remote: &str) -> Option<String> {
+        let output = self
+            .cmd()
+            .args(["remote", "get-url", remote])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }
+
     pub fn has_remote(&self, remote: &str) -> bool {
         self.cmd()
             .args(["remote", "get-url", remote])

@@ -13,7 +13,7 @@ pub fn run(
 ) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
-    let dest = worktree::create_dest(&repo_root)?;
+    let dest = worktree::create_dest(&repo_root, &git)?;
 
     let result = if create {
         if git.has_local_branch(name) {
