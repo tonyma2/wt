@@ -22,7 +22,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 ├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers
-└── terminal.rs         TTY detection and terminal width (COLUMNS env, ioctl fallback, then 132)
+└── terminal.rs         TTY/color detection, stderr color support, terminal width (COLUMNS env, ioctl fallback, then 132)
 ```
 
 ## Key Types
@@ -60,7 +60,7 @@ Exceptions:
 **prune** — Two modes:
 - With `--repo`: prunes a single repo's stale metadata and merged worktrees
 - Without `--repo` (default): discovers all repos from `~/.wt/worktrees/` via recursive `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
-- Merged-worktree pruning skips dirty worktrees; skipped if no default branch can be detected (no remote, no `--base`). `--base` overrides the auto-detected default branch
+- Merged-worktree pruning skips dirty and locked worktrees with a diagnostic message; skipped entirely if no default branch can be detected (no remote, no `--base`). `--base` overrides the auto-detected default branch
 - `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
 
 **path** — Looks up branch in parsed worktree list, prints its path to stdout. Falls back to resolving the name as a ref (tag, SHA) and matching against detached HEAD worktrees. Errors on ambiguous matches.
