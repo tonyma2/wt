@@ -655,6 +655,11 @@ fn skips_dirty_merged_worktree() {
         wt_path.exists(),
         "dirty merged worktree should not be removed"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dirty-merged (merged, dirty)"),
+        "should report dirty skip reason, got: {stderr}",
+    );
 }
 
 #[test]
@@ -918,6 +923,11 @@ fn gone_skips_dirty_worktree() {
         wt_path.exists(),
         "dirty upstream-gone worktree should not be removed"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dirty-gone (upstream gone, dirty)"),
+        "should report dirty skip reason, got: {stderr}",
+    );
 }
 
 #[test]
@@ -951,6 +961,44 @@ fn gone_and_merged_reports_both() {
     assert!(
         stderr.contains("(merged, upstream gone)"),
         "should report both merged and upstream gone when both apply, got: {stderr}",
+    );
+}
+
+#[test]
+fn gone_and_merged_skips_dirty_with_compound_reason() {
+    let (home, repo, _origin) = setup_with_origin();
+
+    let wt_path = wt_new(home.path(), &repo, "dirty-both");
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "dirty-both"]);
+
+    assert_git_success(&repo, &["merge", "dirty-both"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["push", "origin", "--delete", "dirty-both"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
+
+    let output = wt_bin()
+        .args(["prune", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --gone should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "dirty merged+gone worktree should not be removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dirty-both (merged, upstream gone, dirty)"),
+        "should report compound skip reason, got: {stderr}",
     );
 }
 
@@ -1318,6 +1366,43 @@ fn gone_skips_locked_worktree() {
 }
 
 #[test]
+fn reports_locked_merged_worktree() {
+    let (home, repo, _origin) = setup_with_origin();
+
+    let wt_path = wt_new(home.path(), &repo, "locked-merged");
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+    assert_git_success(&repo, &["merge", "locked-merged"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "locked merged worktree should not be removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(merged, locked)"),
+        "should report locked skip reason, got: {stderr}",
+    );
+}
+
+#[test]
 fn gone_skips_when_tracking_remote_is_missing() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "missing-remote");
@@ -1671,5 +1756,155 @@ fn dry_run_reports_zombie_directory() {
     assert!(
         zombie.exists(),
         "dry-run should not remove the zombie directory"
+    );
+}
+
+#[test]
+fn multi_repo_output_is_grouped_by_repo() {
+    let (home, repo_a, _origin_a) = setup_with_origin();
+
+    let repo_b = home.path().join("repo-b");
+    std::fs::create_dir(&repo_b).unwrap();
+    init_repo(&repo_b);
+    let origin_b = home.path().join("origin-b.git");
+    init_bare_repo(&origin_b);
+    assert_git_success_with(&repo_b, |cmd| {
+        cmd.args(["remote", "add", "origin"]).arg(&origin_b);
+    });
+    assert_git_success(&repo_b, &["push", "-u", "origin", "main"]);
+    assert_git_success(&repo_b, &["fetch", "--prune", "origin"]);
+
+    let wt_a = wt_new(home.path(), &repo_a, "merged-a");
+    std::fs::write(wt_a.join("f.txt"), "a").unwrap();
+    assert_git_success(&wt_a, &["add", "f.txt"]);
+    assert_git_success(&wt_a, &["commit", "-m", "work"]);
+    assert_git_success(&repo_a, &["merge", "merged-a"]);
+    assert_git_success(&repo_a, &["push", "origin", "main"]);
+    assert_git_success(&repo_a, &["fetch", "--prune", "origin"]);
+
+    let wt_b = wt_new(home.path(), &repo_b, "merged-b");
+    std::fs::write(wt_b.join("f.txt"), "b").unwrap();
+    assert_git_success(&wt_b, &["add", "f.txt"]);
+    assert_git_success(&wt_b, &["commit", "-m", "work"]);
+    assert_git_success(&repo_b, &["merge", "merged-b"]);
+    assert_git_success(&repo_b, &["push", "origin", "main"]);
+    assert_git_success(&repo_b, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let repo_a_name = repo_a.file_name().unwrap().to_string_lossy();
+    let repo_b_name = repo_b.file_name().unwrap().to_string_lossy();
+
+    assert!(
+        stderr.contains(&format!("{repo_a_name}:\n")),
+        "should print repo-a header, got: {stderr}",
+    );
+    assert!(
+        stderr.contains(&format!("{repo_b_name}:\n")),
+        "should print repo-b header, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("  removed merged-a (merged)"),
+        "repo-a messages should be indented, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("  removed merged-b (merged)"),
+        "repo-b messages should be indented, got: {stderr}",
+    );
+}
+
+#[test]
+fn single_repo_output_has_no_header() {
+    let (home, repo, _origin) = setup_with_origin();
+
+    let wt_path = wt_new(home.path(), &repo, "merged-single");
+    std::fs::write(wt_path.join("f.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "f.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "work"]);
+    assert_git_success(&repo, &["merge", "merged-single"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --repo should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("removed merged-single (merged)"),
+        "should report removal, got: {stderr}",
+    );
+    assert!(
+        !stderr.contains(":\n"),
+        "single-repo output should have no header, got: {stderr}",
+    );
+    assert!(
+        !stderr.contains("  removed"),
+        "single-repo output should not be indented, got: {stderr}",
+    );
+}
+
+#[test]
+fn silent_repos_omitted_from_grouped_output() {
+    let (home, repo_a, _origin_a) = setup_with_origin();
+
+    let repo_b = home.path().join("repo-b");
+    std::fs::create_dir(&repo_b).unwrap();
+    init_repo(&repo_b);
+    let origin_b = home.path().join("origin-b.git");
+    init_bare_repo(&origin_b);
+    assert_git_success_with(&repo_b, |cmd| {
+        cmd.args(["remote", "add", "origin"]).arg(&origin_b);
+    });
+    assert_git_success(&repo_b, &["push", "-u", "origin", "main"]);
+    assert_git_success(&repo_b, &["fetch", "--prune", "origin"]);
+
+    // Only repo_a has a merged worktree; repo_b has an unmerged branch
+    let wt_a = wt_new(home.path(), &repo_a, "merged-only-a");
+    let wt_b = wt_new(home.path(), &repo_b, "keep-b");
+    std::fs::write(wt_b.join("unmerged.txt"), "not merged").unwrap();
+    assert_git_success(&wt_b, &["add", "unmerged.txt"]);
+    assert_git_success(&wt_b, &["commit", "-m", "unmerged work"]);
+
+    std::fs::write(wt_a.join("f.txt"), "a").unwrap();
+    assert_git_success(&wt_a, &["add", "f.txt"]);
+    assert_git_success(&wt_a, &["commit", "-m", "work"]);
+    assert_git_success(&repo_a, &["merge", "merged-only-a"]);
+    assert_git_success(&repo_a, &["push", "origin", "main"]);
+    assert_git_success(&repo_a, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("repo-b:"),
+        "silent repo should not appear in output, got: {stderr}",
     );
 }

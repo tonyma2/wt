@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
+use crate::terminal::{self, Colors};
 use crate::worktree;
 
 pub fn run(
@@ -13,15 +14,23 @@ pub fn run(
 ) -> Result<(), String> {
     let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
 
+    let clr = terminal::stderr_colors();
+
     if let Some(repo_path) = repo {
         let repo_root = Git::find_repo(Some(repo_path))?;
         let git = Git::new(&repo_root);
         let output = git.prune_worktrees(dry_run)?;
         if !output.is_empty() {
-            eprintln!("{output}");
+            for line in output.lines() {
+                eprintln!("{}", style_msg(line, &clr));
+            }
         }
-        prune_merged(&git, dry_run, gone, cwd.as_deref(), base)?;
-        return Ok(());
+        let mut msgs = Vec::new();
+        let result = prune_merged(&git, dry_run, gone, cwd.as_deref(), base, &mut msgs);
+        for msg in &msgs {
+            eprintln!("{}", style_msg(msg, &clr));
+        }
+        return result;
     }
 
     let wt_root = worktree::worktrees_root()?;
@@ -33,34 +42,70 @@ pub fn run(
 
     let repos = discover_repos(&wt_root);
     let mut errors = 0usize;
+    let mut printed = false;
     for repo_path in &repos {
         if !repo_path.exists() {
             continue;
         }
         let git = Git::new(repo_path);
+        let mut repo_msgs: Vec<String> = Vec::new();
+
         match git.prune_worktrees(dry_run) {
             Ok(output) if !output.is_empty() => {
-                eprintln!("pruning {}", repo_path.display());
-                eprintln!("{output}");
+                for line in output.lines() {
+                    repo_msgs.push(line.to_string());
+                }
             }
             Err(e) => {
-                eprintln!("cannot prune {}: {e}", repo_path.display());
+                eprintln!(
+                    "{}cannot prune {}: {e}{}",
+                    clr.red,
+                    repo_path.display(),
+                    clr.reset
+                );
                 errors += 1;
                 continue;
             }
             _ => {}
         }
-        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref(), base) {
-            eprintln!("cannot prune merged in {}: {e}", repo_path.display());
+
+        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref(), base, &mut repo_msgs) {
+            repo_msgs.push(format!("cannot clean up: {e}"));
             errors += 1;
+        }
+
+        if !repo_msgs.is_empty() {
+            if printed {
+                eprintln!();
+            }
+            let name = repo_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| repo_path.display().to_string());
+            eprintln!("{}{}:{}", clr.bold, name, clr.reset);
+            for msg in &repo_msgs {
+                eprintln!("  {}", style_msg(msg, &clr));
+            }
+            printed = true;
         }
     }
 
     let mut orphans = find_orphans(&wt_root);
+    let mut has_orphan_output = false;
     orphans.retain(|orphan| {
         if worktree::is_cwd_inside(orphan, cwd.as_deref()) {
             let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
-            eprintln!("skipping {} (orphan, current directory)", label.display());
+            if printed && !has_orphan_output {
+                eprintln!();
+            }
+            eprintln!(
+                "{}",
+                style_msg(
+                    &format!("skipping {} (orphan, current directory)", label.display()),
+                    &clr,
+                )
+            );
+            has_orphan_output = true;
             false
         } else {
             true
@@ -68,18 +113,30 @@ pub fn run(
     });
 
     if dry_run {
+        if printed && !has_orphan_output && !orphans.is_empty() {
+            eprintln!();
+        }
         for orphan in &orphans {
             let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
-            eprintln!("would remove {} (orphan)", label.display());
+            eprintln!(
+                "{}",
+                style_msg(&format!("would remove {} (orphan)", label.display()), &clr,)
+            );
         }
     } else {
+        if printed && !has_orphan_output && !orphans.is_empty() {
+            eprintln!();
+        }
         for orphan in &orphans {
             fs::remove_dir_all(orphan)
                 .map_err(|e| format!("cannot remove {}: {e}", orphan.display()))?;
             let label = orphan.strip_prefix(&wt_root).unwrap_or(orphan.as_path());
-            eprintln!("removed {} (orphan)", label.display());
+            eprintln!(
+                "{}",
+                style_msg(&format!("removed {} (orphan)", label.display()), &clr,)
+            );
         }
-        cleanup_empty_parents(&orphans, &wt_root, cwd.as_deref());
+        cleanup_empty_parents(&orphans, &wt_root, cwd.as_deref(), &clr);
     }
 
     if errors > 0 {
@@ -213,17 +270,17 @@ fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     }
 }
 
-fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path, cwd: Option<&Path>) {
+fn cleanup_empty_parents(orphans: &[PathBuf], wt_root: &Path, cwd: Option<&Path>, clr: &Colors) {
     let candidates: BTreeSet<&Path> = orphans.iter().filter_map(|p| p.parent()).collect();
     let mut sorted: Vec<&Path> = candidates.into_iter().collect();
     sorted.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
 
     for dir in sorted {
-        cleanup_dir_chain(dir, wt_root, cwd);
+        cleanup_dir_chain(dir, wt_root, cwd, clr);
     }
 }
 
-fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
+fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>, clr: &Colors) {
     while dir != wt_root && dir.starts_with(wt_root) {
         let is_empty = fs::read_dir(dir).is_ok_and(|mut d| d.next().is_none());
         if !is_empty {
@@ -236,7 +293,12 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>) {
             break;
         }
         let label = dir.strip_prefix(wt_root).unwrap_or(dir);
-        eprintln!("removed empty directory {}", label.display());
+        eprintln!(
+            "{}removed empty directory {}{}",
+            clr.dim,
+            label.display(),
+            clr.reset
+        );
         let Some(p) = dir.parent() else { break };
         dir = p;
     }
@@ -248,6 +310,7 @@ fn prune_merged(
     gone: bool,
     cwd: Option<&Path>,
     base_override: Option<&str>,
+    messages: &mut Vec<String>,
 ) -> Result<(), String> {
     struct PruneCandidate {
         branch: String,
@@ -258,7 +321,9 @@ fn prune_merged(
 
     let base = if let Some(b) = base_override {
         if !git.rev_resolves(b) {
-            eprintln!("base branch '{b}' not found, skipping merged worktree pruning");
+            messages.push(format!(
+                "base branch '{b}' not found, skipping merged worktree pruning"
+            ));
             None
         } else {
             Some(b.to_string())
@@ -267,7 +332,7 @@ fn prune_merged(
         match git.base_ref() {
             Ok(base) => Some(base),
             Err(e) => {
-                eprintln!("{e}, skipping merged worktree pruning");
+                messages.push(format!("{e}, skipping merged worktree pruning"));
                 None
             }
         }
@@ -296,10 +361,31 @@ fn prune_merged(
                 branch: branch.clone(),
                 path: wt.path.clone(),
                 merged,
-                remote: git.upstream_remote(branch),
+                remote: if gone {
+                    git.upstream_remote(branch)
+                } else {
+                    None
+                },
             })
         })
         .collect();
+
+    if let Some(base_ref) = &base {
+        for wt in worktrees.iter().skip(1) {
+            if !wt.locked {
+                continue;
+            }
+            let Some(branch) = &wt.branch else { continue };
+            if base_branch.is_some_and(|b| b == branch.as_str()) {
+                continue;
+            }
+            let branch_ref = format!("refs/heads/{branch}");
+            if git.is_ancestor(&branch_ref, base_ref) {
+                messages.push(format!("skipping {branch} (merged, locked)"));
+            }
+        }
+    }
+
     let mut gone_remote_status = BTreeMap::new();
 
     if gone && !dry_run {
@@ -307,12 +393,14 @@ fn prune_merged(
             candidates.iter().filter_map(|c| c.remote.clone()).collect();
         for remote in remotes {
             let fetched = if !git.has_remote(&remote) {
-                eprintln!("remote '{remote}' not found, skipping upstream-gone pruning");
+                messages.push(format!(
+                    "remote '{remote}' not found, skipping upstream-gone pruning"
+                ));
                 false
             } else {
-                eprintln!("fetching from '{remote}'");
+                messages.push(format!("fetching from '{remote}'"));
                 git.fetch_remote(&remote)
-                    .inspect_err(|e| eprintln!("{e}, skipping upstream-gone pruning"))
+                    .inspect_err(|e| messages.push(format!("{e}, skipping upstream-gone pruning")))
                     .is_ok()
             };
             gone_remote_status.insert(remote, fetched);
@@ -348,21 +436,22 @@ fn prune_merged(
         let label = &candidate.branch;
 
         if worktree::is_cwd_inside(&candidate.path, cwd) {
-            eprintln!("skipping {label} ({reason}, current directory)");
+            messages.push(format!("skipping {label} ({reason}, current directory)"));
             continue;
         }
 
         if git.is_dirty(&candidate.path) {
+            messages.push(format!("skipping {label} ({reason}, dirty)"));
             continue;
         }
 
         if dry_run {
-            eprintln!("would remove {label} ({reason})");
+            messages.push(format!("would remove {label} ({reason})"));
             continue;
         }
 
         if let Err(e) = git.remove_worktree(&candidate.path, false) {
-            eprintln!("{e}");
+            messages.push(e);
             errors += 1;
             continue;
         }
@@ -370,12 +459,12 @@ fn prune_merged(
         worktree::cleanup_empty_parent(&candidate.path, cwd);
 
         if let Err(e) = git.delete_branch(&candidate.branch, true) {
-            eprintln!("{e}");
+            messages.push(e);
             errors += 1;
             continue;
         }
 
-        eprintln!("removed {label} ({reason})");
+        messages.push(format!("removed {label} ({reason})"));
     }
 
     if errors > 0 {
@@ -386,4 +475,31 @@ fn prune_merged(
     }
 
     Ok(())
+}
+
+fn style_msg(msg: &str, clr: &Colors) -> String {
+    if let Some(rest) = msg.strip_prefix("removed ") {
+        style_action(clr.green, "removed", rest, clr)
+    } else if let Some(rest) = msg.strip_prefix("would remove ") {
+        style_action(clr.yellow, "would remove", rest, clr)
+    } else if let Some(rest) = msg.strip_prefix("skipping ") {
+        style_action(clr.yellow, "skipping", rest, clr)
+    } else if msg.starts_with("fetching ") || msg.starts_with("Removing ") {
+        format!("{}{msg}{}", clr.dim, clr.reset)
+    } else {
+        format!("{}{msg}{}", clr.red, clr.reset)
+    }
+}
+
+fn style_action(verb_clr: &str, verb: &str, rest: &str, clr: &Colors) -> String {
+    if let Some(pos) = rest.rfind('(') {
+        let target = &rest[..pos];
+        let reason = &rest[pos..];
+        format!(
+            "{verb_clr}{verb}{} {target}{}{reason}{}",
+            clr.reset, clr.dim, clr.reset
+        )
+    } else {
+        format!("{verb_clr}{verb}{} {rest}", clr.reset)
+    }
 }

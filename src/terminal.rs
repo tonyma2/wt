@@ -3,21 +3,31 @@ pub fn is_stdout_tty() -> bool {
     std::io::stdout().is_terminal()
 }
 
+pub fn is_stderr_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stderr().is_terminal()
+}
+
 pub struct Colors {
+    pub bold: &'static str,
     pub green: &'static str,
+    pub yellow: &'static str,
     pub bold_yellow: &'static str,
     pub red: &'static str,
     pub dim: &'static str,
     pub reset: &'static str,
 }
 
-pub fn colors() -> Colors {
-    let enabled = is_stdout_tty()
-        && std::env::var("NO_COLOR").is_err()
-        && std::env::var("TERM").as_deref() != Ok("dumb");
+fn color_enabled(is_tty: bool) -> bool {
+    is_tty && std::env::var("NO_COLOR").is_err() && std::env::var("TERM").as_deref() != Ok("dumb")
+}
+
+fn make_colors(enabled: bool) -> Colors {
     if enabled {
         Colors {
+            bold: "\x1b[1m",
             green: "\x1b[32m",
+            yellow: "\x1b[33m",
             bold_yellow: "\x1b[1;33m",
             red: "\x1b[31m",
             dim: "\x1b[2m",
@@ -25,13 +35,23 @@ pub fn colors() -> Colors {
         }
     } else {
         Colors {
+            bold: "",
             green: "",
+            yellow: "",
             bold_yellow: "",
             red: "",
             dim: "",
             reset: "",
         }
     }
+}
+
+pub fn colors() -> Colors {
+    make_colors(color_enabled(is_stdout_tty()))
+}
+
+pub fn stderr_colors() -> Colors {
+    make_colors(color_enabled(is_stderr_tty()))
 }
 
 pub fn tilde_path(path: &std::path::Path) -> String {
