@@ -69,6 +69,9 @@ pub enum Command {
         /// Force removal
         #[arg(long)]
         force: bool,
+        /// Remove the worktree but keep the branch
+        #[arg(long)]
+        keep_branch: bool,
     },
     /// Clean up merged, stale, and orphaned worktrees
     #[command(

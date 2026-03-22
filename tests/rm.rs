@@ -722,6 +722,104 @@ fn errors_when_ref_matches_multiple_detached_worktrees() {
 }
 
 #[test]
+fn keep_branch_removes_worktree_but_preserves_branch() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "keep-me");
+
+    let output = wt_bin()
+        .args(["rm", "keep-me", "--keep-branch", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm --keep-branch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists());
+    assert_branch_present(&repo, "keep-me");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("removed worktree ("),
+        "should print worktree-only message, got: {stderr}",
+    );
+    assert!(
+        !stderr.contains("removed worktree and branch"),
+        "should not mention branch deletion, got: {stderr}",
+    );
+}
+
+#[test]
+fn keep_branch_with_force_removes_dirty_worktree_but_preserves_branch() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "keep-dirty");
+    std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
+
+    let output = wt_bin()
+        .args(["rm", "keep-dirty", "--keep-branch", "--force", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt rm --keep-branch --force should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists());
+    assert_branch_present(&repo, "keep-dirty");
+}
+
+#[test]
+fn keep_branch_allows_switch_to_recreate_worktree() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "roundtrip");
+
+    let output = wt_bin()
+        .args(["rm", "roundtrip", "--keep-branch", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_branch_present(&repo, "roundtrip");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "roundtrip", "--repo"]).arg(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "wt switch should recreate worktree for kept branch: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let new_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(
+        std::path::Path::new(&new_path).exists(),
+        "recreated worktree should exist",
+    );
+}
+
+#[test]
+fn keep_branch_batch_removes_worktrees_but_preserves_branches() {
+    let (home, repo) = setup();
+    let wt1 = wt_new(home.path(), &repo, "batch-a");
+    let wt2 = wt_new(home.path(), &repo, "batch-b");
+
+    let output = wt_bin()
+        .args(["rm", "batch-a", "batch-b", "--keep-branch", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "batch rm --keep-branch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt1.exists());
+    assert!(!wt2.exists());
+    assert_branch_present(&repo, "batch-a");
+    assert_branch_present(&repo, "batch-b");
+}
+
+#[test]
 fn removes_worktree_when_branch_deleted_externally() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "gone-branch");

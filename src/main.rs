@@ -24,7 +24,12 @@ fn main() {
             repo,
         } => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
         Command::List { repo, porcelain } => commands::list::run(repo.as_deref(), *porcelain),
-        Command::Remove { names, repo, force } => commands::rm::run(names, repo.as_deref(), *force),
+        Command::Remove {
+            names,
+            repo,
+            force,
+            keep_branch,
+        } => commands::rm::run(names, repo.as_deref(), *force, *keep_branch),
         Command::Prune {
             dry_run,
             gone,
