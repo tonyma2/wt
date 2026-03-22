@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Output;
 
+use serde_json::Value;
+
 pub mod common;
 
 use common::*;
@@ -23,24 +25,138 @@ fn find_row<'a>(output: &'a str, needle: &str) -> &'a str {
         .unwrap_or_else(|| panic!("could not find row containing '{needle}' in:\n{output}"))
 }
 
-#[test]
-fn porcelain_matches_git_worktree_list() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "feat-porcelain");
-
-    let output = wt_bin()
-        .args(["list", "--porcelain", "--repo"])
-        .arg(&repo)
-        .output()
-        .unwrap();
+fn run_list_json(home: &Path, repo: &Path, cwd: Option<&Path>) -> Vec<Value> {
+    let output = run_wt(home, |cmd| {
+        cmd.args(["list", "--json", "--repo"]).arg(repo);
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+    });
     assert!(
         output.status.success(),
-        "wt list --porcelain failed: {}",
+        "wt list --json failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str::<Vec<Value>>(&stdout)
+        .unwrap_or_else(|e| panic!("invalid json: {e}\n{stdout}"))
+}
 
-    let expected = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
-    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+fn find_json_entry<'a>(entries: &'a [Value], branch: &str) -> &'a Value {
+    entries
+        .iter()
+        .find(|e| e["branch"].as_str() == Some(branch))
+        .unwrap_or_else(|| panic!("no entry with branch '{branch}'"))
+}
+
+#[test]
+fn json_output_includes_all_fields() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat-json");
+
+    let entries = run_list_json(home.path(), &repo, None);
+    assert_eq!(entries.len(), 2);
+
+    let entry = find_json_entry(&entries, "feat-json");
+    assert_eq!(entry["name"].as_str(), Some("feat-json"));
+    assert!(entry["path"].is_string());
+    assert_eq!(entry["branch"].as_str(), Some("feat-json"));
+    assert!(entry["head"].is_string());
+    assert_eq!(entry["bare"].as_bool(), Some(false));
+    assert_eq!(entry["detached"].as_bool(), Some(false));
+    assert_eq!(entry["locked"].as_bool(), Some(false));
+    assert_eq!(entry["prunable"].as_bool(), Some(false));
+    assert_eq!(entry["dirty"].as_bool(), Some(false));
+    assert_eq!(entry["current"].as_bool(), Some(false));
+    assert!(entry.get("ahead").is_some());
+    assert!(entry.get("behind").is_some());
+}
+
+#[test]
+fn json_shows_dirty_and_current() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "json-dirty");
+    std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
+
+    let entries = run_list_json(home.path(), &repo, Some(&wt_path));
+    let entry = find_json_entry(&entries, "json-dirty");
+    assert_eq!(entry["dirty"].as_bool(), Some(true));
+    assert_eq!(entry["current"].as_bool(), Some(true));
+}
+
+#[test]
+fn json_ahead_behind_for_diverged_branch() {
+    let (home, repo, origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "json-diverge");
+    assert_git_success(&wt_path, &["push", "-u", "origin", "json-diverge"]);
+    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "local-ahead"]);
+
+    let other = home.path().join("other");
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["clone"]).arg(&origin).arg(&other);
+    });
+    assert_git_success(&other, &["config", "user.name", "Test"]);
+    assert_git_success(&other, &["config", "user.email", "t@t"]);
+    assert_git_success(&other, &["checkout", "json-diverge"]);
+    assert_git_success(&other, &["commit", "--allow-empty", "-m", "remote-ahead"]);
+    assert_git_success(&other, &["push", "origin", "json-diverge"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let entries = run_list_json(home.path(), &repo, Some(home.path()));
+    let entry = find_json_entry(&entries, "json-diverge");
+    assert_eq!(entry["ahead"].as_u64(), Some(1));
+    assert_eq!(entry["behind"].as_u64(), Some(1));
+}
+
+#[test]
+fn json_null_branch_for_detached() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "json-detach");
+    assert_git_success(&wt_path, &["checkout", "--detach"]);
+
+    let entries = run_list_json(home.path(), &repo, Some(home.path()));
+    let detached = entries
+        .iter()
+        .find(|e| e["detached"].as_bool() == Some(true))
+        .expect("expected a detached entry");
+    assert!(detached["branch"].is_null());
+    assert_eq!(detached["name"].as_str(), detached["path"].as_str());
+}
+
+#[test]
+fn json_null_ahead_behind_without_upstream() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "json-no-upstream");
+
+    let entries = run_list_json(home.path(), &repo, Some(home.path()));
+    let entry = find_json_entry(&entries, "json-no-upstream");
+    assert!(entry["ahead"].is_null());
+    assert!(entry["behind"].is_null());
+}
+
+#[test]
+fn json_locked_and_prunable() {
+    let (home, repo) = setup();
+    let wt_locked = wt_new(home.path(), &repo, "json-locked");
+    let wt_prunable = wt_new(home.path(), &repo, "json-prunable");
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_locked);
+    });
+    std::fs::remove_dir_all(&wt_prunable).unwrap();
+
+    let entries = run_list_json(home.path(), &repo, Some(home.path()));
+
+    let locked = find_json_entry(&entries, "json-locked");
+    assert_eq!(locked["locked"].as_bool(), Some(true));
+
+    let prunable = entries
+        .iter()
+        .find(|e| e["prunable"].as_bool() == Some(true))
+        .expect("expected a prunable entry");
+    assert_eq!(prunable["dirty"].as_bool(), Some(false));
+    assert!(prunable["ahead"].is_null());
+    assert!(prunable["behind"].is_null());
 }
 
 #[test]

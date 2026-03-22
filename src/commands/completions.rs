@@ -59,7 +59,9 @@ _wt_collect_worktree_rows() {
     _wt_completion_heads=()
     _wt_main_path=""
     _wt_extract_repo_args
-    cmd=(command wt list --porcelain "${_wt_repo_args[@]}")
+    cmd=(git)
+    [[ -n $_wt_repo_path ]] && cmd+=(-C "$_wt_repo_path")
+    cmd+=(worktree list --porcelain)
     while IFS= read -r line; do
         if [[ $line == worktree\ * ]]; then
             if [[ -n ${wt_path:-} ]]; then
