@@ -39,15 +39,15 @@ pub enum Command {
         visible_alias = "ls",
         long_about = "List worktrees for the current repository.\n\
             The leading '*' marks the active/current worktree.",
-        after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --porcelain"
+        after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --json"
     )]
     List {
         /// Repository path
         #[arg(long)]
         repo: Option<PathBuf>,
-        /// Machine-readable output
+        /// Output as JSON array
         #[arg(long)]
-        porcelain: bool,
+        json: bool,
     },
     /// Remove worktrees by name, ref, or path
     #[command(

@@ -23,7 +23,7 @@ fn main() {
             base,
             repo,
         } => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
-        Command::List { repo, porcelain } => commands::list::run(repo.as_deref(), *porcelain),
+        Command::List { repo, json } => commands::list::run(repo.as_deref(), *json),
         Command::Remove {
             names,
             repo,

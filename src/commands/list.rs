@@ -1,20 +1,32 @@
 use std::path::Path;
 
+use serde::Serialize;
+
 use crate::git::Git;
 use crate::terminal::{self, Colors};
 use crate::worktree::{self, Worktree};
 
-pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
+#[derive(Serialize)]
+struct WorktreeEntry {
+    name: String,
+    path: String,
+    branch: Option<String>,
+    head: String,
+    bare: bool,
+    detached: bool,
+    locked: bool,
+    prunable: bool,
+    dirty: bool,
+    ahead: Option<u64>,
+    behind: Option<u64>,
+    current: bool,
+}
+
+pub fn run(repo: Option<&Path>, json: bool) -> Result<(), String> {
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
 
     let output = git.list_worktrees()?;
-
-    if porcelain {
-        print!("{output}");
-        return Ok(());
-    }
-
     let worktrees = worktree::parse_porcelain(&output);
     let cwd = std::env::current_dir()
         .ok()
@@ -32,6 +44,37 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
             .max_by_key(|(_, canonical)| canonical.components().count())
             .map(|(path, _)| path)
     });
+
+    if json {
+        let entries: Vec<WorktreeEntry> = worktrees
+            .iter()
+            .map(|wt| {
+                let is_current = current_path == Some(wt.path.as_path());
+                let (dirty, ahead, behind) = computed_status(&git, wt);
+                let path = wt.path.to_string_lossy().into_owned();
+                let branch = wt.branch.clone();
+                let name = branch.clone().unwrap_or_else(|| path.clone());
+                WorktreeEntry {
+                    name,
+                    path,
+                    branch,
+                    head: wt.head.clone(),
+                    bare: wt.bare,
+                    detached: wt.detached,
+                    locked: wt.locked,
+                    prunable: wt.prunable,
+                    dirty,
+                    ahead,
+                    behind,
+                    current: is_current,
+                }
+            })
+            .collect();
+        let json_str =
+            serde_json::to_string(&entries).map_err(|e| format!("cannot serialize json: {e}"))?;
+        println!("{json_str}");
+        return Ok(());
+    }
 
     let cols = terminal::width();
     let clr = terminal::colors();
@@ -61,7 +104,7 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
             .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
-        let status = worktree_status(&git, wt);
+        let status = format_status(&git, wt);
         let status_trunc = trunc(&status, status_w);
 
         let path_str = terminal::tilde_path(&wt.path);
@@ -97,29 +140,38 @@ pub fn run(repo: Option<&Path>, porcelain: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn worktree_status(git: &Git, wt: &Worktree) -> String {
+fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
+    if wt.bare || wt.prunable {
+        return (false, None, None);
+    }
+    let dirty = git.is_dirty(&wt.path);
+    let (ahead, behind) = wt
+        .branch
+        .as_deref()
+        .and_then(|b| git.ahead_behind(b))
+        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
+    (dirty, ahead, behind)
+}
+
+fn format_status(git: &Git, wt: &Worktree) -> String {
     if wt.bare {
         return "bare".into();
     }
-    if wt.prunable {
-        return "-".into();
-    }
-
+    let (dirty, ahead, behind) = computed_status(git, wt);
     let mut parts: Vec<String> = Vec::new();
-    if git.is_dirty(&wt.path) {
+    if dirty {
         parts.push("*".into());
     }
-    if let Some(branch) = &wt.branch
-        && let Some((ahead, behind)) = git.ahead_behind(branch)
+    if let Some(a) = ahead
+        && a > 0
     {
-        if ahead > 0 {
-            parts.push(format!("↑{ahead}"));
-        }
-        if behind > 0 {
-            parts.push(format!("↓{behind}"));
-        }
+        parts.push(format!("↑{a}"));
     }
-
+    if let Some(b) = behind
+        && b > 0
+    {
+        parts.push(format!("↓{b}"));
+    }
     if parts.is_empty() {
         "-".into()
     } else {
