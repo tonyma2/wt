@@ -2,8 +2,7 @@ use clap::CommandFactory;
 
 use crate::cli::Cli;
 
-const SH_WRAPPER: &str = "
-wt() {
+const SH_WRAPPER: &str = "wt() {
   case \"$1\" in
     new|n|switch|s)
       local out
@@ -13,8 +12,7 @@ wt() {
 }
 ";
 
-const FISH_WRAPPER: &str = "
-function wt --wraps=wt
+const FISH_WRAPPER: &str = "function wt --wraps=wt
   switch $argv[1]
     case new n switch s
       set -l out (command wt $argv)
