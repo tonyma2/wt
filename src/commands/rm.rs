@@ -4,13 +4,18 @@ use crate::git::Git;
 use crate::terminal;
 use crate::worktree::{self, Worktree};
 
-pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), String> {
+pub fn run(
+    names: &[String],
+    repo: Option<&Path>,
+    force: bool,
+    keep_branch: bool,
+) -> Result<(), String> {
     if names.len() == 1 {
-        return remove_one(&names[0], repo, force);
+        return remove_one(&names[0], repo, force, keep_branch);
     }
     let mut errors = 0usize;
     for name in names {
-        if let Err(e) = remove_one(name, repo, force) {
+        if let Err(e) = remove_one(name, repo, force, keep_branch) {
             eprintln!("{e}");
             errors += 1;
         }
@@ -25,7 +30,12 @@ pub fn run(names: &[String], repo: Option<&Path>, force: bool) -> Result<(), Str
     }
 }
 
-fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<(), String> {
+fn remove_one(
+    name_or_path: &str,
+    repo: Option<&Path>,
+    force: bool,
+    keep_branch: bool,
+) -> Result<(), String> {
     let (target, admin_repo, worktrees) = resolve_target(name_or_path, repo)?;
 
     let git = Git::new(&admin_repo);
@@ -70,6 +80,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
         }
         if let Some(branch) = &branch
             && branch_exists
+            && !keep_branch
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
@@ -85,6 +96,7 @@ fn remove_one(name_or_path: &str, repo: Option<&Path>, force: bool) -> Result<()
     let path_display = terminal::tilde_path(&target);
     if let Some(branch) = &branch
         && branch_exists
+        && !keep_branch
     {
         git.delete_branch(branch, force)?;
         eprintln!(
