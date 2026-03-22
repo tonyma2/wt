@@ -10,7 +10,7 @@ Git worktree manager.
 - **Clean up** — `wt prune` removes worktrees whose branches are merged or whose upstream is gone
 - **Link shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
 - **Typo detection** — `wt switch` catches misspelled branch names with fuzzy matching before creating a new branch
-- **Script-friendly** — stdout is always data (paths, porcelain output); messages go to stderr
+- **Script-friendly** — stdout is always data (paths, JSON); messages go to stderr
 
 ## Install
 
@@ -21,18 +21,23 @@ cargo install --path .
 ## Usage
 
 ```sh
-wt new my-feature                # check out existing branch
-wt new -c my-feature             # create new branch from HEAD
-wt new -c my-feature develop     # create from base
-wt new v2.0                      # check out tag (detached HEAD)
-wt switch my-feature             # get or create worktree
-wt list                          # list worktrees
-wt remove my-feature             # remove worktree and branch
-wt path my-feature               # print worktree path
-wt prune                         # remove merged worktrees
-wt prune --gone                  # also remove upstream-gone
-wt link .env .env.local          # symlink into all worktrees
-wt unlink .env                   # remove symlinks
+wt new my-feature                    # check out existing branch
+wt new -c my-feature                 # create new branch from HEAD
+wt new -c my-feature develop         # create from base
+wt new v2.0                          # check out tag (detached HEAD)
+wt switch my-feature                 # get or create worktree
+wt list                              # list worktrees
+wt list --json                       # machine-readable JSON output
+wt remove my-feature                 # remove worktree and branch
+wt remove my-feature --keep-branch   # remove worktree, keep branch
+wt path my-feature                   # print worktree path
+wt prune                             # remove merged worktrees
+wt prune --gone                      # also remove upstream-gone
+wt prune --base develop              # override base branch
+wt link .env .env.local              # symlink into all worktrees
+wt link --list                       # show configured links
+wt unlink .env                       # remove symlinks
+wt unlink --all                      # remove all linked files
 ```
 
 Short aliases: `n`, `s`, `ls`, `rm`, `p`, `ln`.

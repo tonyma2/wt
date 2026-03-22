@@ -52,11 +52,12 @@ pub fn run(repo: Option<&Path>, json: bool) -> Result<(), String> {
                 let is_current = current_path == Some(wt.path.as_path());
                 let (dirty, ahead, behind) = computed_status(&git, wt);
                 let path = wt.path.to_string_lossy().into_owned();
-                let name = wt.branch.clone().unwrap_or_else(|| path.clone());
+                let branch = wt.branch.clone();
+                let name = branch.clone().unwrap_or_else(|| path.clone());
                 WorktreeEntry {
                     name,
                     path,
-                    branch: wt.branch.clone(),
+                    branch,
                     head: wt.head.clone(),
                     bare: wt.bare,
                     detached: wt.detached,
