@@ -58,3 +58,5 @@ eval "$(wt init bash)"
 # fish (~/.config/fish/config.fish)
 wt init fish | source
 ```
+
+If you previously used `wt completions` to generate a static completions file, remove it to avoid loading completions twice.
