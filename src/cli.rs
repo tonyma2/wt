@@ -101,14 +101,16 @@ pub enum Command {
         #[arg(long)]
         base: Option<String>,
     },
-    /// Generate shell completions
+    /// Set up shell integration (completions + directory switching)
     #[command(
-        long_about = "Generate shell completion scripts.\n\
-            Add to your shell configuration to enable tab completion.",
-        after_help = "Examples:\n  eval \"$(wt completions zsh)\"\n  eval \"$(wt completions bash)\"\n  wt completions fish | source"
+        long_about = "Set up shell integration.\n\
+            Outputs completions and a wrapper function that auto-changes \
+            directory after new and switch.\n\
+            \n  eval \"$(wt init zsh)\"\n  eval \"$(wt init bash)\"\n  wt init fish | source",
+        after_help = "Examples:\n  eval \"$(wt init zsh)\"\n  eval \"$(wt init bash)\"\n  wt init fish | source"
     )]
-    Completions {
-        /// Shell to generate completions for
+    Init {
+        /// Shell to generate integration for
         shell: clap_complete::Shell,
     },
     /// Print the path to a worktree

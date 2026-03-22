@@ -17,7 +17,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
 │   ├── link.rs         Symlink files from primary worktree into all linked worktrees
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
-│   └── completions.rs  Generate shell completions (zsh gets dynamic branch completion)
+│   └── init.rs         Shell integration: completions + auto-cd wrapper (zsh gets dynamic branch completion)
 ├── config.rs           Read/write ~/.wt/config TOML (auto-link persistence)
 ├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
@@ -71,7 +71,7 @@ Exceptions:
 
 **unlink** — Removes symlinks from linked worktrees. Only removes symlinks that point to the primary worktree's copy of the file. Non-symlink files and symlinks pointing elsewhere are skipped with a warning unless `--force` is used.
 
-**completions** — Generates clap_complete output. For zsh, injects nine custom functions (`_wt_extract_repo_args`, `_wt_collect_worktree_rows`, `_wt_collect_local_branches`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`, `_wt_switch_targets`, `_wt_new_name`, `_wt_new_base`) and patches the generated script via string replacement.
+**init** — Outputs an eval-able blob containing shell completions and a wrapper function that auto-cd's after `new` and `switch`. For zsh, injects custom completion functions (`_wt_extract_repo_args`, `_wt_collect_worktree_rows`, `_wt_collect_local_branches`, `_wt_collect_tags`, `_wt_setup_colors`, `_wt_find_current_branch`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`, `_wt_switch_targets`, `_wt_new_name`, `_wt_new_base`, `_wt_prune_base`, `_wt_link_files`, `_wt_unlink_files`) and patches the generated script via string replacement. The wrapper function shadows the `wt` binary (`command wt` still reaches it). Supports bash, zsh, and fish.
 
 ## Filesystem Layout
 
