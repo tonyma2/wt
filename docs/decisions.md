@@ -40,7 +40,11 @@ Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives 
 
 ## The cd hint goes to stderr, gated on stdout being a TTY
 
-After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to **stderr** — but only when **stdout** is a TTY. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names.
+After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to **stderr** — but only when **stdout** is a TTY. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names. When the `wt init` wrapper is active, stdout is captured by `$()`, so `is_stdout_tty()` returns false and the hint is naturally suppressed — no flag or env var needed.
+
+## The shell wrapper auto-cd is limited to `new` and `switch`
+
+`wt init <shell>` outputs a wrapper that intercepts `new`/`n`/`switch`/`s` to auto-cd. `path` is excluded — it stays a pure query for scripting (`$EDITOR "$(command wt path ...)"`). All other subcommands pass through to the binary unchanged.
 
 ## Do not mock git in tests
 

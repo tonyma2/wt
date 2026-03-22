@@ -16,7 +16,7 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match &cli.command {
-        Command::Completions { shell } => commands::completions::run(*shell),
+        Command::Init { shell } => commands::init::run(*shell),
         Command::New {
             name,
             create,

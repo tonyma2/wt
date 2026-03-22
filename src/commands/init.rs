@@ -2,6 +2,28 @@ use clap::CommandFactory;
 
 use crate::cli::Cli;
 
+const SH_WRAPPER: &str = "wt() {
+  case \"$1\" in
+    new|n|switch|s)
+      local out
+      out=$(command wt \"$@\") && [ -d \"$out\" ] && cd \"$out\" ;;
+    *) command wt \"$@\" ;;
+  esac
+}
+";
+
+const FISH_WRAPPER: &str = "function wt --wraps=wt
+  switch $argv[1]
+    case new n switch s
+      set -l out (command wt $argv)
+      and test -d $out
+      and cd $out
+    case '*'
+      command wt $argv
+  end
+end
+";
+
 pub fn run(shell: clap_complete::Shell) -> Result<(), String> {
     let script = render(shell)?;
     print!("{script}");
@@ -14,6 +36,10 @@ fn render(shell: clap_complete::Shell) -> Result<String, String> {
     let mut script = String::from_utf8_lossy(&out).into_owned();
 
     if shell == clap_complete::Shell::Zsh {
+        if let Some(rest) = script.strip_prefix("#compdef wt\n") {
+            script = rest.to_owned();
+        }
+
         let helper = r#"
 
 _wt_extract_repo_args() {
@@ -520,12 +546,54 @@ _wt_unlink_files() {
         );
     }
 
+    match shell {
+        clap_complete::Shell::Zsh | clap_complete::Shell::Bash => {
+            script.push_str(SH_WRAPPER);
+        }
+        clap_complete::Shell::Fish => script.push_str(FISH_WRAPPER),
+        _ => {}
+    }
+
     Ok(script)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zsh_init_strips_compdef_header() {
+        let script = render(clap_complete::Shell::Zsh).unwrap();
+        assert!(!script.starts_with("#compdef"));
+        assert!(script.contains("compdef _wt wt"));
+    }
+
+    #[test]
+    fn zsh_init_includes_wrapper() {
+        let script = render(clap_complete::Shell::Zsh).unwrap();
+        assert!(script.contains("wt() {"));
+        assert!(script.contains("command wt \"$@\""));
+        assert!(script.contains("new|n|switch|s)"));
+        assert!(script.contains("cd \"$out\""));
+    }
+
+    #[test]
+    fn bash_init_includes_wrapper() {
+        let script = render(clap_complete::Shell::Bash).unwrap();
+        assert!(script.contains("wt() {"));
+        assert!(script.contains("command wt \"$@\""));
+        assert!(script.contains("new|n|switch|s)"));
+        assert!(script.contains("cd \"$out\""));
+    }
+
+    #[test]
+    fn fish_init_includes_wrapper() {
+        let script = render(clap_complete::Shell::Fish).unwrap();
+        assert!(script.contains("function wt --wraps=wt"));
+        assert!(script.contains("command wt $argv"));
+        assert!(script.contains("case new n switch s"));
+        assert!(script.contains("and cd $out"));
+    }
 
     #[test]
     fn zsh_completion_is_dynamic() {

@@ -46,29 +46,15 @@ All commands accept `--repo <path>`. Run `wt <command> --help` for full options.
 
 ## Shell Integration
 
-`new`, `switch`, and `path` print the worktree path to stdout. Add this function to your shell config to cd automatically:
+Add to your shell config for tab completion and auto-cd after `new` and `switch`:
 
 ```sh
-wt() {
-  case "$1" in
-    new|n|path|p|switch|s)
-      local out
-      out=$(command wt "$@") || return
-      if [[ -n "$out" && -d "$out" ]]; then
-        cd "$out"
-      else
-        printf '%s\n' "$out"
-      fi
-      ;;
-    *) command wt "$@" ;;
-  esac
-}
+# zsh (~/.zshrc)
+eval "$(wt init zsh)"
+
+# bash (~/.bashrc)
+eval "$(wt init bash)"
+
+# fish (~/.config/fish/config.fish)
+wt init fish | source
 ```
-
-### Tab Completion
-
-```sh
-wt completions zsh > "$(brew --prefix)/share/zsh/site-functions/_wt"
-```
-
-Also available for bash and fish — see `wt completions --help`.
