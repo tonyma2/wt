@@ -105,8 +105,7 @@ pub enum Command {
     #[command(
         long_about = "Set up shell integration.\n\
             Outputs completions and a wrapper function that auto-changes \
-            directory after new and switch.\n\
-            \n  eval \"$(wt init zsh)\"\n  eval \"$(wt init bash)\"\n  wt init fish | source",
+            directory after new and switch.",
         after_help = "Examples:\n  eval \"$(wt init zsh)\"\n  eval \"$(wt init bash)\"\n  wt init fish | source"
     )]
     Init {
