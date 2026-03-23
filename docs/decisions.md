@@ -1,6 +1,6 @@
 # Design Decisions
 
-Intentional choices that look like they could be "improved." Do not change these without reading the rationale.
+Intentional choices that look like they could be "improved." Read the rationale before changing any of these.
 
 ## Do not add error crates
 
@@ -20,29 +20,36 @@ Shell wrappers depend on `cd "$(wt new ...)"` capturing stdout as a path. Any no
 
 ## Do not replace string replacement with a custom clap completer
 
-Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust. **Caveat:** the replacement strings are coupled to the `///` help text on `name`, `names`, and `base` args in `cli.rs`. Each subcommand's `name` arg needs a unique doc comment so the replacement targets don't collide (`"Branch name, tag, or ref"` for path, `"Branch name"` for switch, `"Branch name or ref"` for new). Changing those docstrings silently degrades completion. The unit test `zsh_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
+Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust.
+
+**Caveat:** the replacement strings are coupled to the `///` help text on `name`, `names`, and `base` args in `cli.rs`. Each subcommand's `name` arg needs a unique doc comment so the replacement targets don't collide (`"Branch name, tag, or ref"` for path, `"Branch name"` for switch, `"Branch name or ref"` for new). Changing those docstrings silently degrades completion. The unit test `zsh_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
 
 ## Do not add doc comments outside `cli.rs`
 
 `///` doc comments in `cli.rs` serve a concrete purpose: clap derives `--help` text from them on structs that derive `Parser`/`Subcommand`. Everywhere else they have no mechanical effect — they'd just be prose attached to internal functions in a binary that has no public API consumers. Code is self-documenting; inline `//` comments explain non-obvious *why*, not *what*.
 
-## Config is per-repo keyed in a single global file
+## Do not split config into per-repo or in-repo files
 
 Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives considered: `.wtlinks` in the repo (pollutes the repository), git config (wrong abstraction for file lists), per-repo config files under `~/.wt/` (more filesystem complexity). A single file is simple to read, edit, and back up.
 
-## Switch uses fuzzy matching instead of a `-c` gate
+## Do not require `-c` for new branches in `switch`
 
 `wt new` requires `-c` to create a branch (see above). `wt switch` is intentionally more lenient — its purpose is "get me into this branch, fast." Requiring `-c` for every new branch would negate the convenience. Instead, `switch` uses Levenshtein distance to detect likely typos and suggests the close match. `-c` bypasses the fuzzy check when the user genuinely wants a new similarly-named branch.
 
-## Detached HEAD lookup uses ref-to-SHA matching
+## Do not add SHA prefix matching for detached HEAD lookup
 
-`wt path` and `wt rm` resolve names as: branch → ref (tag/SHA) → path. The ref fallback only matches detached HEAD worktrees whose `head` SHA equals the resolved ref. We don't attempt arbitrary SHA prefix matching because git worktrees can share a HEAD commit, making prefix matches ambiguous.
+`wt path` and `wt rm` resolve names as: branch → ref (tag/SHA) → path. The ref fallback only matches detached HEAD worktrees whose `head` SHA equals the resolved ref. Arbitrary SHA prefix matching is intentionally excluded because git worktrees can share a HEAD commit, making prefix matches ambiguous.
 
-## The cd hint goes to stderr, gated on stdout being a TTY
+## Do not change cd hint TTY detection to check stderr
 
-After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to **stderr** — but only when **stdout** is a TTY. In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal. Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal). The branch name is single-quoted inside the command substitution to prevent shell expansion of `$`, `` ` ``, and `"` characters in branch names. When the `wt init` wrapper is active, stdout is captured by `$()`, so `is_stdout_tty()` returns false and the hint is naturally suppressed — no flag or env var needed.
+After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hint to **stderr** — but only when **stdout** is a TTY.
 
-## The shell wrapper auto-cd is limited to `new` and `switch`
+- In `cd "$(wt new ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal
+- Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal)
+- Branch name is single-quoted to prevent shell expansion of `$`, `` ` ``, and `"` characters
+- When `wt init` wrapper is active, stdout is captured by `$()`, so `is_stdout_tty()` returns false and the hint is naturally suppressed
+
+## Do not extend auto-cd to other subcommands
 
 `wt init <shell>` outputs a wrapper that intercepts `new`/`n`/`switch`/`s` to auto-cd. `path` is excluded — it stays a pure query for scripting (`$EDITOR "$(command wt path ...)"`). All other subcommands pass through to the binary unchanged.
 
