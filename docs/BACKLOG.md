@@ -1,7 +1,9 @@
 # Backlog
 
 **P1** now · **P2** later · **P3** maybe
+
 **S** quick · **M** hours · **L** days
+
 Delete when shipped.
 
 ## Features
