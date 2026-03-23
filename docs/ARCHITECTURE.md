@@ -42,36 +42,12 @@ Git::find_repo(repo_arg)  →  Git::new(repo_root)  →  git.list_worktrees()
     →  worktree::parse_porcelain()  →  query Vec<Worktree>  →  act
 ```
 
-Exceptions:
-- **new** never lists worktrees — it builds a destination path and calls `add_worktree()` or `checkout_worktree()` directly.
-- **prune** (global, no `--repo`) discovers repos by walking the filesystem and parsing `.git` files, not via `list_worktrees()`.
-
-## Commands
-
-**new** — Resolves repo, builds destination path as `~/.wt/worktrees/<random-id>/<repo>`. The 6-char hex random ID ensures unique paths regardless of branch name. Validates (with `-c`) that the branch doesn't already exist. Creates a new branch (`git worktree add -b`) or checks out an existing ref (`git worktree add`). Auto-links files from `~/.wt/config` if configured. Prints the path to stdout.
-
-**list** — `--porcelain` passes git output through unchanged. Human mode calculates column widths from terminal width, queries dirty/ahead-behind status per worktree, formats a table, and marks the current worktree with `*`.
-
-**rm** — Accepts branch names, refs, or absolute paths. `resolve_target()` tries branch lookup first, then ref-to-SHA matching for detached HEAD worktrees, then falls back to path resolution.
-- Validates: not primary worktree, not cwd, not checked out elsewhere, not dirty/unmerged (unless `--force`)
-- Removes worktree, then deletes the branch (skips branch deletion if already removed externally)
-- Multiple targets accumulate errors rather than aborting on the first
-
-**prune** — Two modes:
-- With `--repo`: prunes a single repo's stale metadata and merged worktrees
-- Without `--repo` (default): discovers all repos from `~/.wt/worktrees/` via recursive `.git` file parsing, prunes each, then finds orphaned directories and cleans up empty parents
-- Merged-worktree pruning skips dirty and locked worktrees with a diagnostic message; skipped entirely if no default branch can be detected (no remote, no `--base`). `--base` overrides the auto-detected default branch
-- `--gone` removes worktrees whose upstream is gone (fetches each unique remote once, skipped in `--dry-run`)
-
-**path** — Looks up branch in parsed worktree list, prints its path to stdout. Falls back to resolving the name as a ref (tag, SHA) and matching against detached HEAD worktrees. Errors on ambiguous matches.
-
-**switch** — Idempotent get-or-create: returns an existing worktree if one exists for the branch, otherwise checks out or creates one. When creating a new branch, checks for similarly-named local branches using Levenshtein distance and errors with a suggestion if a close match is found. `-c`/`--create` bypasses the fuzzy check. Auto-links files from `~/.wt/config` on creation. Rejects non-branch refs (tags, SHAs).
-
-**link** — Validates relative paths (no `..`, not absolute). Checks source files exist in the primary worktree before touching any linked worktree. Creates symlinks (and intermediate directories) pointing back to the primary worktree's copy. Skips correct existing links, warns on conflicts unless `--force`. Persists linked files to `~/.wt/config` for auto-linking on new worktree creation.
-
-**unlink** — Removes symlinks from linked worktrees. Only removes symlinks that point to the primary worktree's copy of the file. Non-symlink files and symlinks pointing elsewhere are skipped with a warning unless `--force` is used.
-
-**init** — Outputs an eval-able blob containing shell completions and a wrapper function that auto-cd's after `new` and `switch`. For zsh, injects custom completion functions (`_wt_extract_repo_args`, `_wt_collect_worktree_rows`, `_wt_collect_local_branches`, `_wt_collect_tags`, `_wt_setup_colors`, `_wt_find_current_branch`, `_wt_complete_branches_with_paths`, `_wt_path_branches`, `_wt_remove_targets`, `_wt_switch_targets`, `_wt_new_name`, `_wt_new_base`, `_wt_prune_base`, `_wt_link_files`, `_wt_unlink_files`) and patches the generated script via string replacement. The wrapper function shadows the `wt` binary (`command wt` still reaches it). Supports bash, zsh, and fish.
+Exceptions and non-obvious behaviors:
+- **new** — never lists worktrees; builds a destination path directly and calls `add_worktree()` or `checkout_worktree()`
+- **rm** — `resolve_target()` has a three-stage fallback: branch → ref-to-SHA → filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
+- **prune** — global mode (no `--repo`) uses a completely different data flow: walks `~/.wt/worktrees/` recursively, parses `.git` files to discover admin repos, then prunes each
+- **switch** — auto-prunes stale worktree metadata when it encounters a prunable match before creating
+- **init** — patches clap_complete's generated script via string replacement to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base` args in `cli.rs` — each must be unique per subcommand. Guarded by the `zsh_completion_is_dynamic` unit test (see [decisions.md](decisions.md))
 
 ## Filesystem Layout
 
@@ -84,56 +60,3 @@ Exceptions:
 ```
 
 The admin (primary) repo lives wherever the user cloned it. Worktree directories contain a `.git` file (not a directory) pointing back to `.git/worktrees/<name>` in the admin repo.
-
-## Test Harness
-
-Integration tests live in `tests/` with one file per subcommand. Shared helpers are in `tests/common/mod.rs`.
-
-### Setup
-
-**`setup()`** — Creates a `TempDir` with a git repo in a `repo/` subdirectory (single empty commit on `main`). Returns `(TempDir, repo_path)`. `HOME` is set to the `TempDir` root so worktrees land at `<TempDir>/.wt/worktrees/<id>/repo/`. Keep `TempDir` in scope — dropping it deletes the directory.
-
-**`setup_with_origin()`** — Like `setup()` but creates a bare remote as `origin`, pushes `main`, and fetches to set up tracking refs. Returns `(TempDir, repo_path, origin_path)`.
-
-**`init_repo(dir)` / `init_bare_repo(dir)`** — Initialize a regular or bare repo. Available standalone for tests that need additional repos.
-
-### Running
-
-**`wt_bin()`** — Returns a `Command` for the compiled binary.
-
-**`wt(home)`** — Returns a `Command` for the compiled binary with `HOME` set.
-
-**`run_wt(home, configure)`** — Closure-based `wt` runner with consistent `HOME` setup that returns `Output`.
-
-**`wt_new(home, repo, branch)`** — Runs `wt new -c <branch> --repo <repo>` with `HOME` overridden. Returns the created worktree path.
-
-**`wt_checkout(home, repo, name)`** — Same but without `-c` (checks out existing ref).
-
-**`git(dir)`** — Returns a `Command` for `git -C <dir>`.
-
-### Assertions
-
-**`assert_git_success(dir, args)`** — Runs a git command and panics if it fails.
-
-**`assert_git_success_with(dir, configure)`** — Closure variant for commands needing extra args or env.
-
-**`assert_git_stdout_success(dir, args)`** — Runs a git command, panics if it fails, returns stdout.
-
-**`assert_branch_absent(dir, branch)`** — Panics if the branch exists.
-
-**`assert_branch_present(dir, branch)`** — Panics if the branch does not exist.
-
-**`assert_exit_code(output, code)`** — Panics unless the process exited with exactly `code`.
-
-**`assert_stdout_empty(output)`** — Panics unless stdout is empty.
-
-**`assert_stderr_empty(output)`** — Panics unless stderr is empty.
-
-**`assert_stderr_exact(output, expected)`** — Panics unless stderr exactly matches `expected`.
-
-**`assert_error(output, code, expected_stderr)`** — Composite assertion for error contracts:
-exit code + empty stdout + exact stderr.
-
-**`canonical(path)`** — Canonicalizes a path, falling back to the original when canonicalization fails.
-
-**`normalize_home_paths(output, home)`** — Replaces canonical and raw home prefixes with `$HOME` for stable output assertions.

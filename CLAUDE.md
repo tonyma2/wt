@@ -4,9 +4,9 @@
 
 ## Docs
 
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow, commands, test harness
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow. Read before exploring unfamiliar modules
+- **[docs/BACKLOG.md](docs/BACKLOG.md)** — prioritized improvement backlog
 - **[docs/decisions.md](docs/decisions.md)** — You MUST read this file before refactoring or changing existing patterns
-- **[docs/git-workflow.md](docs/git-workflow.md)** — You MUST read this file before committing, pushing, creating PRs, or merging
 
 ## Build & Test
 
@@ -18,6 +18,8 @@ cargo test --test new -- create            # filter by test name
 cargo fmt                                  # formatting
 cargo clippy --all-targets -- -D warnings  # lints
 ```
+
+`cargo test`, `cargo fmt`, and `cargo clippy` must all pass before work is complete.
 
 ## Structure
 
@@ -43,10 +45,10 @@ cargo clippy --all-targets -- -D warnings  # lints
 
 ## Tests
 
-Every new feature, bug fix, or behavioral change MUST include tests. Work is not complete until `cargo test` passes.
+Every new feature, bug fix, or behavioral change MUST include tests.
 
 - **What to test**: observable behavior — exit codes, stdout/stderr content, filesystem side effects. Cover the happy path and likely failure modes (missing args, conflicting state, dirty worktree)
-- **Integration tests** (`tests/`): one file per subcommand, run the compiled binary against real temp git repos. See [ARCHITECTURE.md § Test Harness](docs/ARCHITECTURE.md#test-harness) for setup helpers and assertions
+- **Integration tests** (`tests/`): one file per subcommand, run the compiled binary against real temp git repos. Setup, runners, and assertions are in [`tests/common/mod.rs`](tests/common/mod.rs)
 - **Unit tests**: inline under `#[cfg(test)] mod tests` for pure parsing/logic
 - **No mocking**: tests use real git repos in temp directories. Do not introduce mock layers (see [decisions.md](docs/decisions.md))
 
