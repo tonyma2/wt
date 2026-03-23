@@ -68,7 +68,8 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     }
 
     if !is_branch && !create {
-        let branches = git.local_branches();
+        let owned = git.local_branches();
+        let branches: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
         if let Some(suggestion) = fuzzy::close_match(name, &branches) {
             return Err(format!(
                 "did you mean '{suggestion}'? use `wt switch -c {name}` to create a new branch"

@@ -15,7 +15,7 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-pub fn close_match<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
+pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     let len = name.chars().count();
     if len == 0 {
         return None;
@@ -24,10 +24,10 @@ pub fn close_match<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> 
     let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
     candidates
         .iter()
-        .filter(|c| c.as_str() != name)
+        .filter(|c| **c != name)
         .filter_map(|c| {
             let dist = levenshtein(name, c);
-            (dist <= threshold).then_some((dist, c.as_str()))
+            (dist <= threshold).then_some((dist, *c))
         })
         .min_by_key(|(dist, _)| *dist)
         .map(|(_, name)| name)
@@ -56,26 +56,25 @@ mod tests {
 
     #[test]
     fn close_match_finds_typo() {
-        let branches = vec!["feat/login".into(), "fix/bug".into()];
-        assert_eq!(close_match("feat/logni", &branches), Some("feat/login"));
+        assert_eq!(
+            close_match("feat/logni", &["feat/login", "fix/bug"]),
+            Some("feat/login")
+        );
     }
 
     #[test]
     fn close_match_none_when_distant() {
-        let branches = vec!["feat/login".into()];
-        assert_eq!(close_match("fix/something-else", &branches), None);
+        assert_eq!(close_match("fix/something-else", &["feat/login"]), None);
     }
 
     #[test]
     fn close_match_skips_exact() {
-        let branches = vec!["feat/login".into()];
-        assert_eq!(close_match("feat/login", &branches), None);
+        assert_eq!(close_match("feat/login", &["feat/login"]), None);
     }
 
     #[test]
     fn close_match_no_false_positive_short_names() {
-        let branches = vec!["bar".into()];
-        assert_eq!(close_match("foo", &branches), None);
+        assert_eq!(close_match("foo", &["bar"]), None);
     }
 
     #[test]
@@ -85,13 +84,14 @@ mod tests {
 
     #[test]
     fn close_match_empty_name() {
-        let branches = vec!["a".into()];
-        assert_eq!(close_match("", &branches), None);
+        assert_eq!(close_match("", &["a"]), None);
     }
 
     #[test]
     fn close_match_picks_closest() {
-        let branches = vec!["feat/logxxx".into(), "feat/logim".into()];
-        assert_eq!(close_match("feat/login", &branches), Some("feat/logim"),);
+        assert_eq!(
+            close_match("feat/login", &["feat/logxxx", "feat/logim"]),
+            Some("feat/logim"),
+        );
     }
 }
