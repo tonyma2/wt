@@ -60,7 +60,3 @@ Exceptions and non-obvious behaviors:
 ```
 
 The admin (primary) repo lives wherever the user cloned it. Worktree directories contain a `.git` file (not a directory) pointing back to `.git/worktrees/<name>` in the admin repo.
-
-## Test Harness
-
-Integration tests live in `tests/` with one file per subcommand. Shared setup, runners, and assertions are in `tests/common/mod.rs`.

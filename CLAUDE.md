@@ -19,6 +19,8 @@ cargo fmt                                  # formatting
 cargo clippy --all-targets -- -D warnings  # lints
 ```
 
+`cargo test`, `cargo fmt`, and `cargo clippy` must all pass before work is complete.
+
 ## Structure
 
 - One file per subcommand in `commands/`, each exports `pub fn run(...) -> Result<(), String>`
@@ -43,7 +45,7 @@ cargo clippy --all-targets -- -D warnings  # lints
 
 ## Tests
 
-Every new feature, bug fix, or behavioral change MUST include tests. Work is not complete until `cargo test` passes.
+Every new feature, bug fix, or behavioral change MUST include tests.
 
 - **What to test**: observable behavior — exit codes, stdout/stderr content, filesystem side effects. Cover the happy path and likely failure modes (missing args, conflicting state, dirty worktree)
 - **Integration tests** (`tests/`): one file per subcommand, run the compiled binary against real temp git repos. Setup, runners, and assertions are in [`tests/common/mod.rs`](tests/common/mod.rs)
