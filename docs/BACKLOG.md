@@ -11,7 +11,6 @@ Delete when shipped.
 - **Post-create hooks** (P1, M) — config-driven commands (`npm install`, `cp .env`, etc.) run after worktree creation. Single `post-create` entry per repo in `~/.wt/config`, failures non-fatal. Makes `new`/`switch` produce ready-to-work worktrees.
 - **`wt clone`** (P1, L) — `wt clone <url>` → bare clone + first worktree + correct fetch refspec. One opinionated flow, don't replicate `git clone`'s flag surface. Kills onboarding friction.
 - **Global status view** (P1, M) — cross-repo worktree summary via `~/.wt/worktrees/` discovery (same mechanism as global `prune`). Could be `wt list --all` or a separate subcommand.
-- **Fuzzy matching in `rm` and `path`** (P1, S) — `switch` already uses `fuzzy::close_match()` for typo detection. `rm` and `path` just say "no worktree found for: X" with no suggestion. Add "did you mean '...'?" — especially valuable for `rm` where a typo means the user thinks nothing was removed but gets no help.
 - **`wt lock/unlock`** (P2, S) — thin wrappers around `git worktree lock/unlock` addressed by branch name instead of path. Small win but closes the feature gap.
 - **`wt run <branch> -- <cmd>`** (P2, M) — execute a command in a worktree's directory without cd. Useful for scripting and CI. Less critical with shell integration, since `(cd "$(wt path branch)" && cmd)` works.
 - **Dynamic bash completions** (P2, L) — zsh gets custom branch completions with status badges via string replacement in `init.rs`. Bash only gets static clap_complete output (no branch names). Real gap, high effort.
