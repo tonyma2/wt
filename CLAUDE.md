@@ -7,7 +7,6 @@
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module graph, key types, data flow
 - **[docs/BACKLOG.md](docs/BACKLOG.md)** — prioritized improvement backlog
 - **[docs/decisions.md](docs/decisions.md)** — You MUST read this file before refactoring or changing existing patterns
-- **[docs/git-workflow.md](docs/git-workflow.md)** — You MUST read this file before committing, pushing, creating PRs, or merging
 
 ## Build & Test
 
