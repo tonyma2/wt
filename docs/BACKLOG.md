@@ -22,6 +22,7 @@ Delete when shipped.
 
 ## Code quality
 
+- **Re-validate paths in `auto_link()`** (P2, S) — `link.rs:auto_link()` creates symlinks from paths loaded from `~/.wt/config` without calling `validate_path()`. CLI-provided paths are validated before entering config, but a hand-edited config with `../` paths would bypass validation. Defense-in-depth: call `validate_path()` in the `auto_link()` loop body.
 - **Multi-target `rm` partial failure tests** (P1, S) — `rm.rs` accumulates errors across multiple targets, but no integration test covers partial failure. Add tests for mixed success/failure scenarios.
 
 ## Distribution
