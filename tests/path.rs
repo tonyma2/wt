@@ -134,6 +134,36 @@ fn tag_fallback_not_used_when_branch_matches() {
 }
 
 #[test]
+fn suggests_close_match_for_typo() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "feat/logni", "--repo"]).arg(&repo);
+    });
+
+    assert_exit_code(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("did you mean 'feat/login'?"),
+        "expected fuzzy suggestion, got: {stderr}",
+    );
+}
+
+#[test]
+fn no_suggestion_for_distant_name() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat/login");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["path", "fix/something-else", "--repo"])
+            .arg(&repo);
+    });
+
+    assert_error(&output, 1, "no worktree found for: fix/something-else\n");
+}
+
+#[test]
 fn errors_when_ref_matches_multiple_detached_worktrees() {
     let (home, repo) = setup();
     assert_git_success(&repo, &["tag", "v3.0"]);

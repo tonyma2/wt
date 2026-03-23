@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::fuzzy;
 use crate::git::Git;
 use crate::worktree;
 
@@ -38,5 +39,14 @@ pub fn run(name: &str, repo: Option<&Path>) -> Result<(), String> {
         }
     }
 
+    let branches: Vec<&str> = worktrees
+        .iter()
+        .filter_map(|wt| wt.branch.as_deref())
+        .collect();
+    if let Some(suggestion) = fuzzy::close_match(name, &branches) {
+        return Err(format!(
+            "no worktree found for: {name}, did you mean '{suggestion}'?"
+        ));
+    }
     Err(format!("no worktree found for: {name}"))
 }
