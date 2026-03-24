@@ -937,7 +937,7 @@ fn multi_target_dirty_blocks_one() {
     std::fs::write(dirty_path.join("uncommitted.txt"), "changes").unwrap();
 
     let output = wt_bin()
-        .args(["rm", "dirty-wt", "clean-wt", "--repo"])
+        .args(["rm", "clean-wt", "dirty-wt", "--repo"])
         .arg(&repo)
         .output()
         .unwrap();
