@@ -878,3 +878,112 @@ fn removes_worktree_when_branch_deleted_externally() {
         "should not mention branch deletion, got: {stderr}",
     );
 }
+
+#[test]
+fn multi_target_all_succeed() {
+    let (home, repo) = setup();
+    let path_a = wt_new(home.path(), &repo, "rm-a");
+    let path_b = wt_new(home.path(), &repo, "rm-b");
+
+    let output = wt_bin()
+        .args(["rm", "rm-a", "rm-b", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert_exit_code(&output, 0);
+    assert!(!path_a.exists());
+    assert!(!path_b.exists());
+    assert_branch_absent(&repo, "rm-a");
+    assert_branch_absent(&repo, "rm-b");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("cannot remove"),
+        "should have no aggregate error, got: {stderr}",
+    );
+}
+
+#[test]
+fn multi_target_all_fail() {
+    let (_home, repo) = setup();
+
+    let output = wt_bin()
+        .args(["rm", "main", "nonexistent", "--force", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert_exit_code(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot remove the primary worktree"),
+        "should report primary worktree error, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("no worktree found for: nonexistent"),
+        "should report not-found error, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("cannot remove 2 worktrees"),
+        "should report plural aggregate count, got: {stderr}",
+    );
+    assert!(repo.exists());
+}
+
+#[test]
+fn multi_target_dirty_blocks_one() {
+    let (home, repo) = setup();
+    let clean_path = wt_new(home.path(), &repo, "clean-wt");
+    let dirty_path = wt_new(home.path(), &repo, "dirty-wt");
+
+    std::fs::write(dirty_path.join("uncommitted.txt"), "changes").unwrap();
+
+    let output = wt_bin()
+        .args(["rm", "dirty-wt", "clean-wt", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert_exit_code(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("worktree has local changes"),
+        "should report dirty error, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("cannot remove 1 worktree"),
+        "should report singular aggregate count, got: {stderr}",
+    );
+    assert!(!clean_path.exists(), "clean worktree should be removed");
+    assert_branch_absent(&repo, "clean-wt");
+    assert!(dirty_path.exists(), "dirty worktree should remain");
+    assert_branch_present(&repo, "dirty-wt");
+}
+
+#[test]
+fn multi_target_unmerged_blocks_one() {
+    let (home, repo) = setup();
+    let merged_path = wt_new(home.path(), &repo, "merged-wt");
+    let unmerged_path = wt_new(home.path(), &repo, "unmerged-wt");
+
+    std::fs::write(unmerged_path.join("new.txt"), "change").unwrap();
+    assert_git_success(&unmerged_path, &["add", "new.txt"]);
+    assert_git_success(&unmerged_path, &["commit", "-m", "local change"]);
+
+    let output = wt_bin()
+        .args(["rm", "unmerged-wt", "merged-wt", "--repo"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert_exit_code(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not fully merged"),
+        "should report unmerged error, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("cannot remove 1 worktree"),
+        "should report singular aggregate count, got: {stderr}",
+    );
+    assert!(!merged_path.exists(), "merged worktree should be removed");
+    assert_branch_absent(&repo, "merged-wt");
+    assert!(unmerged_path.exists(), "unmerged worktree should remain");
+    assert_branch_present(&repo, "unmerged-wt");
+}
