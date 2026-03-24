@@ -51,4 +51,3 @@ Every new feature, bug fix, or behavioral change MUST include tests.
 - **Integration tests** (`tests/`): one file per subcommand, run the compiled binary against real temp git repos. Setup, runners, and assertions are in [`tests/common/mod.rs`](tests/common/mod.rs)
 - **Unit tests**: inline under `#[cfg(test)] mod tests` for pure parsing/logic
 - **No mocking**: tests use real git repos in temp directories. Do not introduce mock layers (see [decisions.md](docs/decisions.md))
-
