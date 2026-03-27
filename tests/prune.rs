@@ -232,6 +232,7 @@ fn prunes_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "merged-branch"]);
     assert_git_success(&repo, &["merge", "merged-branch"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -274,6 +275,7 @@ fn preserves_unmanaged_parent_when_pruning_merged_worktree() {
     std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
     assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
     assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(&unmanaged_wt, &["push", "-u", "origin", "merged-external"]);
     assert_git_success(&repo, &["merge", "merged-external"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -320,6 +322,10 @@ fn preserves_unmanaged_siblings_when_pruning_merged_worktree() {
     std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
     assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
     assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(
+        &unmanaged_wt,
+        &["push", "-u", "origin", "merged-external-siblings"],
+    );
     assert_git_success(&repo, &["merge", "merged-external-siblings"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -372,6 +378,10 @@ fn preserves_unmanaged_parent_when_pruning_in_default_mode() {
     std::fs::write(unmanaged_wt.join("feature.txt"), "work").unwrap();
     assert_git_success(&unmanaged_wt, &["add", "feature.txt"]);
     assert_git_success(&unmanaged_wt, &["commit", "-m", "add feature"]);
+    assert_git_success(
+        &unmanaged_wt,
+        &["push", "-u", "origin", "default-mode-external"],
+    );
     assert_git_success(&repo, &["merge", "default-mode-external"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -410,6 +420,7 @@ fn preserves_user_files_in_managed_parent_when_pruning_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "merged-parent-data"]);
     assert_git_success(&repo, &["merge", "merged-parent-data"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -449,6 +460,7 @@ fn preserves_managed_parent_when_cwd_is_inside_merged_parent() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "cwd-parent-merged"]);
     assert_git_success(&repo, &["merge", "cwd-parent-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -505,6 +517,7 @@ fn removes_managed_parent_when_home_is_symlinked() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "symlink-home-prune"]);
     assert_git_success(&repo, &["merge", "symlink-home-prune"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -558,6 +571,55 @@ fn skips_squash_merged_worktree() {
 }
 
 #[test]
+fn skips_unpushed_ancestor_branch() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "unpushed");
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "unpushed branch should not be pruned as merged"
+    );
+    assert_branch_present(&repo, "unpushed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping unpushed (no upstream)"),
+        "should report skip reason, got: {stderr}",
+    );
+}
+
+#[test]
+fn prunes_unpushed_ancestor_branch_with_explicit_base() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "unpushed-base");
+
+    let output = wt_bin()
+        .args(["prune", "--base", "main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "unpushed ancestor branch should be pruned when --base is explicit"
+    );
+    assert_branch_absent(&repo, "unpushed-base");
+}
+
+#[test]
 fn skips_upstream_gone_unmerged_worktree() {
     let (home, repo, _origin) = setup_with_origin();
 
@@ -595,6 +657,7 @@ fn dry_run_skips_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "dry-merged"]);
     assert_git_success(&repo, &["merge", "dry-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -636,6 +699,7 @@ fn skips_dirty_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "dirty-merged"]);
     assert_git_success(&repo, &["merge", "dirty-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -694,6 +758,7 @@ fn skips_cwd_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "cwd-merged"]);
     assert_git_success(&repo, &["merge", "cwd-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -1167,6 +1232,7 @@ fn prunes_merged_worktree_when_head_is_elsewhere() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "head-elsewhere-merged"]);
     assert_git_success(&repo, &["merge", "head-elsewhere-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -1279,6 +1345,7 @@ fn repo_flag_prunes_merged() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "add feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "repo-merged"]);
     assert_git_success(&repo, &["merge", "repo-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -1373,6 +1440,7 @@ fn reports_locked_merged_worktree() {
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "locked-merged"]);
     assert_git_success(&repo, &["merge", "locked-merged"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
@@ -1778,6 +1846,7 @@ fn multi_repo_output_is_grouped_by_repo() {
     std::fs::write(wt_a.join("f.txt"), "a").unwrap();
     assert_git_success(&wt_a, &["add", "f.txt"]);
     assert_git_success(&wt_a, &["commit", "-m", "work"]);
+    assert_git_success(&wt_a, &["push", "-u", "origin", "merged-a"]);
     assert_git_success(&repo_a, &["merge", "merged-a"]);
     assert_git_success(&repo_a, &["push", "origin", "main"]);
     assert_git_success(&repo_a, &["fetch", "--prune", "origin"]);
@@ -1786,6 +1855,7 @@ fn multi_repo_output_is_grouped_by_repo() {
     std::fs::write(wt_b.join("f.txt"), "b").unwrap();
     assert_git_success(&wt_b, &["add", "f.txt"]);
     assert_git_success(&wt_b, &["commit", "-m", "work"]);
+    assert_git_success(&wt_b, &["push", "-u", "origin", "merged-b"]);
     assert_git_success(&repo_b, &["merge", "merged-b"]);
     assert_git_success(&repo_b, &["push", "origin", "main"]);
     assert_git_success(&repo_b, &["fetch", "--prune", "origin"]);
@@ -1831,6 +1901,7 @@ fn single_repo_output_has_no_header() {
     std::fs::write(wt_path.join("f.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "f.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "work"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "merged-single"]);
     assert_git_success(&repo, &["merge", "merged-single"]);
     assert_git_success(&repo, &["push", "origin", "main"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);

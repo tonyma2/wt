@@ -13,7 +13,7 @@ Delete when shipped.
 
 ## Bugs
 
-- **`prune` falsely prunes unpushed branches as "merged"** (P1, S) — `prune_merged` uses `is_ancestor(branch, base)` to detect merged branches, but a branch that was never pushed (`branch.<name>.remote` absent) can't have been merged via PR — squash/rebase merges (the dominant workflow) produce new SHAs so `is_ancestor` returns false anyway; the merged path only fires for regular/ff merges which require pushing first. Branches created with `wt new` that haven't diverged from main are false positives — if the worktree is clean, the branch and worktree get deleted. Fix: gate the `merged` determination on `upstream_remote(branch).is_some()`. Unpushed ancestor branches should emit `skipping {branch} (no upstream)` rather than being silently excluded — consistent with how dirty/locked/cwd skips are surfaced. Same fix needed for the locked-worktree advisory message (line 383). One downside: branches where tracking was manually removed (`git branch --unset-upstream`) or pushed without `-u` won't auto-prune — acceptable since both are rare and `wt rm` works. Related: `is_dirty` uses `--untracked-files=normal` which doesn't see gitignored files — a worktree with only ignored files (`.env`, `target/`, `node_modules/`) appears clean. Consider adding `--ignored` to the dirty check as defense-in-depth.
+- **`prune` dirty check ignores gitignored files** (P3, S) — `is_dirty` uses `--untracked-files=normal` which doesn't see gitignored files (`.env`, `target/`, `node_modules/`). A worktree with only ignored uncommitted files appears clean. Consider adding `--ignored` to the dirty check as defense-in-depth.
 
 ## Code quality
 
