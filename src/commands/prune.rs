@@ -354,19 +354,25 @@ fn prune_merged(
 
             let branch_ref = format!("refs/heads/{branch}");
             let upstream = git.upstream_remote(branch);
-            let is_ancestor = base
-                .as_ref()
-                .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
 
-            if is_ancestor && upstream.is_none() && base_override.is_none() {
-                messages.push(format!("skipping {branch} (no upstream)"));
+            if upstream.is_none() && base_override.is_none() {
+                if base
+                    .as_ref()
+                    .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref))
+                {
+                    messages.push(format!("skipping {branch} (no upstream)"));
+                }
                 return None;
             }
+
+            let merged = base
+                .as_ref()
+                .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
 
             Some(PruneCandidate {
                 branch: branch.clone(),
                 path: wt.path.clone(),
-                merged: is_ancestor,
+                merged,
                 remote: if gone { upstream } else { None },
             })
         })

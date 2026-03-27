@@ -598,6 +598,28 @@ fn skips_unpushed_ancestor_branch() {
 }
 
 #[test]
+fn prunes_unpushed_ancestor_branch_with_explicit_base() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "unpushed-base");
+
+    let output = wt_bin()
+        .args(["prune", "--base", "main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "unpushed ancestor branch should be pruned when --base is explicit"
+    );
+    assert_branch_absent(&repo, "unpushed-base");
+}
+
+#[test]
 fn skips_upstream_gone_unmerged_worktree() {
     let (home, repo, _origin) = setup_with_origin();
 
