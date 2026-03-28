@@ -234,6 +234,12 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
     Some(repo.to_path_buf())
 }
 
+pub(crate) fn repo_basename(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 pub(crate) fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     let content = std::fs::read_to_string(dot_git_file).ok()?;
     let line = content.lines().next()?;

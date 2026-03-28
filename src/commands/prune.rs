@@ -78,10 +78,7 @@ pub fn run(
             if printed {
                 eprintln!();
             }
-            let name = repo_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| repo_path.display().to_string());
+            let name = worktree::repo_basename(repo_path);
             eprintln!("{}{}:{}", clr.bold, name, clr.reset);
             for msg in &repo_msgs {
                 eprintln!("  {}", style_msg(msg, &clr));

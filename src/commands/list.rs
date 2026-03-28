@@ -73,7 +73,7 @@ fn run_all(json: bool) -> Result<(), String> {
 
     let cwd = resolve_cwd();
 
-    let clr = terminal::stderr_colors();
+    let err_clr = terminal::stderr_colors();
     let repo_data: Vec<_> = repos
         .iter()
         .filter(|p| p.exists())
@@ -84,15 +84,15 @@ fn run_all(json: bool) -> Result<(), String> {
                 Err(e) => {
                     eprintln!(
                         "{}cannot list {}: {e}{}",
-                        clr.red,
+                        err_clr.red,
                         repo_path.display(),
-                        clr.reset
+                        err_clr.reset
                     );
                     return None;
                 }
             };
             let worktrees = worktree::parse_porcelain(&output);
-            let name = repo_basename(repo_path);
+            let name = worktree::repo_basename(repo_path);
             Some((name, git, worktrees))
         })
         .collect();
@@ -241,12 +241,6 @@ fn print_table(
             status_trunc,
         );
     }
-}
-
-fn repo_basename(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use serde_json::Value;
@@ -376,18 +376,20 @@ fn paths_use_tilde_for_home_directory() {
     );
 }
 
-#[test]
-fn list_all_discovers_multiple_repos() {
+fn setup_two_repos() -> (TempDir, PathBuf, PathBuf) {
     let home = TempDir::new().unwrap();
-
     let repo_a = home.path().join("repo-a");
     std::fs::create_dir(&repo_a).unwrap();
     init_repo(&repo_a);
-
     let repo_b = home.path().join("repo-b");
     std::fs::create_dir(&repo_b).unwrap();
     init_repo(&repo_b);
+    (home, repo_a, repo_b)
+}
 
+#[test]
+fn list_all_discovers_multiple_repos() {
+    let (home, repo_a, repo_b) = setup_two_repos();
     wt_new(home.path(), &repo_a, "feat-a");
     wt_new(home.path(), &repo_b, "feat-b");
 
@@ -428,16 +430,7 @@ fn list_all_discovers_multiple_repos() {
 
 #[test]
 fn list_all_json_includes_repo_field() {
-    let home = TempDir::new().unwrap();
-
-    let repo_a = home.path().join("repo-a");
-    std::fs::create_dir(&repo_a).unwrap();
-    init_repo(&repo_a);
-
-    let repo_b = home.path().join("repo-b");
-    std::fs::create_dir(&repo_b).unwrap();
-    init_repo(&repo_b);
-
+    let (home, repo_a, repo_b) = setup_two_repos();
     wt_new(home.path(), &repo_a, "feat-a");
     wt_new(home.path(), &repo_b, "feat-b");
 
@@ -479,16 +472,7 @@ fn list_all_json_includes_repo_field() {
 
 #[test]
 fn list_all_marks_current_worktree() {
-    let home = TempDir::new().unwrap();
-
-    let repo_a = home.path().join("repo-a");
-    std::fs::create_dir(&repo_a).unwrap();
-    init_repo(&repo_a);
-
-    let repo_b = home.path().join("repo-b");
-    std::fs::create_dir(&repo_b).unwrap();
-    init_repo(&repo_b);
-
+    let (home, repo_a, repo_b) = setup_two_repos();
     let wt_a = wt_new(home.path(), &repo_a, "feat-a");
     wt_new(home.path(), &repo_b, "feat-b");
 
