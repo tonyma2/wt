@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -73,12 +73,24 @@ fn run_all(json: bool) -> Result<(), String> {
 
     let cwd = resolve_cwd();
 
+    let clr = terminal::stderr_colors();
     let repo_data: Vec<_> = repos
         .iter()
         .filter(|p| p.exists())
         .filter_map(|repo_path| {
             let git = Git::new(repo_path);
-            let output = git.list_worktrees().ok()?;
+            let output = match git.list_worktrees() {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!(
+                        "{}cannot list {}: {e}{}",
+                        clr.red,
+                        repo_path.display(),
+                        clr.reset
+                    );
+                    return None;
+                }
+            };
             let worktrees = worktree::parse_porcelain(&output);
             let name = repo_basename(repo_path);
             Some((name, git, worktrees))
@@ -110,16 +122,13 @@ fn run_all(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_cwd() -> Option<std::path::PathBuf> {
+fn resolve_cwd() -> Option<PathBuf> {
     std::env::current_dir()
         .ok()
         .and_then(|p| p.canonicalize().ok())
 }
 
-fn find_current<'a>(
-    worktrees: &'a [Worktree],
-    cwd: Option<&std::path::Path>,
-) -> Option<&'a std::path::Path> {
+fn find_current<'a>(worktrees: &'a [Worktree], cwd: Option<&Path>) -> Option<&'a Path> {
     let cwd = cwd?;
     worktrees
         .iter()
@@ -136,7 +145,7 @@ fn find_current<'a>(
 fn build_json_entries(
     git: &Git,
     worktrees: &[Worktree],
-    current_path: Option<&std::path::Path>,
+    current_path: Option<&Path>,
     repo_name: Option<&str>,
 ) -> Vec<WorktreeEntry> {
     worktrees
@@ -169,7 +178,7 @@ fn build_json_entries(
 fn print_table(
     git: &Git,
     worktrees: &[Worktree],
-    current_path: Option<&std::path::Path>,
+    current_path: Option<&Path>,
     cols: usize,
     clr: &Colors,
     indent: &str,
@@ -234,7 +243,7 @@ fn print_table(
     }
 }
 
-fn repo_basename(path: &std::path::Path) -> String {
+fn repo_basename(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
