@@ -29,7 +29,7 @@ cargo clippy --all-targets -- -D warnings  # lints
 ## Style
 
 - Follow Rust 2024 conventions unless there is a strong reason not to
-- Self-documenting code — comments welcome when they explain a non-obvious *why*, but never restate what the code does
+- Self-documenting code — comments only when they explain a non-obvious *why*. Do not add comments to new code by default
 - Combinators (`map_err`, `and_then`, `is_ok_and`, `is_some_and`) over match when clearer
 - Imports grouped: std → external crates → `crate::`, separated by blank lines
 - `let`-chains for multi-condition guards
