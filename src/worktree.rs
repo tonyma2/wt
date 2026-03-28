@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
@@ -187,13 +188,13 @@ pub fn is_managed_worktree_dir(dir: &Path) -> bool {
     canonical_dir.parent() == Some(canonical_wt_base.as_path())
 }
 
-pub(crate) fn discover_repos(wt_root: &Path) -> std::collections::BTreeSet<PathBuf> {
-    let mut repos = std::collections::BTreeSet::new();
+pub(crate) fn discover_repos(wt_root: &Path) -> BTreeSet<PathBuf> {
+    let mut repos = BTreeSet::new();
     collect_repos(wt_root, &mut repos);
     repos
 }
 
-fn collect_repos(dir: &Path, repos: &mut std::collections::BTreeSet<PathBuf>) {
+fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
