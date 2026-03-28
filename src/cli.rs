@@ -38,16 +38,20 @@ pub enum Command {
     #[command(
         visible_alias = "ls",
         long_about = "List worktrees for the current repository.\n\
-            The leading '*' marks the active/current worktree.",
-        after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --json"
+            The leading '*' marks the active/current worktree.\n\
+            Use --all to list worktrees across all repositories managed under ~/.wt/worktrees/.",
+        after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --json\n  wt ls --all\n  wt ls --all --json"
     )]
     List {
         /// Repository path
-        #[arg(long)]
+        #[arg(long, conflicts_with = "all")]
         repo: Option<PathBuf>,
         /// Output as JSON array
         #[arg(long)]
         json: bool,
+        /// List worktrees across all discovered repositories
+        #[arg(long)]
+        all: bool,
     },
     /// Remove worktrees by name, ref, or path
     #[command(

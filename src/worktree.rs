@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
@@ -185,6 +186,76 @@ pub fn is_managed_worktree_dir(dir: &Path) -> bool {
     let canonical_wt_base = canonicalize_or_self(&wt_base);
     let canonical_dir = canonicalize_or_self(dir);
     canonical_dir.parent() == Some(canonical_wt_base.as_path())
+}
+
+pub(crate) fn discover_repos(wt_root: &Path) -> BTreeSet<PathBuf> {
+    let mut repos = BTreeSet::new();
+    collect_repos(wt_root, &mut repos);
+    repos
+}
+
+fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if !ft.is_dir() {
+            continue;
+        }
+
+        let path = entry.path();
+        let dot_git = path.join(".git");
+
+        if dot_git.is_file() {
+            if let Some(gitdir) = parse_gitdir(&dot_git)
+                && let Some(admin) = admin_repo_from_gitdir(&gitdir)
+            {
+                repos.insert(admin);
+            }
+        } else if !dot_git.is_dir() {
+            collect_repos(&path, repos);
+        }
+    }
+}
+
+fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
+    let worktrees_dir = gitdir.parent()?;
+    if worktrees_dir.file_name()?.to_str()? != "worktrees" {
+        return None;
+    }
+    let dot_git_dir = worktrees_dir.parent()?;
+    if dot_git_dir.file_name()?.to_str()? != ".git" {
+        return None;
+    }
+    let repo = dot_git_dir.parent()?;
+    Some(repo.to_path_buf())
+}
+
+pub(crate) fn repo_basename(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+pub(crate) fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(dot_git_file).ok()?;
+    let line = content.lines().next()?;
+    let gitdir = line.strip_prefix("gitdir: ")?.trim();
+    if gitdir.is_empty() {
+        return None;
+    }
+    let gitdir_path = PathBuf::from(gitdir);
+
+    if gitdir_path.is_absolute() {
+        Some(gitdir_path)
+    } else {
+        let parent = dot_git_file.parent()?;
+        Some(parent.join(gitdir_path))
+    }
 }
 
 #[cfg(test)]
