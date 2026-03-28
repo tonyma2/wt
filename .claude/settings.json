@@ -15,13 +15,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo fmt -- \"$f\"; fi; } 2>/dev/null || true",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' 2>/dev/null | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo fmt -- \"$f\" 2>&1; fi; } || true",
             "timeout": 30,
             "statusMessage": "Formatting..."
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo clippy --quiet -- -D warnings; fi; } 2>/dev/null || true",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' 2>/dev/null | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo clippy --quiet -- -D warnings 2>&1; fi; } || true",
             "timeout": 60,
             "statusMessage": "Linting..."
           }
