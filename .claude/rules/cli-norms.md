@@ -1,5 +1,5 @@
 ---
-paths: ["src/commands/**", "tests/**"]
+paths: ["src/cli.rs", "src/commands/**", "tests/**"]
 ---
 
 ## CLI output conventions
