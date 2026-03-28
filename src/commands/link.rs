@@ -133,7 +133,10 @@ pub(crate) fn remove_dest(dest: &Path) -> Result<(), std::io::Error> {
         .symlink_metadata()
         .is_ok_and(|m| m.file_type().is_dir())
     {
-        std::fs::remove_dir_all(dest)
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination is a directory, remove it manually",
+        ))
     } else {
         std::fs::remove_file(dest)
     }

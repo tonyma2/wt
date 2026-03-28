@@ -320,7 +320,7 @@ fn force_replaces_regular_file() {
 }
 
 #[test]
-fn force_replaces_directory_conflict() {
+fn force_refuses_directory_conflict() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let wt_path = wt_new(home.path(), &repo, "feat-forcedir");
@@ -331,22 +331,23 @@ fn force_replaces_directory_conflict() {
 
     let output = link_force(home.path(), &repo, &[".env"]);
     assert!(
-        output.status.success(),
-        "wt link --force failed: {}",
+        !output.status.success(),
+        "wt link --force should fail on directory: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("linked .env"),
-        "should report linking, got: {stderr}",
+        stderr.contains("cannot remove .env"),
+        "expected 'cannot remove' error, got: {stderr}",
     );
-
-    let link = wt_path.join(".env");
-    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-    assert_eq!(std::fs::read_to_string(&link).unwrap(), "SECRET=abc");
     assert!(
-        !link.join("old.txt").exists(),
-        "old directory contents should be removed"
+        stderr.contains("destination is a directory"),
+        "expected 'destination is a directory', got: {stderr}",
+    );
+    assert!(dest_dir.is_dir(), "directory should not have been deleted");
+    assert!(
+        dest_dir.join("old.txt").exists(),
+        "directory contents should be preserved"
     );
 }
 

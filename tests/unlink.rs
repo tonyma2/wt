@@ -179,6 +179,34 @@ fn force_removes_wrong_symlink() {
 }
 
 #[test]
+fn force_refuses_directory() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-unlink-forcedir");
+
+    let dest_dir = wt_path.join(".env");
+    std::fs::create_dir(&dest_dir).unwrap();
+    std::fs::write(dest_dir.join("old.txt"), "old").unwrap();
+
+    let output = unlink_force(home.path(), &repo, &[".env"]);
+    assert!(
+        !output.status.success(),
+        "wt unlink --force should fail on directory: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot remove .env"),
+        "expected 'cannot remove' error, got: {stderr}",
+    );
+    assert!(
+        stderr.contains("destination is a directory"),
+        "expected 'destination is a directory', got: {stderr}",
+    );
+    assert!(dest_dir.is_dir(), "directory should not have been deleted");
+}
+
+#[test]
 fn skips_missing_file() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
