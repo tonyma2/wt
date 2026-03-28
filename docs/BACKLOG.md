@@ -4,7 +4,7 @@
 
 **S** quick · **M** hours · **L** days
 
-Delete when shipped.
+Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
 
 ## Features
 
@@ -14,7 +14,3 @@ Delete when shipped.
 ## Bugs
 
 - **`prune` dirty check ignores gitignored files** (P3, S) — `is_dirty` uses `--untracked-files=normal` which doesn't see gitignored files (`.env`, `target/`, `node_modules/`). A worktree with only ignored uncommitted files appears clean. Consider adding `--ignored` to the dirty check as defense-in-depth.
-
-## Documentation
-
-- **Shell completion install instructions** (P1, S) — `wt init <shell>` works but docs don't explain where to add the `eval` line per shell, or troubleshoot if completions don't load.

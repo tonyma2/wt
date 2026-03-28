@@ -49,7 +49,7 @@ All commands accept `--repo <path>`. Run `wt <command> --help` for full options.
 Add to your shell config for tab completion and auto-cd after `new` and `switch`:
 
 ```sh
-# zsh (~/.zshrc)
+# zsh (~/.zshrc) — must be AFTER compinit
 eval "$(wt init zsh)"
 
 # bash (~/.bashrc)
@@ -58,3 +58,5 @@ eval "$(wt init bash)"
 # fish (~/.config/fish/config.fish)
 wt init fish | source
 ```
+
+**zsh**: the generated script calls `compdef`, so the `eval` line must appear _after_ `compinit`. If you use a framework (oh-my-zsh, zinit, etc.), add it after the framework is sourced. If completions don't load, run `echo $functions[_wt]` — if empty, the `eval` is too early.
