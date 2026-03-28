@@ -73,54 +73,38 @@ fn run_all(json: bool) -> Result<(), String> {
 
     let cwd = resolve_cwd();
 
+    let repo_data: Vec<_> = repos
+        .iter()
+        .filter(|p| p.exists())
+        .filter_map(|repo_path| {
+            let git = Git::new(repo_path);
+            let output = git.list_worktrees().ok()?;
+            let worktrees = worktree::parse_porcelain(&output);
+            let name = repo_basename(repo_path);
+            Some((name, git, worktrees))
+        })
+        .collect();
+
     if json {
         let mut all_entries = Vec::new();
-        for repo_path in &repos {
-            if !repo_path.exists() {
-                continue;
-            }
-            let git = Git::new(repo_path);
-            let Ok(output) = git.list_worktrees() else {
-                continue;
-            };
-            let worktrees = worktree::parse_porcelain(&output);
-            let current_path = find_current(&worktrees, cwd.as_deref());
-            let repo_name = repo_basename(repo_path);
-            all_entries.extend(build_json_entries(
-                &git,
-                &worktrees,
-                current_path,
-                Some(&repo_name),
-            ));
+        for (name, git, worktrees) in &repo_data {
+            let current_path = find_current(worktrees, cwd.as_deref());
+            all_entries.extend(build_json_entries(git, worktrees, current_path, Some(name)));
         }
         let json_str = serde_json::to_string(&all_entries)
             .map_err(|e| format!("cannot serialize json: {e}"))?;
         println!("{json_str}");
-        return Ok(());
-    }
-
-    let cols = terminal::width();
-    let clr = terminal::colors();
-    let mut printed = false;
-
-    for repo_path in &repos {
-        if !repo_path.exists() {
-            continue;
+    } else {
+        let cols = terminal::width();
+        let clr = terminal::colors();
+        for (i, (name, git, worktrees)) in repo_data.iter().enumerate() {
+            let current_path = find_current(worktrees, cwd.as_deref());
+            if i > 0 {
+                println!();
+            }
+            println!("{}{}:{}", clr.bold, name, clr.reset);
+            print_table(git, worktrees, current_path, cols, &clr, "  ");
         }
-        let git = Git::new(repo_path);
-        let Ok(output) = git.list_worktrees() else {
-            continue;
-        };
-        let worktrees = worktree::parse_porcelain(&output);
-        let current_path = find_current(&worktrees, cwd.as_deref());
-
-        if printed {
-            println!();
-        }
-        let name = repo_basename(repo_path);
-        println!("{}{}:{}", clr.bold, name, clr.reset);
-        print_table(&git, &worktrees, current_path, cols, &clr, "  ");
-        printed = true;
     }
 
     Ok(())
@@ -216,7 +200,8 @@ fn print_table(
             .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
-        let status = format_status(git, wt);
+        let (dirty, ahead, behind) = computed_status(git, wt);
+        let status = format_status(wt.bare, dirty, ahead, behind);
         let status_trunc = trunc(&status, status_w);
 
         let path_str = terminal::tilde_path(&wt.path);
@@ -268,11 +253,10 @@ fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>)
     (dirty, ahead, behind)
 }
 
-fn format_status(git: &Git, wt: &Worktree) -> String {
-    if wt.bare {
+fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
+    if bare {
         return "bare".into();
     }
-    let (dirty, ahead, behind) = computed_status(git, wt);
     let mut parts: Vec<String> = Vec::new();
     if dirty {
         parts.push("*".into());
