@@ -76,7 +76,6 @@ fn run_all(json: bool) -> Result<(), String> {
     let err_clr = terminal::stderr_colors();
     let repo_data: Vec<_> = repos
         .iter()
-        .filter(|p| p.exists())
         .filter_map(|repo_path| {
             let git = Git::new(repo_path);
             let output = match git.list_worktrees() {
