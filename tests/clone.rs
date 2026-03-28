@@ -51,8 +51,6 @@ fn find_repo_under(base: &Path) -> std::path::PathBuf {
     children[0].clone()
 }
 
-// --- Happy path ---
-
 #[test]
 fn clone_creates_worktree_and_bare_repo() {
     let (home, origin) = setup_origin();
@@ -99,8 +97,6 @@ fn clone_worktree_is_on_default_branch() {
     assert_eq!(branch.trim(), "main");
 }
 
-// --- Fetch refspec ---
-
 #[test]
 fn clone_fixes_fetch_refspec() {
     let (home, origin) = setup_origin();
@@ -114,8 +110,6 @@ fn clone_fixes_fetch_refspec() {
         assert_git_stdout_success(&bare_repo, &["config", "--get", "remote.origin.fetch"]);
     assert_eq!(refspec.trim(), "+refs/heads/*:refs/remotes/origin/*");
 }
-
-// --- Remote tracking branches ---
 
 #[test]
 fn clone_has_remote_tracking_branches() {
@@ -140,8 +134,6 @@ fn clone_has_remote_tracking_branches() {
         "should have origin/feature"
     );
 }
-
-// --- Error cases ---
 
 #[test]
 fn clone_invalid_url_fails_cleanly() {
@@ -176,8 +168,6 @@ fn clone_empty_url_fails() {
         "stderr: {stderr}"
     );
 }
-
-// --- Interoperability with other commands ---
 
 #[test]
 fn wt_new_works_from_cloned_worktree() {
@@ -246,7 +236,6 @@ fn prune_discovers_bare_repo_worktrees() {
     assert!(output.status.success());
     let wt_path = parse_wt_new_path(&output);
 
-    // Create a second worktree, then delete its directory to make it stale
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["new", "-c", "stale-branch", "--repo"])
             .arg(&wt_path);
@@ -289,8 +278,6 @@ fn rm_works_from_cloned_worktree() {
     );
 }
 
-// --- Link with bare repo ---
-
 #[test]
 fn link_skips_bare_entry_as_primary() {
     let (home, origin) = setup_origin();
@@ -300,10 +287,8 @@ fn link_skips_bare_entry_as_primary() {
     assert!(output.status.success());
     let primary_wt = parse_wt_new_path(&output);
 
-    // Create .env in the primary worktree
     std::fs::write(primary_wt.join(".env"), "SECRET=1").unwrap();
 
-    // Create a second worktree
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["new", "-c", "feature", "--repo"])
             .arg(&primary_wt);
@@ -311,7 +296,6 @@ fn link_skips_bare_entry_as_primary() {
     assert!(output.status.success());
     let feature_wt = parse_wt_new_path(&output);
 
-    // Link .env
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["link", ".env", "--repo"]).arg(&primary_wt);
     });
@@ -321,14 +305,11 @@ fn link_skips_bare_entry_as_primary() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // Verify the symlink in the feature worktree points to primary, not bare
     let link_dest = feature_wt.join(".env");
     assert!(link_dest.exists(), ".env should exist in feature worktree");
     let target = std::fs::read_link(&link_dest).unwrap();
     assert_eq!(canonical(&target), canonical(&primary_wt.join(".env")),);
 }
-
-// --- No cd hint when stdout is piped ---
 
 #[test]
 fn no_cd_hint_when_stdout_not_tty() {
@@ -343,8 +324,6 @@ fn no_cd_hint_when_stdout_not_tty() {
         "should not print cd hint when stdout piped"
     );
 }
-
-// --- Repo name extraction ---
 
 #[test]
 fn clone_uses_repo_name_for_directory() {

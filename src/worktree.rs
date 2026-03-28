@@ -255,11 +255,9 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
     }
     let parent = worktrees_dir.parent()?;
     if parent.file_name()?.to_str()? == ".git" {
-        // Non-bare: <repo>/.git/worktrees/<name>
         let repo = parent.parent()?;
         Some(repo.to_path_buf())
     } else if parent.join("HEAD").exists() {
-        // Bare: <bare-repo>/worktrees/<name>
         Some(parent.to_path_buf())
     } else {
         None
