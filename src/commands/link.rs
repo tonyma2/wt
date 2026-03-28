@@ -82,6 +82,10 @@ pub fn auto_link(repo_root: &Path, worktree_path: &Path, primary_path: &Path) {
     }
 
     for file in &files {
+        if let Err(e) = validate_path(file) {
+            eprintln!("cannot auto-link {file}: {e}");
+            continue;
+        }
         let source = primary_path.join(file);
         if !source.exists() {
             continue;

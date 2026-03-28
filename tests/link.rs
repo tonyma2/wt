@@ -494,3 +494,51 @@ fn unlink_removes_from_config() {
         );
     }
 }
+
+fn assert_auto_link_skips_invalid_path(bad_path: &str, branch: &str, expected_err: &str) {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let _wt1 = wt_new(home.path(), &repo, "feat-first");
+
+    let link_out = wt_link(home.path(), &repo, &[".env"]);
+    assert!(link_out.status.success());
+
+    let config_path = home.path().join(".wt").join("config");
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let content = content.replace(r#"[".env"]"#, &format!(r#"[".env", "{bad_path}"]"#));
+    std::fs::write(&config_path, content).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["new", "-c", branch, "--repo"]).arg(&repo);
+    });
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(expected_err),
+        "expected '{expected_err}' on stderr, got: {stderr}",
+    );
+
+    let wt_path = parse_wt_new_path(&output);
+    assert!(
+        wt_path
+            .join(".env")
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false),
+        ".env should still be auto-linked",
+    );
+}
+
+#[test]
+fn auto_link_skips_dotdot_path() {
+    assert_auto_link_skips_invalid_path(
+        "../escape",
+        "feat-dotdot-auto",
+        "path must not contain '..'",
+    );
+}
+
+#[test]
+fn auto_link_skips_absolute_path() {
+    assert_auto_link_skips_invalid_path("/etc/passwd", "feat-abs-auto", "path must be relative");
+}
