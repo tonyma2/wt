@@ -47,7 +47,7 @@ Exceptions and non-obvious behaviors:
 - **rm** — `resolve_target()` has a three-stage fallback: branch → ref-to-SHA → filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
 - **prune** — global mode (no `--repo`) uses a completely different data flow: walks `~/.wt/worktrees/` recursively, parses `.git` files to discover admin repos, then prunes each
 - **switch** — auto-prunes stale worktree metadata when it encounters a prunable match before creating
-- **init** — patches clap_complete's generated script via string replacement to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base` args in `cli.rs` — each must be unique per subcommand. Guarded by the `zsh_completion_is_dynamic` unit test (see [decisions.md](decisions.md))
+- **init** — patches clap_complete's generated script via string replacement to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base`/`files` args in `cli.rs` — each must be unique per subcommand. Guarded by the `zsh_completion_is_dynamic` and `zsh_link_unlink_completions_are_dynamic` unit tests (see [decisions.md](decisions.md))
 
 ## Filesystem Layout
 

@@ -4,7 +4,29 @@
       "Bash(cargo build *)",
       "Bash(cargo test *)",
       "Bash(cargo fmt *)",
-      "Bash(cargo clippy *)"
+      "Bash(cargo clippy *)",
+      "Bash(cargo check *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' 2>/dev/null | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo fmt -- \"$f\" 2>&1; fi; }",
+            "timeout": 30,
+            "statusMessage": "Formatting..."
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' 2>/dev/null | { read -r f; if [[ \"$f\" == *.rs ]]; then cargo clippy --quiet -- -D warnings 2>&1; fi; }",
+            "timeout": 60,
+            "statusMessage": "Linting..."
+          }
+        ]
+      }
     ]
   }
 }

@@ -35,19 +35,6 @@ cargo clippy --all-targets -- -D warnings  # lints
 - Bool struct fields have no `is_` prefix — `bare`, `locked`, `prunable`
 - Canonicalize paths before using as map keys or persisting to config (`/tmp` → `/private/tmp` on macOS)
 
-## CLI Norms
-
-- **stdout**: data only — must be parseable by scripts
-- **stderr**: lowercase message (no period, no tool-name prefix)
-- **Compound clauses**: joined with `,` — `"cannot X, skipping Y"`
-- **Errors**: lowercase, no period, "cannot" not "failed to", actionable ("use --force")
-- **Exit codes**: 0 success, 1 error, 2 usage (clap)
-
 ## Tests
 
 Every new feature, bug fix, or behavioral change MUST include tests.
-
-- **What to test**: observable behavior — exit codes, stdout/stderr content, filesystem side effects. Cover the happy path and likely failure modes (missing args, conflicting state, dirty worktree)
-- **Integration tests** (`tests/`): one file per subcommand, run the compiled binary against real temp git repos. Setup, runners, and assertions are in [`tests/common/mod.rs`](tests/common/mod.rs)
-- **Unit tests**: inline under `#[cfg(test)] mod tests` for pure parsing/logic
-- **No mocking**: tests use real git repos in temp directories. Do not introduce mock layers (see [decisions.md](docs/decisions.md))
