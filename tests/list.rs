@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Output;
 
 use serde_json::Value;
+use tempfile::TempDir;
 
 pub mod common;
 
@@ -373,6 +374,196 @@ fn paths_use_tilde_for_home_directory() {
         row.contains("~/.wt/"),
         "linked worktree path should be tilde-prefixed, got: {row}",
     );
+}
+
+#[test]
+fn list_all_discovers_multiple_repos() {
+    let home = TempDir::new().unwrap();
+
+    let repo_a = home.path().join("repo-a");
+    std::fs::create_dir(&repo_a).unwrap();
+    init_repo(&repo_a);
+
+    let repo_b = home.path().join("repo-b");
+    std::fs::create_dir(&repo_b).unwrap();
+    init_repo(&repo_b);
+
+    wt_new(home.path(), &repo_a, "feat-a");
+    wt_new(home.path(), &repo_b, "feat-b");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all"]);
+        cmd.env("COLUMNS", "200");
+    });
+    assert!(
+        output.status.success(),
+        "wt list --all failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("repo-a:"),
+        "should contain repo-a header, got:\n{stdout}",
+    );
+    assert!(
+        stdout.contains("repo-b:"),
+        "should contain repo-b header, got:\n{stdout}",
+    );
+    assert!(
+        stdout.contains("feat-a"),
+        "should contain feat-a branch, got:\n{stdout}",
+    );
+    assert!(
+        stdout.contains("feat-b"),
+        "should contain feat-b branch, got:\n{stdout}",
+    );
+    // Each repo group should have its own BRANCH header
+    assert_eq!(
+        stdout.matches("BRANCH").count(),
+        2,
+        "each repo group should have a header row, got:\n{stdout}",
+    );
+}
+
+#[test]
+fn list_all_json_includes_repo_field() {
+    let home = TempDir::new().unwrap();
+
+    let repo_a = home.path().join("repo-a");
+    std::fs::create_dir(&repo_a).unwrap();
+    init_repo(&repo_a);
+
+    let repo_b = home.path().join("repo-b");
+    std::fs::create_dir(&repo_b).unwrap();
+    init_repo(&repo_b);
+
+    wt_new(home.path(), &repo_a, "feat-a");
+    wt_new(home.path(), &repo_b, "feat-b");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all", "--json"]);
+    });
+    assert!(
+        output.status.success(),
+        "wt list --all --json failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let entries: Vec<Value> =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid json: {e}\n{stdout}"));
+
+    // Should have entries from both repos (2 per repo: main + feature branch)
+    assert!(
+        entries.len() >= 4,
+        "expected at least 4 entries, got {}:\n{stdout}",
+        entries.len(),
+    );
+
+    // Every entry must have a "repo" field
+    for entry in &entries {
+        assert!(
+            entry["repo"].is_string(),
+            "every entry should have a repo field, got: {entry}",
+        );
+    }
+
+    let repos: std::collections::BTreeSet<&str> =
+        entries.iter().filter_map(|e| e["repo"].as_str()).collect();
+    assert!(
+        repos.contains("repo-a") && repos.contains("repo-b"),
+        "should have entries from both repos, got: {repos:?}",
+    );
+}
+
+#[test]
+fn list_all_marks_current_worktree() {
+    let home = TempDir::new().unwrap();
+
+    let repo_a = home.path().join("repo-a");
+    std::fs::create_dir(&repo_a).unwrap();
+    init_repo(&repo_a);
+
+    let repo_b = home.path().join("repo-b");
+    std::fs::create_dir(&repo_b).unwrap();
+    init_repo(&repo_b);
+
+    let wt_a = wt_new(home.path(), &repo_a, "feat-a");
+    wt_new(home.path(), &repo_b, "feat-b");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all"]);
+        cmd.env("COLUMNS", "200");
+        cmd.current_dir(&wt_a);
+    });
+    assert!(
+        output.status.success(),
+        "wt list --all failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let current_rows: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("* ") || line.starts_with("  * "))
+        .collect();
+    assert_eq!(
+        current_rows.len(),
+        1,
+        "exactly one row should be marked current, got: {current_rows:?}\n\nfull output:\n{stdout}",
+    );
+    assert!(
+        current_rows[0].contains("feat-a"),
+        "feat-a should be the current worktree, got: {}",
+        current_rows[0],
+    );
+}
+
+#[test]
+fn list_all_and_repo_are_mutually_exclusive() {
+    let (home, repo) = setup();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 2);
+}
+
+#[test]
+fn list_all_empty_when_no_managed_worktrees() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all"]);
+    });
+    assert!(output.status.success());
+    assert_stdout_empty(&output);
+}
+
+#[test]
+fn list_all_json_empty_when_no_managed_worktrees() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all", "--json"]);
+    });
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "[]");
+}
+
+#[test]
+fn list_single_repo_json_has_no_repo_field() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "no-repo-field");
+
+    let entries = run_list_json(home.path(), &repo, None);
+    for entry in &entries {
+        assert!(
+            entry.get("repo").is_none(),
+            "single-repo JSON should not have repo field, got: {entry}",
+        );
+    }
 }
 
 #[test]

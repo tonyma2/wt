@@ -40,7 +40,7 @@ pub fn run(
     }
     let wt_root = worktree::canonicalize_or_self(&wt_root);
 
-    let repos = discover_repos(&wt_root);
+    let repos = worktree::discover_repos(&wt_root);
     let mut errors = 0usize;
     let mut printed = false;
     for repo_path in &repos {
@@ -149,53 +149,6 @@ pub fn run(
     Ok(())
 }
 
-fn discover_repos(wt_root: &Path) -> BTreeSet<PathBuf> {
-    let mut repos = BTreeSet::new();
-    collect_repos(wt_root, &mut repos);
-    repos
-}
-
-fn collect_repos(dir: &Path, repos: &mut BTreeSet<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let Ok(ft) = entry.file_type() else {
-            continue;
-        };
-        if !ft.is_dir() {
-            continue;
-        }
-
-        let path = entry.path();
-        let dot_git = path.join(".git");
-
-        if dot_git.is_file() {
-            if let Some(gitdir) = parse_gitdir(&dot_git)
-                && let Some(admin) = admin_repo_from_gitdir(&gitdir)
-            {
-                repos.insert(admin);
-            }
-        } else if !dot_git.is_dir() {
-            collect_repos(&path, repos);
-        }
-    }
-}
-
-fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
-    let worktrees_dir = gitdir.parent()?;
-    if worktrees_dir.file_name()?.to_str()? != "worktrees" {
-        return None;
-    }
-    let dot_git_dir = worktrees_dir.parent()?;
-    if dot_git_dir.file_name()?.to_str()? != ".git" {
-        return None;
-    }
-    let repo = dot_git_dir.parent()?;
-    Some(repo.to_path_buf())
-}
-
 fn find_orphans(wt_root: &Path) -> Vec<PathBuf> {
     let mut orphans = Vec::new();
     scan_dir(wt_root, wt_root, &mut orphans);
@@ -231,7 +184,7 @@ fn scan_dir(dir: &Path, wt_root: &Path, orphans: &mut Vec<PathBuf>) {
         let dot_git = path.join(".git");
 
         if dot_git.is_file() {
-            if let Some(gitdir) = parse_gitdir(&dot_git) {
+            if let Some(gitdir) = worktree::parse_gitdir(&dot_git) {
                 if !gitdir.exists() {
                     orphans.push(path);
                 }
@@ -250,23 +203,6 @@ fn scan_dir(dir: &Path, wt_root: &Path, orphans: &mut Vec<PathBuf>) {
                 scan_dir(&path, wt_root, orphans);
             }
         }
-    }
-}
-
-fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
-    let content = fs::read_to_string(dot_git_file).ok()?;
-    let line = content.lines().next()?;
-    let gitdir = line.strip_prefix("gitdir: ")?.trim();
-    if gitdir.is_empty() {
-        return None;
-    }
-    let gitdir_path = PathBuf::from(gitdir);
-
-    if gitdir_path.is_absolute() {
-        Some(gitdir_path)
-    } else {
-        let parent = dot_git_file.parent()?;
-        Some(parent.join(gitdir_path))
     }
 }
 
