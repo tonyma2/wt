@@ -336,3 +336,63 @@ fn clone_uses_repo_name_for_directory() {
     let dir_name = wt_path.file_name().unwrap().to_string_lossy();
     assert_eq!(dir_name, "origin", "worktree dir should match repo name");
 }
+
+#[test]
+fn clone_master_fallback() {
+    let home = tempfile::TempDir::new().unwrap();
+    let origin = home.path().join("origin");
+    std::fs::create_dir(&origin).unwrap();
+    assert_git_success(&origin, &["init", "-b", "master"]);
+    assert_git_success(&origin, &["config", "user.name", "Test"]);
+    assert_git_success(&origin, &["config", "user.email", "t@t"]);
+    assert_git_success(&origin, &["commit", "--allow-empty", "-m", "init"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    assert!(
+        output.status.success(),
+        "wt clone failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let wt_path = parse_wt_new_path(&output);
+
+    let branch = assert_git_stdout_success(&wt_path, &["branch", "--show-current"]);
+    assert_eq!(branch.trim(), "master");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("checked out 'master'"));
+}
+
+#[test]
+fn clone_empty_repo_fails_and_cleans_up() {
+    let home = tempfile::TempDir::new().unwrap();
+    let origin = home.path().join("empty-origin");
+    std::fs::create_dir(&origin).unwrap();
+    // Create a repo with no commits — bare clone will succeed but
+    // base_ref() will fail because there are no branches
+    assert_git_success(&origin, &["init", "-b", "main"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    assert_exit_code(&output, 1);
+    assert_stdout_empty(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot determine default branch"),
+        "stderr: {stderr}"
+    );
+
+    // bare repo should be cleaned up after failure
+    assert!(
+        find_subdirs(&repos_dir(home.path())).is_empty() || !repos_dir(home.path()).exists(),
+        "bare repo should be cleaned up"
+    );
+    assert!(
+        find_subdirs(&worktrees_dir(home.path())).is_empty()
+            || !worktrees_dir(home.path()).exists(),
+        "no worktree dirs should exist"
+    );
+}
