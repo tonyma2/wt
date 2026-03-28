@@ -129,7 +129,7 @@ fn unique_dest(wt_base: &Path, repo_name: &str) -> Result<PathBuf, String> {
     Err("cannot generate unique worktree path".into())
 }
 
-fn parse_repo_name(url: &str) -> Option<&str> {
+pub(crate) fn parse_repo_name(url: &str) -> Option<&str> {
     let url = url.trim_end_matches('/');
     url.strip_suffix(".git")
         .unwrap_or(url)
@@ -163,6 +163,28 @@ pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
     Ok(Path::new(&home).join(".wt").join("worktrees"))
+}
+
+pub(crate) fn repos_root() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
+    Ok(Path::new(&home).join(".wt").join("repos"))
+}
+
+pub fn create_bare_dest(repo_name: &str) -> Result<PathBuf, String> {
+    let base = repos_root()?;
+    let dest = unique_dest(&base, repo_name)?;
+    std::fs::create_dir_all(&dest)
+        .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
+    Ok(dest)
+}
+
+pub fn create_worktree_dest(repo_name: &str) -> Result<PathBuf, String> {
+    let base = worktrees_root()?;
+    let dest = unique_dest(&base, repo_name)?;
+    std::fs::create_dir_all(&dest)
+        .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
+    Ok(dest)
 }
 
 pub(crate) fn canonicalize_or_self(path: &Path) -> PathBuf {
@@ -227,12 +249,17 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
     if worktrees_dir.file_name()?.to_str()? != "worktrees" {
         return None;
     }
-    let dot_git_dir = worktrees_dir.parent()?;
-    if dot_git_dir.file_name()?.to_str()? != ".git" {
-        return None;
+    let parent = worktrees_dir.parent()?;
+    if parent.file_name()?.to_str()? == ".git" {
+        // Non-bare: <repo>/.git/worktrees/<name>
+        let repo = parent.parent()?;
+        Some(repo.to_path_buf())
+    } else if parent.join("HEAD").exists() {
+        // Bare: <bare-repo>/worktrees/<name>
+        Some(parent.to_path_buf())
+    } else {
+        None
     }
-    let repo = dot_git_dir.parent()?;
-    Some(repo.to_path_buf())
 }
 
 pub(crate) fn repo_basename(path: &Path) -> String {
@@ -402,5 +429,32 @@ prunable gitdir file points to non-existent location
         let wts = parse_porcelain(input);
         assert_eq!(wts.len(), 1);
         assert!(wts[0].prunable);
+    }
+
+    #[test]
+    fn admin_repo_from_gitdir_non_bare() {
+        let gitdir = PathBuf::from("/home/user/project/.git/worktrees/feat-branch");
+        assert_eq!(
+            admin_repo_from_gitdir(&gitdir),
+            Some(PathBuf::from("/home/user/project"))
+        );
+    }
+
+    #[test]
+    fn admin_repo_from_gitdir_bare() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = tmp.path().join("myrepo");
+        std::fs::create_dir(&bare).unwrap();
+        std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let wt_gitdir = bare.join("worktrees").join("feat-branch");
+        std::fs::create_dir_all(&wt_gitdir).unwrap();
+
+        assert_eq!(admin_repo_from_gitdir(&wt_gitdir), Some(bare));
+    }
+
+    #[test]
+    fn admin_repo_from_gitdir_unknown_layout() {
+        let gitdir = PathBuf::from("/some/random/worktrees/thing");
+        assert_eq!(admin_repo_from_gitdir(&gitdir), None);
     }
 }

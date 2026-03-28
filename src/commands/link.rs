@@ -23,7 +23,12 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    let primary = worktrees.first().ok_or("no worktrees found")?;
+    let canonical_root = worktree::canonicalize_or_self(&repo_root);
+    let primary = worktrees
+        .iter()
+        .find(|wt| worktree::canonicalize_or_self(&wt.path) == canonical_root)
+        .or_else(|| worktrees.iter().find(|wt| !wt.bare))
+        .ok_or("no worktrees found")?;
     let primary_path = &primary.path;
 
     for file in files {
@@ -38,7 +43,10 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
         eprintln!("cannot save link config: {e}");
     }
 
-    let linked: Vec<_> = worktrees.iter().skip(1).collect();
+    let linked: Vec<_> = worktrees
+        .iter()
+        .filter(|wt| !wt.bare && wt.path != primary.path)
+        .collect();
     if linked.is_empty() {
         eprintln!("no linked worktrees");
         return Ok(());

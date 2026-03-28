@@ -175,6 +175,18 @@ pub enum Command {
         #[arg(long)]
         list: bool,
     },
+    /// Clone a repository and create the first worktree
+    #[command(
+        visible_alias = "cl",
+        long_about = "Clone a repository and create the first worktree.\n\
+            The repository is stored as a bare clone under ~/.wt/repos/.\n\
+            A worktree for the default branch is created under ~/.wt/worktrees/.",
+        after_help = "Examples:\n  wt clone git@github.com:org/repo.git\n  wt clone https://github.com/org/repo"
+    )]
+    Clone {
+        /// Repository URL
+        url: String,
+    },
     /// Remove linked files from linked worktrees
     #[command(
         long_about = "Remove previously linked files from all linked worktrees.\n\

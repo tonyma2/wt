@@ -16,6 +16,7 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match &cli.command {
+        Command::Clone { url } => commands::clone::run(url),
         Command::Init { shell } => commands::init::run(*shell),
         Command::New {
             name,

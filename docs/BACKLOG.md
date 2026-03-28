@@ -13,4 +13,4 @@ Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
 
 ## Features
 
-- **`wt clone`** (P1, L) — `wt clone <url>` → bare clone + first worktree + correct fetch refspec. One opinionated flow, don't replicate `git clone`'s flag surface. Kills onboarding friction.
+- **TUI repo/worktree picker** (P2, M) — interactive picker to jump between repos and worktrees across all managed projects. Complements `wt clone` by giving users a way back into bare-cloned repos.
