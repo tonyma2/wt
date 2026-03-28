@@ -112,7 +112,7 @@ pub fn branch_checked_out_elsewhere(
         .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path && wt.live())
 }
 
-fn random_id() -> Result<String, String> {
+pub(crate) fn random_id() -> Result<String, String> {
     let mut buf = [0u8; 3];
     getrandom::fill(&mut buf).map_err(|e| format!("cannot generate random id: {e}"))?;
     Ok(format!("{:02x}{:02x}{:02x}", buf[0], buf[1], buf[2]))

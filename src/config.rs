@@ -27,18 +27,23 @@ pub fn load() -> Result<Config, String> {
 }
 
 fn save(config: &Config) -> Result<(), String> {
-    let path = config_path()?;
+    save_to(config, &config_path()?)
+}
+
+fn save_to(config: &Config, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let content =
         toml::to_string_pretty(config).map_err(|e| format!("cannot serialize config: {e}"))?;
-    // Write to a sibling tmp file then rename for atomicity: a crash between
-    // truncation and a completed write would otherwise corrupt the config.
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, content).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    let id = crate::worktree::random_id()?;
+    let tmp = path.with_extension(format!("tmp.{id}"));
+    std::fs::write(&tmp, &content).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot write {}: {e}", path.display())
+    })
 }
 
 pub(crate) fn repo_key(repo: &Path) -> String {
@@ -111,5 +116,60 @@ mod tests {
             deserialized.links.get("/tmp/repo"),
             Some(&vec![".env".to_string()])
         );
+    }
+
+    #[test]
+    fn save_creates_config_and_cleans_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("config");
+
+        let mut config = Config::default();
+        config.links.insert("/tmp/repo".into(), vec![".env".into()]);
+        save_to(&config, &config_file).unwrap();
+
+        assert!(config_file.exists());
+        let content = std::fs::read_to_string(&config_file).unwrap();
+        assert!(content.contains(".env"));
+
+        let temps: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("config.tmp."))
+            .collect();
+        assert!(temps.is_empty(), "no temp files should remain: {temps:?}");
+    }
+
+    #[test]
+    fn concurrent_saves_produce_valid_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("config");
+
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let path = config_file.clone();
+                std::thread::spawn(move || {
+                    let mut config = Config::default();
+                    config
+                        .links
+                        .insert(format!("/repo/{i}"), vec![format!("file-{i}")]);
+                    save_to(&config, &path).unwrap();
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(&config_file).unwrap();
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.links.len(), 1, "last writer wins: exactly one entry");
+
+        let temps: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("config.tmp."))
+            .collect();
+        assert!(temps.is_empty(), "no temp files should remain: {temps:?}");
     }
 }
