@@ -32,10 +32,13 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, all: bool) -> Res
         validate_path(file)?;
     }
 
-    let primary = worktrees.first().ok_or("no worktrees found")?;
+    let primary = worktree::find_primary(&worktrees, &repo_root).ok_or("no worktrees found")?;
     let primary_path = &primary.path;
 
-    let linked: Vec<_> = worktrees.iter().skip(1).collect();
+    let linked: Vec<_> = worktrees
+        .iter()
+        .filter(|wt| !wt.bare && wt.path != primary.path)
+        .collect();
     if linked.is_empty() {
         eprintln!("no linked worktrees");
         return Ok(());

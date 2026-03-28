@@ -6,6 +6,7 @@ Git worktree manager.
 
 ## Features
 
+- **Clone** — `wt clone <url>` clones a repository and creates the first worktree, ready to go
 - **Create and switch** — check out branches into isolated worktrees with `wt new`, or use `wt switch` to find an existing worktree or create one
 - **Clean up** — `wt prune` removes worktrees whose branches are merged or whose upstream is gone
 - **Link shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
@@ -21,6 +22,7 @@ cargo install --path .
 ## Usage
 
 ```sh
+wt clone git@github.com:org/repo     # clone and create first worktree
 wt new my-feature                    # check out existing branch
 wt new -c my-feature                 # create new branch from HEAD
 wt new -c my-feature develop         # create from base
@@ -40,13 +42,13 @@ wt unlink .env                       # remove symlinks
 wt unlink --all                      # remove all linked files
 ```
 
-Short aliases: `n`, `s`, `ls`, `rm`, `p`, `ln`.
+Short aliases: `cl`, `n`, `s`, `ls`, `rm`, `p`, `ln`.
 
 All commands accept `--repo <path>`. Run `wt <command> --help` for full options.
 
 ## Shell Integration
 
-Add to your shell config for tab completion and auto-cd after `new` and `switch`:
+Add to your shell config for tab completion and auto-cd after `clone`, `new`, and `switch`:
 
 ```sh
 # zsh (~/.zshrc) — must be AFTER compinit

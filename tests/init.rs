@@ -54,7 +54,7 @@ fn zsh_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
-    assert!(stdout.contains("new|n|switch|s)"));
+    assert!(stdout.contains("new|n|switch|s|clone|cl)"));
     assert!(stdout.contains(r#"cd "$out""#));
 }
 
@@ -82,7 +82,7 @@ fn bash_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
-    assert!(stdout.contains("new|n|switch|s)"));
+    assert!(stdout.contains("new|n|switch|s|clone|cl)"));
     assert!(stdout.contains(r#"cd "$out""#));
 }
 

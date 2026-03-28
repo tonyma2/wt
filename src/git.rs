@@ -356,6 +356,48 @@ impl Git {
         (!remote.is_empty()).then_some(remote)
     }
 
+    pub fn bare_clone(url: &str, dest: &Path) -> Result<(), String> {
+        let output = Command::new("git")
+            .args(["clone", "--bare", "--quiet", url])
+            .arg(dest)
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git clone: {e}"))?;
+        if !output.status.success() {
+            return Err(git_err("cannot clone repository", &output));
+        }
+        Ok(())
+    }
+
+    pub fn set_config(&self, key: &str, value: &str) -> Result<(), String> {
+        let output = self
+            .cmd()
+            .args(["config", key, value])
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git config: {e}"))?;
+        if !output.status.success() {
+            return Err(git_err(format!("cannot set config '{key}'"), &output));
+        }
+        Ok(())
+    }
+
+    pub fn set_remote_head(&self, remote: &str) -> Result<(), String> {
+        let output = self
+            .cmd()
+            .args(["remote", "set-head", remote, "--auto"])
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git remote: {e}"))?;
+        if !output.status.success() {
+            return Err(git_err(
+                format!("cannot detect default branch from '{remote}'"),
+                &output,
+            ));
+        }
+        Ok(())
+    }
+
     fn upstream_for(&self, refspec: &str) -> Option<String> {
         let output = self
             .cmd()

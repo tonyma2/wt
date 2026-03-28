@@ -53,6 +53,16 @@ After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hi
 
 `wt init <shell>` outputs a wrapper that intercepts `new`/`n`/`switch`/`s` to auto-cd. `path` is excluded — it stays a pure query for scripting (`$EDITOR "$(command wt path ...)"`). All other subcommands pass through to the binary unchanged.
 
+## Do not store bare repos in the current directory
+
+`wt clone` stores bare repos under `~/.wt/repos/<id>/<name>/`, not in the current directory like `git clone`. Users never interact with the bare repo directly — they work inside worktrees. Hiding the bare repo avoids the "where did I put that repo" problem and keeps the filesystem clean. The random id prevents collisions when cloning repos with the same name from different orgs.
+
+## Do not use `worktrees.first()` as primary worktree
+
+`link`, `unlink`, and `switch` need the "primary" worktree (the source for symlinks). The primary is identified by matching `repo_root` (from `find_repo`) against worktree paths, with canonical path comparison. Fallback: first non-bare entry. This is deterministic because `repo_root` is always the worktree you're operating from.
+
+Previous approaches failed: `.first()` returns the bare entry for bare repos. `.find(|wt| !wt.bare)` is non-deterministic because `git worktree list` orders linked worktrees by `readdir()` over the internal `worktrees/` directory, which varies by filesystem. Similarly, `skip(1)` to get "linked" worktrees is wrong for bare repos — filter by path instead.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.

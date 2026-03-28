@@ -96,8 +96,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
         eprintln!("creating branch '{name}'");
     }
 
-    let primary_path = worktrees
-        .first()
+    let primary_path = worktree::find_primary(&worktrees, &repo_root)
         .map_or(repo_root.as_path(), |wt| wt.path.as_path());
     link::auto_link(&repo_root, &dest, primary_path);
 

@@ -1,6 +1,6 @@
 # Architecture
 
-`wt` is a single-binary CLI that manages git worktrees under `~/.wt/worktrees/<id>/<repo>/`.
+`wt` is a single-binary CLI that manages git worktrees under `~/.wt/worktrees/<id>/<repo>/`. It can also clone repositories as bare repos under `~/.wt/repos/<id>/<repo>/`.
 
 ## Module Graph
 
@@ -9,6 +9,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 ├── cli.rs              Clap derive structs (Cli, Command). Only file with /// doc comments
 ├── commands.rs         Declares all subcommand modules (pub mod)
 ├── commands/
+│   ├── clone.rs        Bare-clone a repo + create first worktree + fix fetch refspec
 │   ├── new.rs          Create worktree (checkout existing ref or create branch)
 │   ├── list.rs         Tabular worktree listing with terminal-aware column sizing
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
@@ -43,6 +44,7 @@ Git::find_repo(repo_arg)  →  Git::new(repo_root)  →  git.list_worktrees()
 ```
 
 Exceptions and non-obvious behaviors:
+- **clone** — never calls `find_repo()`; creates its own bare repo, fixes the fetch refspec (`+refs/heads/*:refs/remotes/origin/*`), fetches, then creates the first worktree. Bare repo stored under `~/.wt/repos/`
 - **new** — never lists worktrees; builds a destination path directly and calls `add_worktree()` or `checkout_worktree()`
 - **rm** — `resolve_target()` has a three-stage fallback: branch → ref-to-SHA → filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
 - **prune** — global mode (no `--repo`) uses a completely different data flow: walks `~/.wt/worktrees/` recursively, parses `.git` files to discover admin repos, then prunes each
@@ -54,9 +56,12 @@ Exceptions and non-obvious behaviors:
 ```
 ~/.wt/
 ├── config                  TOML config (auto-link file list per repo)
+├── repos/                  Bare repos created by `wt clone`
+│   └── <random-id>/
+│       └── <repo-name>/    Bare git repository
 └── worktrees/
     └── <random-id>/        6-char hex (e.g. a3f2b1)
         └── <repo-name>/    Worktree directory (created by git)
 ```
 
-The admin (primary) repo lives wherever the user cloned it. Worktree directories contain a `.git` file (not a directory) pointing back to `.git/worktrees/<name>` in the admin repo.
+For repos added via `git clone` (the traditional workflow), the admin repo lives wherever the user cloned it. For repos added via `wt clone`, the admin repo is a bare clone under `~/.wt/repos/`. In both cases, worktree directories contain a `.git` file (not a directory) pointing back to `worktrees/<name>` in the admin repo.

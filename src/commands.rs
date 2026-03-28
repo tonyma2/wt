@@ -1,3 +1,4 @@
+pub mod clone;
 pub mod init;
 pub mod link;
 pub mod list;
