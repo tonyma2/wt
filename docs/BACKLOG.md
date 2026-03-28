@@ -6,10 +6,6 @@
 
 Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
 
-## Bugs
-
-- **`find_by_path` skips canonicalization** (P2, S) — `worktree::find_by_path` and `branch_checked_out_elsewhere` compare `wt.path` (from git porcelain, not canonical) against caller-supplied paths (often canonical). Fails when symlinks are involved (e.g. `/tmp` → `/private/tmp`). Fix: canonicalize both sides in `find_by_path`.
-
 ## Features
 
 - **TUI repo/worktree picker** (P2, M) — interactive picker to jump between repos and worktrees across all managed projects. Complements `wt clone` by giving users a way back into bare-cloned repos.

@@ -93,7 +93,10 @@ pub fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Wo
 }
 
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
-    worktrees.iter().find(|wt| wt.path == path)
+    let canonical = canonicalize_or_self(path);
+    worktrees
+        .iter()
+        .find(|wt| canonicalize_or_self(&wt.path) == canonical)
 }
 
 pub fn is_cwd_inside(path: &Path, cwd: Option<&Path>) -> bool {
@@ -107,9 +110,12 @@ pub fn branch_checked_out_elsewhere(
     branch: &str,
     exclude_path: &Path,
 ) -> bool {
-    worktrees
-        .iter()
-        .any(|wt| wt.branch.as_deref() == Some(branch) && wt.path != exclude_path && wt.live())
+    let canonical = canonicalize_or_self(exclude_path);
+    worktrees.iter().any(|wt| {
+        wt.branch.as_deref() == Some(branch)
+            && canonicalize_or_self(&wt.path) != canonical
+            && wt.live()
+    })
 }
 
 pub(crate) fn random_id() -> Result<String, String> {
@@ -458,5 +464,66 @@ prunable gitdir file points to non-existent location
     fn admin_repo_from_gitdir_unknown_layout() {
         let gitdir = PathBuf::from("/some/random/worktrees/thing");
         assert_eq!(admin_repo_from_gitdir(&gitdir), None);
+    }
+
+    fn make_worktree(path: PathBuf, branch: Option<&str>) -> Worktree {
+        Worktree {
+            path,
+            head: "abc123".into(),
+            branch: branch.map(String::from),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+        }
+    }
+
+    #[test]
+    fn find_by_path_exact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("project");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir.clone(), Some("main"))];
+
+        assert!(find_by_path(&wts, &dir).is_some());
+        assert!(find_by_path(&wts, Path::new("/nonexistent")).is_none());
+    }
+
+    #[test]
+    fn find_by_path_through_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        let link = tmp.path().join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let wts = [make_worktree(link.clone(), Some("main"))];
+        let canonical = real.canonicalize().unwrap();
+        assert!(find_by_path(&wts, &canonical).is_some());
+
+        let wts = [make_worktree(canonical, Some("main"))];
+        assert!(find_by_path(&wts, &link).is_some());
+    }
+
+    #[test]
+    fn branch_checked_out_elsewhere_with_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real_a = tmp.path().join("a");
+        let link_a = tmp.path().join("link_a");
+        let dir_b = tmp.path().join("b");
+        std::fs::create_dir(&real_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+        std::os::unix::fs::symlink(&real_a, &link_a).unwrap();
+
+        let wts = [
+            make_worktree(link_a.clone(), Some("feat")),
+            make_worktree(dir_b, Some("feat")),
+        ];
+
+        let canonical_a = real_a.canonicalize().unwrap();
+        assert!(branch_checked_out_elsewhere(&wts, "feat", &canonical_a));
+
+        assert!(branch_checked_out_elsewhere(&wts, "feat", &link_a));
+        assert!(!branch_checked_out_elsewhere(&wts, "other", &link_a));
     }
 }
