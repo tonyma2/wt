@@ -23,12 +23,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
 
-    let canonical_root = worktree::canonicalize_or_self(&repo_root);
-    let primary = worktrees
-        .iter()
-        .find(|wt| worktree::canonicalize_or_self(&wt.path) == canonical_root)
-        .or_else(|| worktrees.iter().find(|wt| !wt.bare))
-        .ok_or("no worktrees found")?;
+    let primary = worktree::find_primary(&worktrees, &repo_root).ok_or("no worktrees found")?;
     let primary_path = &primary.path;
 
     for file in files {

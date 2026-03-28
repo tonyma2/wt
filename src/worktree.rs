@@ -145,11 +145,7 @@ pub fn create_dest(repo_root: &Path, git: &Git) -> Result<PathBuf, String> {
         .and_then(parse_repo_name)
         .or_else(|| repo_root.file_name().and_then(|n| n.to_str()))
         .ok_or_else(|| format!("cannot determine repo name from {}", repo_root.display()))?;
-    let wt_base = worktrees_root()?;
-    let dest = unique_dest(&wt_base, repo_name)?;
-    std::fs::create_dir_all(&dest)
-        .map_err(|e| format!("cannot create directory {}: {e}", dest.display()))?;
-    Ok(dest)
+    create_worktree_dest(repo_name)
 }
 
 pub fn cleanup_dest(dest: &Path) {
@@ -189,6 +185,14 @@ pub fn create_worktree_dest(repo_name: &str) -> Result<PathBuf, String> {
 
 pub(crate) fn canonicalize_or_self(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&'a Worktree> {
+    let canonical_root = canonicalize_or_self(repo_root);
+    worktrees
+        .iter()
+        .find(|wt| canonicalize_or_self(&wt.path) == canonical_root)
+        .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
 pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {

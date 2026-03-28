@@ -96,11 +96,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
         eprintln!("creating branch '{name}'");
     }
 
-    let canonical_root = worktree::canonicalize_or_self(&repo_root);
-    let primary_path = worktrees
-        .iter()
-        .find(|wt| worktree::canonicalize_or_self(&wt.path) == canonical_root)
-        .or_else(|| worktrees.iter().find(|wt| !wt.bare))
+    let primary_path = worktree::find_primary(&worktrees, &repo_root)
         .map_or(repo_root.as_path(), |wt| wt.path.as_path());
     link::auto_link(&repo_root, &dest, primary_path);
 

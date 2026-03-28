@@ -387,7 +387,6 @@ impl Git {
             .cmd()
             .args(["remote", "set-head", remote, "--auto"])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run git remote: {e}"))?;
         if !output.status.success() {
