@@ -22,7 +22,7 @@ Shell wrappers depend on `cd "$(wt new ...)"` capturing stdout as a path. Any no
 
 Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust.
 
-**Caveat:** the replacement strings are coupled to the `///` help text on `name`, `names`, and `base` args in `cli.rs`. Each subcommand's `name` arg needs a unique doc comment so the replacement targets don't collide (`"Branch name, tag, or ref"` for path, `"Branch name"` for switch, `"Branch name or ref"` for new). Changing those docstrings silently degrades completion. The unit test `zsh_completion_is_dynamic` catches this — run it after editing `cli.rs` arg help text.
+**Caveat:** the replacement strings are coupled to the `///` help text on `name`, `names`, `base`, and `files` args in `cli.rs`. Each subcommand's `name` arg needs a unique doc comment so the replacement targets don't collide (`"Branch name, tag, or ref"` for path, `"Branch name"` for switch, `"Branch name or ref"` for new). Changing those docstrings silently degrades completion. The unit tests `zsh_completion_is_dynamic` and `zsh_link_unlink_completions_are_dynamic` catch this — run them after editing `cli.rs` arg help text.
 
 ## Do not add doc comments outside `cli.rs`
 
