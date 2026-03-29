@@ -16,43 +16,46 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match &cli.command {
-        Command::Clone { url } => commands::clone::run(url),
-        Command::Init { shell } => commands::init::run(*shell),
-        Command::New {
+        None => commands::tui::run(),
+        Some(Command::Clone { url }) => commands::clone::run(url),
+        Some(Command::Init { shell }) => commands::init::run(*shell),
+        Some(Command::New {
             name,
             create,
             base,
             repo,
-        } => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
-        Command::List { repo, json, all } => commands::list::run(repo.as_deref(), *json, *all),
-        Command::Remove {
+        }) => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
+        Some(Command::List { repo, json, all }) => {
+            commands::list::run(repo.as_deref(), *json, *all)
+        }
+        Some(Command::Remove {
             names,
             repo,
             force,
             keep_branch,
-        } => commands::rm::run(names, repo.as_deref(), *force, *keep_branch),
-        Command::Prune {
+        }) => commands::rm::run(names, repo.as_deref(), *force, *keep_branch),
+        Some(Command::Prune {
             dry_run,
             gone,
             repo,
             base,
-        } => commands::prune::run(*dry_run, *gone, repo.as_deref(), base.as_deref()),
-        Command::Path { name, repo } => commands::path::run(name, repo.as_deref()),
-        Command::Switch { name, create, repo } => {
+        }) => commands::prune::run(*dry_run, *gone, repo.as_deref(), base.as_deref()),
+        Some(Command::Path { name, repo }) => commands::path::run(name, repo.as_deref()),
+        Some(Command::Switch { name, create, repo }) => {
             commands::switch::run(name, *create, repo.as_deref())
         }
-        Command::Link {
+        Some(Command::Link {
             files,
             repo,
             force,
             list,
-        } => commands::link::run(files, repo.as_deref(), *force, *list),
-        Command::Unlink {
+        }) => commands::link::run(files, repo.as_deref(), *force, *list),
+        Some(Command::Unlink {
             files,
             repo,
             force,
             all,
-        } => commands::unlink::run(files, repo.as_deref(), *force, *all),
+        }) => commands::unlink::run(files, repo.as_deref(), *force, *all),
     };
 
     if let Err(e) = result {

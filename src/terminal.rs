@@ -18,7 +18,7 @@ pub struct Colors {
     pub reset: &'static str,
 }
 
-fn color_enabled(is_tty: bool) -> bool {
+pub fn color_enabled(is_tty: bool) -> bool {
     is_tty && std::env::var("NO_COLOR").is_err() && std::env::var("TERM").as_deref() != Ok("dumb")
 }
 

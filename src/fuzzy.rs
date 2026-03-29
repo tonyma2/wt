@@ -15,6 +15,29 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+pub fn filter_score(query: &str, candidate: &str) -> Option<usize> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let query_lower: Vec<char> = query.to_lowercase().chars().collect();
+    let candidate_lower: Vec<char> = candidate.to_lowercase().chars().collect();
+    let mut qi = 0;
+    let mut score = 0;
+    let mut last_match: Option<usize> = None;
+
+    for (ci, &cc) in candidate_lower.iter().enumerate() {
+        if qi < query_lower.len() && cc == query_lower[qi] {
+            if let Some(prev) = last_match {
+                score += ci - prev - 1;
+            }
+            last_match = Some(ci);
+            qi += 1;
+        }
+    }
+
+    (qi == query_lower.len()).then_some(score)
+}
+
 pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     let len = name.chars().count();
     if len == 0 {
@@ -93,5 +116,40 @@ mod tests {
             close_match("feat/login", &["feat/logxxx", "feat/logim"]),
             Some("feat/logim"),
         );
+    }
+
+    #[test]
+    fn filter_score_empty_query() {
+        assert_eq!(filter_score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn filter_score_subsequence_match() {
+        assert!(filter_score("fl", "feat/login").is_some());
+        assert!(filter_score("flog", "feat/login").is_some());
+    }
+
+    #[test]
+    fn filter_score_no_match() {
+        assert_eq!(filter_score("xyz", "feat/login"), None);
+        assert_eq!(filter_score("lf", "feat/login"), None);
+    }
+
+    #[test]
+    fn filter_score_case_insensitive() {
+        assert!(filter_score("FL", "feat/login").is_some());
+        assert!(filter_score("feat", "FEAT/LOGIN").is_some());
+    }
+
+    #[test]
+    fn filter_score_consecutive_beats_gapped() {
+        let consecutive = filter_score("feat", "feat/login").unwrap();
+        let gapped = filter_score("flog", "feat/login").unwrap();
+        assert!(consecutive < gapped);
+    }
+
+    #[test]
+    fn filter_score_exact_match() {
+        assert_eq!(filter_score("main", "main"), Some(0));
     }
 }
