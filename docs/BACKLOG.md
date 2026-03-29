@@ -5,7 +5,3 @@
 **S** quick · **M** hours · **L** days
 
 Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
-
-## Bugs
-
-- **Config temp file name is fixed** (P3, S) — `config::save` writes to `~/.wt/config.tmp` then renames. Two concurrent `wt` processes clobber each other's temp file. Fix: use a unique temp name (PID or random suffix).
