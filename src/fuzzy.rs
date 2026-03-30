@@ -19,23 +19,21 @@ pub fn filter_score(query: &str, candidate: &str) -> Option<usize> {
     if query.is_empty() {
         return Some(0);
     }
-    let query_lower: Vec<char> = query.to_lowercase().chars().collect();
-    let candidate_lower: Vec<char> = candidate.to_lowercase().chars().collect();
-    let mut qi = 0;
+    let mut query_chars = query.chars().flat_map(char::to_lowercase).peekable();
     let mut score = 0;
     let mut last_match: Option<usize> = None;
 
-    for (ci, &cc) in candidate_lower.iter().enumerate() {
-        if qi < query_lower.len() && cc == query_lower[qi] {
+    for (ci, cc) in candidate.chars().flat_map(char::to_lowercase).enumerate() {
+        if query_chars.peek() == Some(&cc) {
             if let Some(prev) = last_match {
                 score += ci - prev - 1;
             }
             last_match = Some(ci);
-            qi += 1;
+            query_chars.next();
         }
     }
 
-    (qi == query_lower.len()).then_some(score)
+    query_chars.peek().is_none().then_some(score)
 }
 
 pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {

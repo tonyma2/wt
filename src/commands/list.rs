@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::git::Git;
-use crate::terminal::{self, Colors};
+use crate::terminal::{self, Colors, trunc, trunc_tail};
 use crate::worktree::{self, Worktree};
 
 #[derive(Serialize)]
@@ -295,31 +295,4 @@ fn worktree_badges(wt: &Worktree, clr: &Colors) -> String {
         badges.push(format!("{}[prunable]{}", clr.red, clr.reset));
     }
     badges.join(" ")
-}
-
-fn trunc(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        return s.chars().take(max).collect();
-    }
-    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
-    format!("{}...", &s[..end])
-}
-
-fn trunc_tail(s: &str, max: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        let start = s.char_indices().nth(char_count - max).map_or(0, |(i, _)| i);
-        return s[start..].to_string();
-    }
-    let start = s
-        .char_indices()
-        .nth(char_count - max + 3)
-        .map_or(0, |(i, _)| i);
-    format!("...{}", &s[start..])
 }

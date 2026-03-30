@@ -13,7 +13,7 @@ use ratatui::widgets::{
 
 use crate::fuzzy;
 use crate::git::Git;
-use crate::terminal as term;
+use crate::terminal::{self as term, trunc, trunc_tail};
 use crate::worktree::{self, Worktree};
 
 struct RepoData {
@@ -414,32 +414,28 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::new()
     };
 
-    if items.is_empty() {
-        frame.render_widget("    no matches \u{b7} backspace to edit".dim(), inner);
-    } else {
-        let item_count = items.len();
-        let mut list = List::new(items)
-            .highlight_style(highlight)
-            .highlight_symbol("\u{203a} ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .scroll_padding(1);
-        if !active {
-            list = list.style(Style::new().dim());
-        }
-        frame.render_stateful_widget(list, inner, &mut app.repo_state);
+    let item_count = items.len();
+    let mut list = List::new(items)
+        .highlight_style(highlight)
+        .highlight_symbol("\u{203a} ")
+        .highlight_spacing(HighlightSpacing::Always)
+        .scroll_padding(1);
+    if !active {
+        list = list.style(Style::new().dim());
+    }
+    frame.render_stateful_widget(list, inner, &mut app.repo_state);
 
-        if item_count > inner.height as usize {
-            let mut scrollbar_state = ScrollbarState::new(item_count)
-                .position(app.repo_state.offset())
-                .viewport_content_length(inner.height as usize);
-            frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(None)
-                    .end_symbol(None),
-                inner,
-                &mut scrollbar_state,
-            );
-        }
+    if item_count > inner.height as usize {
+        let mut scrollbar_state = ScrollbarState::new(item_count)
+            .position(app.repo_state.offset())
+            .viewport_content_length(inner.height as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None),
+            inner,
+            &mut scrollbar_state,
+        );
     }
 }
 
@@ -544,7 +540,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(wt) = app.selected_worktree() {
         let budget = (area.width as usize).saturating_sub(3);
-        let display = trunc_head(&wt.display_path, budget);
+        let display = trunc_tail(&wt.display_path, budget);
         frame.render_widget(Line::from(vec!["  ".dim(), display.dim()]), area);
     }
 }
@@ -573,38 +569,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         help
     };
     frame.render_widget(line, area);
-}
-
-fn trunc(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        return s.chars().take(max).collect();
-    }
-    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
-    format!("{}...", &s[..end])
-}
-
-fn trunc_head(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        return s
-            .chars()
-            .rev()
-            .take(max)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-    }
-    let skip = count - max + 3;
-    let start = s.char_indices().nth(skip).map_or(s.len(), |(i, _)| i);
-    format!("...{}", &s[start..])
 }
 
 fn format_status(dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
@@ -1066,27 +1030,27 @@ mod tests {
     }
 
     #[test]
-    fn trunc_head_short_string_unchanged() {
-        assert_eq!(trunc_head("main", 10), "main");
-        assert_eq!(trunc_head("main", 4), "main");
+    fn trunc_tail_short_string_unchanged() {
+        assert_eq!(trunc_tail("main", 10), "main");
+        assert_eq!(trunc_tail("main", 4), "main");
     }
 
     #[test]
-    fn trunc_head_long_string_keeps_tail() {
+    fn trunc_tail_long_string_keeps_tail() {
         assert_eq!(
-            trunc_head("~/.wt/worktrees/abc123/my-repo", 15),
+            trunc_tail("~/.wt/worktrees/abc123/my-repo", 15),
             "...c123/my-repo"
         );
     }
 
     #[test]
-    fn trunc_head_zero_budget() {
-        assert_eq!(trunc_head("anything", 0), "");
+    fn trunc_tail_zero_budget() {
+        assert_eq!(trunc_tail("anything", 0), "");
     }
 
     #[test]
-    fn trunc_head_budget_one() {
-        assert_eq!(trunc_head("abc", 1), "c");
+    fn trunc_tail_budget_one() {
+        assert_eq!(trunc_tail("abc", 1), "c");
     }
 
     #[test]

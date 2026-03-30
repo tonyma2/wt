@@ -74,6 +74,34 @@ pub fn tilde_path(path: &std::path::Path) -> String {
     path_str.into_owned()
 }
 
+pub fn trunc(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
+    format!("{}...", &s[..end])
+}
+
+pub fn trunc_tail(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    if max <= 3 {
+        let start = s.char_indices().nth(count - max).map_or(0, |(i, _)| i);
+        return s[start..].to_string();
+    }
+    let start = s.char_indices().nth(count - max + 3).map_or(0, |(i, _)| i);
+    format!("...{}", &s[start..])
+}
+
 pub fn print_cd_hint(name: &str) {
     if is_stdout_tty() {
         let escaped = name.replace("'", r"'\''");
