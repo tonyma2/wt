@@ -554,16 +554,10 @@ fn footer_help_line() -> Line<'static> {
         Span::raw("  "),
         Span::raw("\u{2191}\u{2193}"),
         " navigate".dim(),
-        "  \u{b7}  ".dim(),
+        " \u{b7} ".dim(),
         Span::raw("\u{2190}\u{2192}"),
         " switch".dim(),
-        "  \u{b7}  ".dim(),
-        Span::raw("enter"),
-        " select".dim(),
-        "  \u{b7}  ".dim(),
-        Span::raw("esc"),
-        " quit".dim(),
-        "  \u{b7}  ".dim(),
+        " \u{b7} ".dim(),
         "type to filter".dim(),
     ])
 }
