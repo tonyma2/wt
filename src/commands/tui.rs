@@ -701,38 +701,27 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
     Ok(repos)
 }
 
-fn install_panic_hook() {
+type StderrTerminal = Terminal<ratatui::backend::CrosstermBackend<io::Stderr>>;
+
+fn init() -> io::Result<StderrTerminal> {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        ratatui::crossterm::terminal::disable_raw_mode().ok();
-        ratatui::crossterm::execute!(io::stderr(), LeaveAlternateScreen).ok();
+        restore().ok();
         original(info);
     }));
+    ratatui::crossterm::terminal::enable_raw_mode()?;
+    ratatui::crossterm::execute!(io::stderr(), EnterAlternateScreen)?;
+    Terminal::new(ratatui::backend::CrosstermBackend::new(io::stderr()))
+}
+
+fn restore() -> io::Result<()> {
+    ratatui::crossterm::terminal::disable_raw_mode()?;
+    ratatui::crossterm::execute!(io::stderr(), LeaveAlternateScreen)
 }
 
 fn run_tui(app: &mut App) -> Result<(), String> {
-    install_panic_hook();
-    ratatui::crossterm::terminal::enable_raw_mode()
-        .map_err(|e| format!("cannot enable raw mode: {e}"))?;
-    let mut stderr = io::stderr();
-    ratatui::crossterm::execute!(stderr, EnterAlternateScreen)
-        .map_err(|e| format!("cannot enter alternate screen: {e}"))?;
-    let backend = ratatui::backend::CrosstermBackend::new(io::stderr());
-    let mut terminal =
-        Terminal::new(backend).map_err(|e| format!("cannot create terminal: {e}"))?;
+    let mut terminal = init().map_err(|e| format!("cannot initialize terminal: {e}"))?;
 
-    let result = event_loop(&mut terminal, app);
-
-    ratatui::crossterm::terminal::disable_raw_mode().ok();
-    ratatui::crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
-
-    result
-}
-
-fn event_loop(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stderr>>,
-    app: &mut App,
-) -> Result<(), String> {
     loop {
         terminal
             .draw(|frame| render(frame, app))
@@ -750,7 +739,8 @@ fn event_loop(
             break;
         }
     }
-    Ok(())
+
+    restore().map_err(|e| format!("cannot restore terminal: {e}"))
 }
 
 pub fn run() -> Result<(), String> {
