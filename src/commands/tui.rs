@@ -22,6 +22,7 @@ struct WorktreeData {
     path: PathBuf,
     display_path: String,
     branch: Option<String>,
+    filter_candidate: String,
     detached: bool,
     locked: bool,
     dirty: bool,
@@ -121,6 +122,9 @@ impl App {
             Pane::Repos => {
                 if let Some(i) = self.repo_state.selected() {
                     let len = self.filtered_repo_indices.len();
+                    if len == 0 {
+                        return;
+                    }
                     self.repo_state
                         .select(Some(if i > 0 { i - 1 } else { len - 1 }));
                     self.refresh_wt_filter();
@@ -129,6 +133,9 @@ impl App {
             Pane::Worktrees => {
                 if let Some(i) = self.wt_state.selected() {
                     let len = self.filtered_wt_indices.len();
+                    if len == 0 {
+                        return;
+                    }
                     self.wt_state
                         .select(Some(if i > 0 { i - 1 } else { len - 1 }));
                 }
@@ -140,8 +147,11 @@ impl App {
         match self.active_pane {
             Pane::Repos => {
                 if let Some(i) = self.repo_state.selected() {
-                    let next = i + 1;
                     let len = self.filtered_repo_indices.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let next = i + 1;
                     self.repo_state
                         .select(Some(if next < len { next } else { 0 }));
                     self.refresh_wt_filter();
@@ -149,8 +159,11 @@ impl App {
             }
             Pane::Worktrees => {
                 if let Some(i) = self.wt_state.selected() {
-                    let next = i + 1;
                     let len = self.filtered_wt_indices.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let next = i + 1;
                     self.wt_state
                         .select(Some(if next < len { next } else { 0 }));
                 }
@@ -165,13 +178,6 @@ impl App {
         };
     }
 
-    fn combined_candidate(repo_name: &str, branch: Option<&str>) -> String {
-        match branch {
-            Some(b) => format!("{repo_name} {b}"),
-            None => repo_name.to_string(),
-        }
-    }
-
     fn refilter(&mut self) {
         if self.filter.is_empty() {
             self.filtered_repo_indices = (0..self.repos.len()).collect();
@@ -184,10 +190,7 @@ impl App {
                     let best = r
                         .worktrees
                         .iter()
-                        .filter_map(|wt| {
-                            let combined = Self::combined_candidate(&r.name, wt.branch.as_deref());
-                            fuzzy::filter_score(&self.filter, &combined)
-                        })
+                        .filter_map(|wt| fuzzy::filter_score(&self.filter, &wt.filter_candidate))
                         .min();
                     best.map(|s| (i, s))
                 })
@@ -223,8 +226,7 @@ impl App {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, wt)| {
-                        let combined = Self::combined_candidate(&repo.name, wt.branch.as_deref());
-                        fuzzy::filter_score(&self.filter, &combined).map(|s| (i, s))
+                        fuzzy::filter_score(&self.filter, &wt.filter_candidate).map(|s| (i, s))
                     })
                     .collect();
                 scored.sort_unstable_by_key(|(_, s)| *s);
@@ -603,10 +605,15 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
                             let current = cwd
                                 .as_deref()
                                 .is_some_and(|c| worktree::is_cwd_inside(&wt.path, Some(c)));
+                            let filter_candidate = match &wt.branch {
+                                Some(b) => format!("{name} {b}"),
+                                None => name.clone(),
+                            };
                             WorktreeData {
                                 display_path: term::tilde_path(&wt.path),
                                 path: wt.path.clone(),
                                 branch: wt.branch.clone(),
+                                filter_candidate,
                                 detached: wt.detached,
                                 locked: wt.locked,
                                 dirty,
@@ -673,9 +680,13 @@ fn event_loop(terminal: &mut crate::tui::StderrTerminal, app: &mut App) -> io::R
             break;
         }
         loop {
-            if let Event::Key(key) = event::read()? {
-                handle_key(app, key);
-                break;
+            match event::read()? {
+                Event::Key(key) => {
+                    handle_key(app, key);
+                    break;
+                }
+                Event::Resize(..) => break,
+                _ => {}
             }
         }
     }
@@ -714,6 +725,7 @@ mod tests {
                         path: PathBuf::from("/wt/my-app/main"),
                         display_path: "/wt/my-app/main".into(),
                         branch: Some("main".into()),
+                        filter_candidate: "my-app main".into(),
                         detached: false,
                         locked: false,
                         dirty: false,
@@ -725,6 +737,7 @@ mod tests {
                         path: PathBuf::from("/wt/my-app/feat"),
                         display_path: "/wt/my-app/feat".into(),
                         branch: Some("feat/login".into()),
+                        filter_candidate: "my-app feat/login".into(),
                         detached: false,
                         locked: false,
                         dirty: true,
@@ -740,6 +753,7 @@ mod tests {
                     path: PathBuf::from("/wt/other-repo/main"),
                     display_path: "/wt/other-repo/main".into(),
                     branch: Some("main".into()),
+                    filter_candidate: "other-repo main".into(),
                     detached: false,
                     locked: false,
                     dirty: false,
