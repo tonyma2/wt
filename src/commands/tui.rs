@@ -6,10 +6,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, HighlightSpacing, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
-    ScrollbarState,
-};
+use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState};
 
 use crate::fuzzy;
 use crate::git::Git;
@@ -352,10 +349,7 @@ fn viewport_height(app: &App) -> u16 {
         .unwrap_or(0);
     let content_rows = repo_count.max(max_wt).max(1) as u16;
     let total = content_rows + 2;
-    let term_height = ratatui::crossterm::terminal::size()
-        .map(|(_, h)| h)
-        .unwrap_or(24);
-    total.min(term_height.saturating_sub(4))
+    total.min(10)
 }
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -414,7 +408,6 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::new()
     };
 
-    let item_count = items.len();
     let mut list = List::new(items)
         .highlight_style(highlight)
         .highlight_symbol("\u{203a} ")
@@ -424,19 +417,6 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         list = list.style(Style::new().dim());
     }
     frame.render_stateful_widget(list, inner, &mut app.repo_state);
-
-    if item_count > inner.height as usize {
-        let mut scrollbar_state = ScrollbarState::new(item_count)
-            .position(app.repo_state.offset())
-            .viewport_content_length(inner.height as usize);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None),
-            inner,
-            &mut scrollbar_state,
-        );
-    }
 }
 
 fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -511,7 +491,6 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
             frame.render_widget("    no matches \u{b7} backspace to edit".dim(), area);
         }
     } else {
-        let item_count = items.len();
         let mut list = List::new(items)
             .highlight_style(highlight)
             .highlight_symbol("\u{203a} ")
@@ -521,19 +500,6 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
             list = list.style(Style::new().dim());
         }
         frame.render_stateful_widget(list, area, &mut app.wt_state);
-
-        if item_count > area.height as usize {
-            let mut scrollbar_state = ScrollbarState::new(item_count)
-                .position(app.wt_state.offset())
-                .viewport_content_length(area.height as usize);
-            frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(None)
-                    .end_symbol(None),
-                area,
-                &mut scrollbar_state,
-            );
-        }
     }
 }
 
