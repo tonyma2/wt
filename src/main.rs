@@ -4,6 +4,7 @@ mod config;
 mod fuzzy;
 mod git;
 mod terminal;
+mod tui;
 mod worktree;
 
 use std::process;
