@@ -3,9 +3,9 @@ use std::io;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
-pub type StderrTerminal = Terminal<CrosstermBackend<io::Stderr>>;
+pub type StdoutTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
-pub fn init(height: u16) -> io::Result<StderrTerminal> {
+pub fn init(height: u16) -> io::Result<StdoutTerminal> {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = restore();
@@ -13,7 +13,7 @@ pub fn init(height: u16) -> io::Result<StderrTerminal> {
     }));
     ratatui::crossterm::terminal::enable_raw_mode()?;
 
-    let backend = CrosstermBackend::new(io::stderr());
+    let backend = CrosstermBackend::new(io::stdout());
     Terminal::with_options(
         backend,
         TerminalOptions {
@@ -23,13 +23,13 @@ pub fn init(height: u16) -> io::Result<StderrTerminal> {
 }
 
 pub fn restore() -> io::Result<()> {
-    ratatui::crossterm::execute!(io::stderr(), ratatui::crossterm::cursor::Show)?;
+    ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show)?;
     ratatui::crossterm::terminal::disable_raw_mode()
 }
 
 pub fn run<F, R>(height: u16, f: F) -> io::Result<R>
 where
-    F: FnOnce(&mut StderrTerminal) -> io::Result<R>,
+    F: FnOnce(&mut StdoutTerminal) -> io::Result<R>,
 {
     let mut terminal = init(height)?;
     let result = f(&mut terminal);

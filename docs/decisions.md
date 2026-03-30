@@ -53,6 +53,10 @@ After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hi
 
 `wt init <shell>` outputs a wrapper that intercepts `new`/`n`/`switch`/`s` to auto-cd. `path` is excluded — it stays a pure query for scripting (`$EDITOR "$(command wt path ...)"`). All other subcommands pass through to the binary unchanged.
 
+## Do not use stdout capture for TUI cd-back
+
+Subcommands like `new` and `switch` return paths via stdout, captured by the shell wrapper with `out=$(command wt ...)`. The TUI picker can't do this — it renders to stdout. Instead, the zero-arg wrapper creates a temp file with `mktemp`, passes its path via `__WT_CD`, and the binary writes the selected path there. The shell reads it back after the process exits. Any new subcommand that uses both stdout rendering and cd-back must use the temp-file mechanism, not stdout capture.
+
 ## Do not store bare repos in the current directory
 
 `wt clone` stores bare repos under `~/.wt/repos/<id>/<name>/`, not in the current directory like `git clone`. Users never interact with the bare repo directly — they work inside worktrees. Hiding the bare repo avoids the "where did I put that repo" problem and keeps the filesystem clean. The random id prevents collisions when cloning repos with the same name from different orgs.

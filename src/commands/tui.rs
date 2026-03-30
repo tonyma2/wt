@@ -1,4 +1,6 @@
 use std::io;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 use ratatui::Frame;
@@ -74,7 +76,7 @@ impl App {
             Pane::Repos
         };
 
-        let color = term::color_enabled(term::is_stderr_tty());
+        let color = term::color_enabled(term::is_stdout_tty());
 
         Self {
             repos,
@@ -673,7 +675,7 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
     Ok(repos)
 }
 
-fn event_loop(terminal: &mut crate::tui::StderrTerminal, app: &mut App) -> io::Result<()> {
+fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|frame| render(frame, app))?;
         if app.quit {
@@ -694,8 +696,8 @@ fn event_loop(terminal: &mut crate::tui::StderrTerminal, app: &mut App) -> io::R
 }
 
 pub fn run() -> Result<(), String> {
-    if !term::is_stderr_tty() {
-        return Err("cannot launch picker, stderr is not a terminal".into());
+    if !term::is_stdout_tty() {
+        return Err("cannot launch picker, stdout is not a terminal".into());
     }
 
     let repos = load_repos()?;
@@ -705,8 +707,12 @@ pub fn run() -> Result<(), String> {
     crate::tui::run(height, |terminal| event_loop(terminal, &mut app))
         .map_err(|e| format!("cannot run picker: {e}"))?;
 
-    if let Some(path) = &app.selected_path {
-        println!("{}", path.display());
+    #[cfg(unix)]
+    if let Some(path) = &app.selected_path
+        && let Ok(f) = std::env::var("__WT_CD")
+    {
+        std::fs::write(&f, path.as_os_str().as_bytes())
+            .map_err(|e| format!("cannot write cd path: {e}"))?;
     }
 
     Ok(())
@@ -1002,5 +1008,108 @@ mod tests {
             app.selected_path,
             Some(PathBuf::from("/wt/other-repo/main"))
         );
+    }
+
+    #[test]
+    fn cursor_movement_on_empty_filtered_list() {
+        let mut app = App::new(test_repos());
+        app.filter = "zzzzz".into();
+        app.refilter();
+        assert!(app.filtered_repo_indices.is_empty());
+        assert!(app.repo_state.selected().is_none());
+        app.cursor_down();
+        app.cursor_up();
+        assert!(app.repo_state.selected().is_none());
+    }
+
+    #[test]
+    fn filter_no_match_clears_selection() {
+        let mut app = App::new(test_repos());
+        assert_eq!(app.repo_state.selected(), Some(0));
+        app.filter = "zzzzz".into();
+        app.refilter();
+        assert!(app.filtered_repo_indices.is_empty());
+        assert!(app.repo_state.selected().is_none());
+        assert!(app.filtered_wt_indices.is_empty());
+        assert!(app.wt_state.selected().is_none());
+    }
+
+    #[test]
+    fn enter_in_repos_pane_does_not_switch_when_no_worktrees() {
+        let mut app = App::new(test_repos());
+        app.filtered_wt_indices.clear();
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(app.active_pane, Pane::Repos);
+    }
+
+    #[test]
+    fn backspace_on_empty_filter_is_noop() {
+        let mut app = App::new(test_repos());
+        assert!(app.filter.is_empty());
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        assert!(app.filter.is_empty());
+        assert_eq!(app.filtered_repo_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn viewport_height_caps_at_10() {
+        let mut repos = Vec::new();
+        for i in 0..15 {
+            repos.push(RepoData {
+                name: format!("repo-{i}"),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from(format!("/wt/repo-{i}/main")),
+                    display_path: format!("/wt/repo-{i}/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: format!("repo-{i} main"),
+                    detached: false,
+                    locked: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                }],
+            });
+        }
+        let app = App::new(repos);
+        assert_eq!(viewport_height(&app), 10);
+    }
+
+    #[test]
+    fn viewport_height_fits_content() {
+        let app = App::new(test_repos());
+        let h = viewport_height(&app);
+        assert_eq!(h, 4);
+    }
+
+    #[test]
+    fn filter_ranks_better_matches_first() {
+        let mut app = App::new(test_repos());
+        app.filter = "main".into();
+        app.refilter();
+        assert_eq!(app.filtered_repo_indices.len(), 2);
+        assert_eq!(app.repos[app.filtered_repo_indices[0]].name, "other-repo");
+        assert_eq!(app.repos[app.filtered_repo_indices[1]].name, "my-app");
+    }
+
+    #[test]
+    fn tab_switches_panes() {
+        let mut app = App::new(test_repos());
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        );
+        assert_eq!(app.active_pane, Pane::Worktrees);
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.active_pane, Pane::Repos);
     }
 }

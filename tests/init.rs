@@ -54,8 +54,11 @@ fn zsh_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("new|n|switch|s|clone|cl)"));
-    assert!(stdout.contains(r#"cd "$out""#));
+    assert!(stdout.contains(r#"cd -- "$out""#));
 }
 
 #[test]
@@ -82,8 +85,11 @@ fn bash_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("new|n|switch|s|clone|cl)"));
-    assert!(stdout.contains(r#"cd "$out""#));
+    assert!(stdout.contains(r#"cd -- "$out""#));
 }
 
 #[test]
@@ -92,9 +98,12 @@ fn fish_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("function wt --wraps=wt"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("command wt $argv"));
     assert!(stdout.contains("case new n switch s"));
-    assert!(stdout.contains("and cd $out"));
+    assert!(stdout.contains("and cd -- $out"));
 }
 
 #[test]

@@ -4,14 +4,18 @@ use crate::cli::Cli;
 
 const SH_WRAPPER: &str = "wt() {
   if [ $# -eq 0 ]; then
-    local out
-    out=$(command wt) && [ -d \"$out\" ] && cd \"$out\"
-    return
+    local __wt_cd
+    __wt_cd=$(mktemp) || return 1
+    __WT_CD=\"$__wt_cd\" command wt
+    local ret=$?
+    [ -s \"$__wt_cd\" ] && cd -- \"$(cat \"$__wt_cd\")\"
+    rm -f \"$__wt_cd\"
+    return $ret
   fi
   case \"$1\" in
     new|n|switch|s|clone|cl)
       local out
-      out=$(command wt \"$@\") && [ -d \"$out\" ] && cd \"$out\" ;;
+      out=$(command wt \"$@\") && [ -d \"$out\" ] && cd -- \"$out\" ;;
     *) command wt \"$@\" ;;
   esac
 }
@@ -19,16 +23,18 @@ const SH_WRAPPER: &str = "wt() {
 
 const FISH_WRAPPER: &str = "function wt --wraps=wt
   if test (count $argv) -eq 0
-    set -l out (command wt)
-    and test -d $out
-    and cd $out
-    return
+    set -l __wt_cd (mktemp); or return 1
+    __WT_CD=$__wt_cd command wt
+    set -l ret $status
+    test -s $__wt_cd; and cd -- (cat $__wt_cd)
+    rm -f $__wt_cd
+    return $ret
   end
   switch $argv[1]
     case new n switch s clone cl
       set -l out (command wt $argv)
       and test -d $out
-      and cd $out
+      and cd -- $out
     case '*'
       command wt $argv
   end
@@ -584,10 +590,12 @@ mod tests {
         let script = render(clap_complete::Shell::Zsh).unwrap();
         assert!(script.contains("wt() {"));
         assert!(script.contains("if [ $# -eq 0 ]"));
-        assert!(script.contains("out=$(command wt)"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt \"$@\""));
         assert!(script.contains("new|n|switch|s|clone|cl)"));
-        assert!(script.contains("cd \"$out\""));
+        assert!(script.contains("cd -- \"$out\""));
     }
 
     #[test]
@@ -595,10 +603,12 @@ mod tests {
         let script = render(clap_complete::Shell::Bash).unwrap();
         assert!(script.contains("wt() {"));
         assert!(script.contains("if [ $# -eq 0 ]"));
-        assert!(script.contains("out=$(command wt)"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt \"$@\""));
         assert!(script.contains("new|n|switch|s|clone|cl)"));
-        assert!(script.contains("cd \"$out\""));
+        assert!(script.contains("cd -- \"$out\""));
     }
 
     #[test]
@@ -606,10 +616,12 @@ mod tests {
         let script = render(clap_complete::Shell::Fish).unwrap();
         assert!(script.contains("function wt --wraps=wt"));
         assert!(script.contains("if test (count $argv) -eq 0"));
-        assert!(script.contains("set -l out (command wt)"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt $argv"));
         assert!(script.contains("case new n switch s clone cl"));
-        assert!(script.contains("and cd $out"));
+        assert!(script.contains("and cd -- $out"));
     }
 
     #[test]
