@@ -6,6 +6,7 @@
 
 Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
 
-## Features
+## Performance
 
-- **TUI repo/worktree picker** (P2, M) — interactive picker to jump between repos and worktrees across all managed projects. Complements `wt clone` by giving users a way back into bare-cloned repos.
+- **Parallelize `wt list` status checks** (P2, S) — `computed_status` shells out twice per worktree sequentially. Precompute with `thread::scope` like TUI `load_repos`. Covers single-repo and `--all` paths.
+
