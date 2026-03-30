@@ -1,8 +1,8 @@
 use std::io;
 use std::path::PathBuf;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -717,17 +717,18 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
 fn install_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        crossterm::terminal::disable_raw_mode().ok();
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen).ok();
+        ratatui::crossterm::terminal::disable_raw_mode().ok();
+        ratatui::crossterm::execute!(io::stderr(), LeaveAlternateScreen).ok();
         original(info);
     }));
 }
 
 fn run_tui(app: &mut App) -> Result<(), String> {
     install_panic_hook();
-    crossterm::terminal::enable_raw_mode().map_err(|e| format!("cannot enable raw mode: {e}"))?;
+    ratatui::crossterm::terminal::enable_raw_mode()
+        .map_err(|e| format!("cannot enable raw mode: {e}"))?;
     let mut stderr = io::stderr();
-    crossterm::execute!(stderr, EnterAlternateScreen)
+    ratatui::crossterm::execute!(stderr, EnterAlternateScreen)
         .map_err(|e| format!("cannot enter alternate screen: {e}"))?;
     let backend = ratatui::backend::CrosstermBackend::new(io::stderr());
     let mut terminal =
@@ -735,8 +736,8 @@ fn run_tui(app: &mut App) -> Result<(), String> {
 
     let result = event_loop(&mut terminal, app);
 
-    crossterm::terminal::disable_raw_mode().ok();
-    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    ratatui::crossterm::terminal::disable_raw_mode().ok();
+    ratatui::crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
 
     result
 }

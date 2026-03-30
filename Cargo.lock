@@ -1904,7 +1904,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
- "crossterm",
  "getrandom 0.4.1",
  "libc",
  "ratatui",
