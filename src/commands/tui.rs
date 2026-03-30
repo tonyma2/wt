@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::{Frame, Terminal};
 
@@ -93,9 +94,9 @@ impl App {
 
     fn fg(&self, color: Color) -> Style {
         if self.color {
-            Style::default().fg(color)
+            Style::new().fg(color)
         } else {
-            Style::default()
+            Style::new()
         }
     }
 
@@ -359,9 +360,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     let float = float_rect(app, frame.area());
 
     frame.render_widget(Clear, float);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().add_modifier(Modifier::DIM));
+    let block = Block::bordered().border_style(Style::new().dim());
     let inner = block.inner(float);
     frame.render_widget(block, float);
 
@@ -373,12 +372,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     ])
     .areas(inner);
 
-    let padded_content = Rect::new(
-        content_area.x + 1,
-        content_area.y,
-        content_area.width.saturating_sub(2),
-        content_area.height,
-    );
+    let padded_content = content_area.inner(Margin::new(1, 0));
 
     let available = padded_content.width.saturating_sub(1);
     let repos_w = repos_pane_width(app).min(available * 2 / 5);
@@ -407,33 +401,42 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
             let suffix = format!(" ({wt_count})");
             let name_budget = content_w.saturating_sub(suffix.len());
             let name = trunc(&repo.name, name_budget);
-            ListItem::new(Line::from(vec![
-                Span::raw(name),
-                Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
-            ]))
+            ListItem::new(Line::from(vec![Span::raw(name), suffix.dim()]))
         })
         .collect();
 
     let highlight = if app.active_pane == Pane::Repos {
-        app.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        app.fg(Color::Cyan).bold()
     } else {
-        Style::default().add_modifier(Modifier::DIM)
+        Style::new().dim()
     };
 
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "    no matches \u{b7} backspace to edit",
-                Style::default().add_modifier(Modifier::DIM),
-            )),
+            Paragraph::new("    no matches \u{b7} backspace to edit".dim()),
             area,
         );
     } else {
+        let item_count = items.len();
         let list = List::new(items)
             .highlight_style(highlight)
             .highlight_symbol("\u{203a} ")
-            .highlight_spacing(HighlightSpacing::Always);
+            .highlight_spacing(HighlightSpacing::Always)
+            .scroll_padding(1);
         frame.render_stateful_widget(list, area, &mut app.repo_state);
+
+        if item_count > area.height as usize {
+            let mut scrollbar_state = ScrollbarState::new(item_count)
+                .position(app.repo_state.offset())
+                .viewport_content_length(area.height as usize);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                area,
+                &mut scrollbar_state,
+            );
+        }
     }
 }
 
@@ -474,7 +477,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
             let branch_style = if wt.current {
                 app.fg(Color::Green)
             } else {
-                Style::default()
+                Style::new()
             };
 
             let status_style = if wt.dirty {
@@ -482,7 +485,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
             } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
                 app.fg(Color::Cyan)
             } else {
-                Style::default().add_modifier(Modifier::DIM)
+                Style::new().dim()
             };
 
             let mut spans = vec![
@@ -491,71 +494,75 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
             ];
 
             if wt.locked {
-                spans.push(Span::styled(
-                    " locked",
-                    app.fg(Color::Yellow).add_modifier(Modifier::DIM),
-                ));
+                spans.push(Span::styled(" locked", app.fg(Color::Yellow).dim()));
             }
             ListItem::new(Line::from(spans))
         })
         .collect();
 
     let highlight = if app.active_pane == Pane::Worktrees {
-        app.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        app.fg(Color::Cyan).bold()
     } else {
-        Style::default().add_modifier(Modifier::DIM)
+        Style::new().dim()
     };
 
     if items.is_empty() {
         if app.selected_repo_index().is_some() {
             frame.render_widget(
-                Paragraph::new(Span::styled(
-                    "    no matches \u{b7} backspace to edit",
-                    Style::default().add_modifier(Modifier::DIM),
-                )),
+                Paragraph::new("    no matches \u{b7} backspace to edit".dim()),
                 area,
             );
         }
     } else {
+        let item_count = items.len();
         let list = List::new(items)
             .highlight_style(highlight)
             .highlight_symbol("\u{203a} ")
-            .highlight_spacing(HighlightSpacing::Always);
+            .highlight_spacing(HighlightSpacing::Always)
+            .scroll_padding(1);
         frame.render_stateful_widget(list, area, &mut app.wt_state);
+
+        if item_count > area.height as usize {
+            let mut scrollbar_state = ScrollbarState::new(item_count)
+                .position(app.wt_state.offset())
+                .viewport_content_length(area.height as usize);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                area,
+                &mut scrollbar_state,
+            );
+        }
     }
 }
 
 fn render_detail(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let dim = Style::default().add_modifier(Modifier::DIM);
     if let Some(wt) = app.selected_worktree() {
         let path_str = term::tilde_path(&wt.path);
         let budget = (area.width as usize).saturating_sub(3);
         let display = trunc_head(&path_str, budget);
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("  ", dim),
-                Span::styled(display, dim),
-            ])),
+            Paragraph::new(Line::from(vec!["  ".dim(), display.dim()])),
             area,
         );
     }
 }
 
 fn footer_help_line() -> Line<'static> {
-    let dim = Style::default().add_modifier(Modifier::DIM);
     Line::from(vec![
         Span::raw("  "),
         Span::raw("\u{2191}\u{2193}"),
-        Span::styled(" navigate", dim),
-        Span::styled("  \u{b7}  ", dim),
+        " navigate".dim(),
+        "  \u{b7}  ".dim(),
         Span::raw("\u{2190}\u{2192}"),
-        Span::styled(" switch", dim),
-        Span::styled("  \u{b7}  ", dim),
+        " switch".dim(),
+        "  \u{b7}  ".dim(),
         Span::raw("enter"),
-        Span::styled(" select", dim),
-        Span::styled("  \u{b7}  ", dim),
+        " select".dim(),
+        "  \u{b7}  ".dim(),
         Span::raw("esc"),
-        Span::styled(" quit", dim),
+        " quit".dim(),
     ])
 }
 
@@ -563,8 +570,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let line = if app.filter.is_empty() {
         footer_help_line()
     } else {
-        let dim = Style::default().add_modifier(Modifier::DIM);
-        Line::from(vec![Span::styled("  / ", dim), Span::raw(&app.filter)])
+        Line::from(vec!["  / ".dim(), Span::raw(&app.filter)])
     };
     frame.render_widget(Paragraph::new(line), area);
 }
