@@ -201,6 +201,44 @@ pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&
         .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
+pub fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
+    if wt.bare || wt.prunable {
+        return (false, None, None);
+    }
+    let dirty = git.is_dirty(&wt.path);
+    let (ahead, behind) = wt
+        .branch
+        .as_deref()
+        .and_then(|b| git.ahead_behind(b))
+        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
+    (dirty, ahead, behind)
+}
+
+pub fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
+    if bare {
+        return "bare".into();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if dirty {
+        parts.push("*".into());
+    }
+    if let Some(a) = ahead
+        && a > 0
+    {
+        parts.push(format!("↑{a}"));
+    }
+    if let Some(b) = behind
+        && b > 0
+    {
+        parts.push(format!("↓{b}"));
+    }
+    if parts.is_empty() {
+        "-".into()
+    } else {
+        parts.join(" ")
+    }
+}
+
 pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {
     if let Some(parent) = path.parent()
         && is_managed_worktree_dir(parent)
@@ -525,5 +563,29 @@ prunable gitdir file points to non-existent location
 
         assert!(branch_checked_out_elsewhere(&wts, "feat", &link_a));
         assert!(!branch_checked_out_elsewhere(&wts, "other", &link_a));
+    }
+
+    #[test]
+    fn format_status_clean() {
+        assert_eq!(format_status(false, false, None, None), "-");
+        assert_eq!(format_status(false, false, Some(0), Some(0)), "-");
+    }
+
+    #[test]
+    fn format_status_dirty() {
+        assert_eq!(format_status(false, true, None, None), "*");
+    }
+
+    #[test]
+    fn format_status_ahead_behind() {
+        assert_eq!(format_status(false, false, Some(2), None), "↑2");
+        assert_eq!(format_status(false, false, None, Some(3)), "↓3");
+        assert_eq!(format_status(false, true, Some(1), Some(2)), "* ↑1 ↓2");
+    }
+
+    #[test]
+    fn format_status_bare() {
+        assert_eq!(format_status(true, false, None, None), "bare");
+        assert_eq!(format_status(true, true, Some(1), Some(2)), "bare");
     }
 }

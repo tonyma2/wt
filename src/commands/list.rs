@@ -151,7 +151,7 @@ fn build_json_entries(
         .iter()
         .map(|wt| {
             let is_current = current_path == Some(wt.path.as_path());
-            let (dirty, ahead, behind) = computed_status(git, wt);
+            let (dirty, ahead, behind) = worktree::computed_status(git, wt);
             let path = wt.path.to_string_lossy().into_owned();
             let branch = wt.branch.clone();
             let name = branch.clone().unwrap_or_else(|| path.clone());
@@ -208,8 +208,8 @@ fn print_table(
             .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
-        let (dirty, ahead, behind) = computed_status(git, wt);
-        let status = format_status(wt.bare, dirty, ahead, behind);
+        let (dirty, ahead, behind) = worktree::computed_status(git, wt);
+        let status = worktree::format_status(wt.bare, dirty, ahead, behind);
         let status_trunc = trunc(&status, status_w);
 
         let path_str = terminal::tilde_path(&wt.path);
@@ -239,44 +239,6 @@ fn print_table(
             "{indent}{cur_col} {branch_col}   {:<status_w$}   {row_suffix}",
             status_trunc,
         );
-    }
-}
-
-fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
-    if wt.bare || wt.prunable {
-        return (false, None, None);
-    }
-    let dirty = git.is_dirty(&wt.path);
-    let (ahead, behind) = wt
-        .branch
-        .as_deref()
-        .and_then(|b| git.ahead_behind(b))
-        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
-    (dirty, ahead, behind)
-}
-
-fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
-    if bare {
-        return "bare".into();
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if dirty {
-        parts.push("*".into());
-    }
-    if let Some(a) = ahead
-        && a > 0
-    {
-        parts.push(format!("↑{a}"));
-    }
-    if let Some(b) = behind
-        && b > 0
-    {
-        parts.push(format!("↓{b}"));
-    }
-    if parts.is_empty() {
-        "-".into()
-    } else {
-        parts.join(" ")
     }
 }
 

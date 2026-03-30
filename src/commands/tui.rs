@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListSta
 use crate::fuzzy;
 use crate::git::Git;
 use crate::terminal::{self as term, trunc, trunc_tail};
-use crate::worktree::{self, Worktree};
+use crate::worktree;
 
 struct RepoData {
     name: String,
@@ -50,6 +50,7 @@ struct App {
     quit: bool,
     selected_path: Option<PathBuf>,
     color: bool,
+    render_width: u16,
 }
 
 impl App {
@@ -77,6 +78,7 @@ impl App {
         };
 
         let color = term::color_enabled(term::is_stdout_tty());
+        let render_width = compute_render_width(&repos);
 
         Self {
             repos,
@@ -89,6 +91,7 @@ impl App {
             quit: false,
             selected_path: None,
             color,
+            render_width,
         }
     }
 
@@ -261,6 +264,9 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                 app.refilter();
             }
         }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.quit = true;
+        }
         KeyCode::Esc => app.quit = true,
         KeyCode::Enter => match app.active_pane {
             Pane::Repos => {
@@ -291,16 +297,17 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
     }
 }
 
-fn repos_pane_width(app: &App) -> u16 {
-    let max_name = app.repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
-    (max_name + 7).max(8) as u16
-}
+fn compute_render_width(repos: &[RepoData]) -> u16 {
+    let all_wts = || repos.iter().flat_map(|r| &r.worktrees);
 
-fn max_wt_pane_width(app: &App) -> u16 {
-    app.repos
+    let repos_w = {
+        let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
+        (max_name + 7).max(8) as u16
+    };
+    let wt_w: u16 = repos
         .iter()
         .map(|repo| {
-            let branch_width = repo
+            let branch_w = repo
                 .worktrees
                 .iter()
                 .map(|wt| {
@@ -313,34 +320,29 @@ fn max_wt_pane_width(app: &App) -> u16 {
                 .unwrap_or(4)
                 .clamp(4, 40)
                 + 2;
-
-            let max_badge: usize = repo
+            let badge_w: usize = repo
                 .worktrees
                 .iter()
                 .map(|wt| if wt.locked { 7 } else { 0 })
                 .max()
                 .unwrap_or(0);
-
-            (2 + branch_width + 8 + max_badge) as u16
+            (2 + branch_w + 8 + badge_w) as u16
         })
         .max()
-        .unwrap_or(20)
-}
-
-fn max_detail_width(app: &App) -> u16 {
-    app.repos
-        .iter()
-        .flat_map(|r| &r.worktrees)
+        .unwrap_or(20);
+    let detail_w = all_wts()
         .map(|wt| wt.display_path.len() + 2)
         .max()
-        .unwrap_or(0) as u16
+        .unwrap_or(0) as u16;
+    let footer_w = footer_help_line().width() as u16;
+
+    let panes = repos_w + wt_w + 2;
+    panes.max(detail_w).max(footer_w)
 }
 
-fn render_width(app: &App) -> u16 {
-    let panes = repos_pane_width(app) + max_wt_pane_width(app) + 2;
-    let detail = max_detail_width(app);
-    let footer = footer_help_line().width() as u16;
-    panes.max(detail).max(footer)
+fn repos_pane_width(app: &App) -> u16 {
+    let max_name = app.repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
+    (max_name + 7).max(8) as u16
 }
 
 fn viewport_height(app: &App) -> u16 {
@@ -358,7 +360,7 @@ fn viewport_height(app: &App) -> u16 {
 
 fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let width = render_width(app).min(area.width);
+    let width = app.render_width.min(area.width);
     let area = Rect::new(area.x, area.y, width, area.height);
 
     let [content_area, detail_area, footer_area] = Layout::vertical([
@@ -369,7 +371,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     .areas(area);
 
     if app.filtered_repo_indices.is_empty() {
-        frame.render_widget("  no matches \u{b7} backspace to edit".dim(), content_area);
+        frame.render_widget("  no matches · backspace to edit".dim(), content_area);
     } else {
         let repos_w = repos_pane_width(app) + 1;
         let [repos_area, wt_area] =
@@ -414,7 +416,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut list = List::new(items)
         .highlight_style(highlight)
-        .highlight_symbol("\u{203a} ")
+        .highlight_symbol("› ")
         .highlight_spacing(HighlightSpacing::Always)
         .scroll_padding(1);
     if !active {
@@ -424,7 +426,9 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
-    let repo_idx = app.selected_repo_index().unwrap_or(0);
+    let Some(repo_idx) = app.selected_repo_index() else {
+        return;
+    };
     let data_branch_width = app
         .filtered_wt_indices
         .iter()
@@ -455,7 +459,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(if wt.detached { "(detached)" } else { "" });
 
             let display_branch = trunc(branch, trunc_len);
-            let status = format_status(wt.dirty, wt.ahead, wt.behind);
+            let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
 
             let branch_style = if wt.current {
                 app.fg(Color::Green)
@@ -492,12 +496,12 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if items.is_empty() {
         if app.selected_repo_index().is_some() {
-            frame.render_widget("    no matches \u{b7} backspace to edit".dim(), area);
+            frame.render_widget("    no matches · backspace to edit".dim(), area);
         }
     } else {
         let mut list = List::new(items)
             .highlight_style(highlight)
-            .highlight_symbol("\u{203a} ")
+            .highlight_symbol("› ")
             .highlight_spacing(HighlightSpacing::Always)
             .scroll_padding(1);
         if !active {
@@ -518,12 +522,12 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
 fn footer_help_line() -> Line<'static> {
     Line::from(vec![
         Span::raw("  "),
-        Span::raw("\u{2191}\u{2193}"),
+        Span::raw("↑↓"),
         " navigate".dim(),
-        " \u{b7} ".dim(),
-        Span::raw("\u{2190}\u{2192}"),
+        " · ".dim(),
+        Span::raw("←→"),
         " switch".dim(),
-        " \u{b7} ".dim(),
+        " · ".dim(),
         "type to filter".dim(),
     ])
 }
@@ -541,44 +545,16 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(line, area);
 }
 
-fn format_status(dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if dirty {
-        parts.push("*".into());
-    }
-    if let Some(a) = ahead
-        && a > 0
-    {
-        parts.push(format!("\u{2191}{a}"));
-    }
-    if let Some(b) = behind
-        && b > 0
-    {
-        parts.push(format!("\u{2193}{b}"));
-    }
-    if parts.is_empty() {
-        "-".into()
-    } else {
-        parts.join(" ")
-    }
-}
-
-fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
-    let dirty = git.is_dirty(&wt.path);
-    let (ahead, behind) = wt
-        .branch
-        .as_deref()
-        .and_then(|b| git.ahead_behind(b))
-        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
-    (dirty, ahead, behind)
-}
-
 fn load_repos() -> Result<Vec<RepoData>, String> {
     let wt_root = worktree::worktrees_root()?;
+    load_repos_from(&wt_root)
+}
+
+fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
     if !wt_root.is_dir() {
         return Err("no managed worktrees found, use `wt clone` or `wt new` first".into());
     }
-    let wt_root = worktree::canonicalize_or_self(&wt_root);
+    let wt_root = worktree::canonicalize_or_self(wt_root);
     let admin_repos = worktree::discover_repos(&wt_root);
     if admin_repos.is_empty() {
         return Err("no managed worktrees found, use `wt clone` or `wt new` first".into());
@@ -603,7 +579,7 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
                         .iter()
                         .filter(|wt| wt.live() && !wt.bare)
                         .map(|wt| {
-                            let (dirty, ahead, behind) = computed_status(&git, wt);
+                            let (dirty, ahead, behind) = worktree::computed_status(&git, wt);
                             let current = cwd
                                 .as_deref()
                                 .is_some_and(|c| worktree::is_cwd_inside(&wt.path, Some(c)));
@@ -878,6 +854,17 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_d_quits() {
+        let mut app = App::new(test_repos());
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        );
+        assert!(app.quit);
+        assert!(app.selected_path.is_none());
+    }
+
+    #[test]
     fn ctrl_c_clears_filter_when_nonempty() {
         let mut app = App::new(test_repos());
         app.filter = "ot".into();
@@ -978,19 +965,6 @@ mod tests {
         app.refilter();
         assert_eq!(app.filtered_repo_indices.len(), 2);
         assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn format_status_variants() {
-        assert_eq!(format_status(false, None, None), "-");
-        assert_eq!(format_status(true, None, None), "*");
-        assert_eq!(format_status(false, Some(2), None), "\u{2191}2");
-        assert_eq!(format_status(false, None, Some(3)), "\u{2193}3");
-        assert_eq!(
-            format_status(true, Some(1), Some(2)),
-            "* \u{2191}1 \u{2193}2"
-        );
-        assert_eq!(format_status(false, Some(0), Some(0)), "-");
     }
 
     #[test]
@@ -1111,5 +1085,24 @@ mod tests {
             event::KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
         );
         assert_eq!(app.active_pane, Pane::Repos);
+    }
+
+    #[test]
+    fn load_repos_nonexistent_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let Err(err) = load_repos_from(&missing) else {
+            panic!("expected error");
+        };
+        assert!(err.contains("no managed worktrees found"));
+    }
+
+    #[test]
+    fn load_repos_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Err(err) = load_repos_from(tmp.path()) else {
+            panic!("expected error");
+        };
+        assert!(err.contains("no managed worktrees found"));
     }
 }
