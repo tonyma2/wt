@@ -143,3 +143,54 @@ fn tiocgwinsz() -> Option<usize> {
 fn tiocgwinsz() -> Option<usize> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trunc_short_string_unchanged() {
+        assert_eq!(trunc("main", 10), "main");
+        assert_eq!(trunc("main", 4), "main");
+    }
+
+    #[test]
+    fn trunc_long_string_adds_ellipsis() {
+        assert_eq!(trunc("feat/very-long-branch-name", 10), "feat/ve...");
+        assert_eq!(trunc("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn trunc_zero_budget() {
+        assert_eq!(trunc("anything", 0), "");
+    }
+
+    #[test]
+    fn trunc_budget_one() {
+        assert_eq!(trunc("abc", 1), "a");
+    }
+
+    #[test]
+    fn trunc_tail_short_string_unchanged() {
+        assert_eq!(trunc_tail("main", 10), "main");
+        assert_eq!(trunc_tail("main", 4), "main");
+    }
+
+    #[test]
+    fn trunc_tail_long_string_keeps_tail() {
+        assert_eq!(
+            trunc_tail("~/.wt/worktrees/abc123/my-repo", 15),
+            "...c123/my-repo"
+        );
+    }
+
+    #[test]
+    fn trunc_tail_zero_budget() {
+        assert_eq!(trunc_tail("anything", 0), "");
+    }
+
+    #[test]
+    fn trunc_tail_budget_one() {
+        assert_eq!(trunc_tail("abc", 1), "c");
+    }
+}
