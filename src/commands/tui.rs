@@ -7,8 +7,8 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
-    ScrollbarOrientation, ScrollbarState,
+    Block, Clear, HighlightSpacing, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
+    ScrollbarState,
 };
 use ratatui::{Frame, Terminal};
 
@@ -346,9 +346,7 @@ fn float_rect(app: &App, terminal: Rect) -> Rect {
     let content_width = panes_width.max(max_detail_width(app)).max(footer_width);
     let width = (content_width + 4).min(terminal.width.saturating_sub(2));
 
-    let x = terminal.x + (terminal.width.saturating_sub(width)) / 2;
-    let y = terminal.y + (terminal.height.saturating_sub(height)) / 2;
-    Rect::new(x, y, width, height)
+    terminal.centered(Constraint::Length(width), Constraint::Length(height))
 }
 
 fn repos_pane_width(app: &App) -> u16 {
@@ -377,12 +375,10 @@ fn render(frame: &mut Frame, app: &mut App) {
     let available = padded_content.width.saturating_sub(1);
     let repos_w = repos_pane_width(app).min(available * 2 / 5);
 
-    let [repos_area, _gap, wt_area] = Layout::horizontal([
-        Constraint::Length(repos_w),
-        Constraint::Length(1),
-        Constraint::Min(10),
-    ])
-    .areas(padded_content);
+    let [repos_area, wt_area] =
+        Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(10)])
+            .spacing(1)
+            .areas(padded_content);
 
     render_repos(frame, app, repos_area);
     render_worktrees(frame, app, wt_area);
@@ -412,10 +408,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     };
 
     if items.is_empty() {
-        frame.render_widget(
-            Paragraph::new("    no matches \u{b7} backspace to edit".dim()),
-            area,
-        );
+        frame.render_widget("    no matches \u{b7} backspace to edit".dim(), area);
     } else {
         let item_count = items.len();
         let list = List::new(items)
@@ -508,10 +501,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
 
     if items.is_empty() {
         if app.selected_repo_index().is_some() {
-            frame.render_widget(
-                Paragraph::new("    no matches \u{b7} backspace to edit".dim()),
-                area,
-            );
+            frame.render_widget("    no matches \u{b7} backspace to edit".dim(), area);
         }
     } else {
         let item_count = items.len();
@@ -542,10 +532,7 @@ fn render_detail(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         let path_str = term::tilde_path(&wt.path);
         let budget = (area.width as usize).saturating_sub(3);
         let display = trunc_head(&path_str, budget);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec!["  ".dim(), display.dim()])),
-            area,
-        );
+        frame.render_widget(Line::from(vec!["  ".dim(), display.dim()]), area);
     }
 }
 
@@ -572,7 +559,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     } else {
         Line::from(vec!["  / ".dim(), Span::raw(&app.filter)])
     };
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(line, area);
 }
 
 fn trunc(s: &str, max: usize) -> String {
