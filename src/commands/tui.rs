@@ -15,6 +15,8 @@ use crate::git::Git;
 use crate::terminal::{self as term, trunc, trunc_tail};
 use crate::worktree;
 
+const EMPTY_HINT: &str = "no matches · backspace to edit";
+
 struct RepoData {
     name: String,
     worktrees: Vec<WorktreeData>,
@@ -27,16 +29,62 @@ struct WorktreeData {
     branch: Option<String>,
     filter_candidate: String,
     status: String,
+    status_color: Option<Color>,
     detached: bool,
     locked: bool,
     prunable: bool,
-    dirty: bool,
-    ahead: Option<u64>,
-    behind: Option<u64>,
     current: bool,
 }
 
 impl WorktreeData {
+    fn from_worktree(
+        wt: &worktree::Worktree,
+        git: &Git,
+        repo_name: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Self {
+        let (dirty, ahead, behind) = worktree::computed_status(git, wt);
+        let status = worktree::format_status(false, dirty, ahead, behind);
+        let status_color = if dirty {
+            Some(Color::Yellow)
+        } else if ahead.is_some_and(|a| a > 0) || behind.is_some_and(|b| b > 0) {
+            Some(Color::Cyan)
+        } else {
+            None
+        };
+        let filter_candidate = match &wt.branch {
+            Some(b) => format!("{repo_name} {b}"),
+            None => repo_name.to_owned(),
+        };
+        WorktreeData {
+            display_path: term::tilde_path(&wt.path),
+            path: wt.path.clone(),
+            branch: wt.branch.clone(),
+            filter_candidate,
+            status,
+            status_color,
+            detached: wt.detached,
+            locked: wt.locked,
+            prunable: wt.prunable,
+            current: cwd.is_some_and(|c| worktree::is_cwd_inside(&wt.path, Some(c))),
+        }
+    }
+
+    fn sort_key(&self) -> (u8, &str) {
+        let rank = if self
+            .branch
+            .as_deref()
+            .is_some_and(|b| b == "main" || b == "master")
+        {
+            0
+        } else if self.branch.is_some() {
+            1
+        } else {
+            2
+        };
+        (rank, self.branch.as_deref().unwrap_or(""))
+    }
+
     fn display_branch(&self) -> &str {
         self.branch
             .as_deref()
@@ -372,7 +420,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     let pane_area = Rect::new(content_area.x, content_area.y, pane_w, content_area.height);
 
     if app.filtered_repo_indices.is_empty() {
-        frame.render_widget("no matches · backspace to edit".dim(), pane_area);
+        frame.render_widget(EMPTY_HINT.dim(), pane_area);
     } else {
         let repos_w = app.repos_w.min(pane_w / 2);
         let [repos_area, wt_area] =
@@ -475,13 +523,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
             if show_status {
                 let status = &wt.status;
-                let status_style = if wt.dirty {
-                    app.fg(Color::Yellow)
-                } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
-                    app.fg(Color::Cyan)
-                } else {
-                    Style::new().dim()
-                };
+                let status_style = wt.status_color.map_or(Style::new().dim(), |c| app.fg(c));
                 spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
             }
 
@@ -501,7 +543,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if items.is_empty() {
         if app.selected_repo_index().is_some() {
-            frame.render_widget("no matches · backspace to edit".dim(), area);
+            frame.render_widget(EMPTY_HINT.dim(), area);
         }
     } else {
         let mut list = List::new(items)
@@ -596,50 +638,10 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
                     let mut wt_data: Vec<WorktreeData> = worktrees
                         .iter()
                         .filter(|wt| !wt.bare)
-                        .map(|wt| {
-                            let (dirty, ahead, behind) = worktree::computed_status(&git, wt);
-                            let current = cwd
-                                .as_deref()
-                                .is_some_and(|c| worktree::is_cwd_inside(&wt.path, Some(c)));
-                            let filter_candidate = match &wt.branch {
-                                Some(b) => format!("{name} {b}"),
-                                None => name.clone(),
-                            };
-                            let status = worktree::format_status(false, dirty, ahead, behind);
-                            WorktreeData {
-                                display_path: term::tilde_path(&wt.path),
-                                path: wt.path.clone(),
-                                branch: wt.branch.clone(),
-                                filter_candidate,
-                                status,
-                                detached: wt.detached,
-                                locked: wt.locked,
-                                prunable: wt.prunable,
-                                dirty,
-                                ahead,
-                                behind,
-                                current,
-                            }
-                        })
+                        .map(|wt| WorktreeData::from_worktree(wt, &git, &name, cwd.as_deref()))
                         .collect();
 
-                    wt_data.sort_unstable_by(|a, b| {
-                        fn key(wt: &WorktreeData) -> (u8, &str) {
-                            let rank = if wt
-                                .branch
-                                .as_deref()
-                                .is_some_and(|b| b == "main" || b == "master")
-                            {
-                                0
-                            } else if wt.branch.is_some() {
-                                1
-                            } else {
-                                2
-                            };
-                            (rank, wt.branch.as_deref().unwrap_or(""))
-                        }
-                        key(a).cmp(&key(b))
-                    });
+                    wt_data.sort_unstable_by(|a, b| a.sort_key().cmp(&b.sort_key()));
 
                     if wt_data.is_empty() {
                         return None;
@@ -673,9 +675,6 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
 fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|frame| render(frame, app))?;
-        if app.quit {
-            break;
-        }
         loop {
             match event::read()? {
                 Event::Key(key) => {
@@ -685,6 +684,9 @@ fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::R
                 Event::Resize(..) => break,
                 _ => {}
             }
+        }
+        if app.quit {
+            break;
         }
     }
     Ok(())
@@ -736,8 +738,7 @@ mod tests {
                         branch: Some("feat/login".into()),
                         filter_candidate: "my-app feat/login".into(),
                         status: "* ↑2".into(),
-                        dirty: true,
-                        ahead: Some(2),
+                        status_color: Some(Color::Yellow),
                         ..Default::default()
                     },
                 ],
@@ -750,8 +751,7 @@ mod tests {
                     branch: Some("main".into()),
                     filter_candidate: "other-repo main".into(),
                     status: "↓1".into(),
-                    ahead: Some(0),
-                    behind: Some(1),
+                    status_color: Some(Color::Cyan),
                     ..Default::default()
                 }],
             },
@@ -1009,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_narrows_to_one_repo_then_widens_restores_pane() {
+    fn filter_auto_switches_pane_with_result_count() {
         let mut app = App::new(test_repos());
         assert_eq!(app.active_pane, Pane::Repos);
         app.filter = "ot".into();

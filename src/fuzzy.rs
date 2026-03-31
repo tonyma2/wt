@@ -44,7 +44,10 @@ pub fn filter_score(query: &str, candidate: &str) -> Option<usize> {
         prev_char = Some(cc);
     }
 
-    query_chars.peek().is_none().then_some(gap_score * 1000 + first_pos)
+    query_chars
+        .peek()
+        .is_none()
+        .then_some(gap_score * 1000 + first_pos)
 }
 
 pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
