@@ -56,22 +56,32 @@ struct App {
 impl App {
     fn new(repos: Vec<RepoData>) -> Self {
         let filtered_repo_indices: Vec<usize> = (0..repos.len()).collect();
-        let filtered_wt_indices = if let Some(&first) = filtered_repo_indices.first() {
-            (0..repos[first].worktrees.len()).collect()
+
+        let current_repo = repos.iter().position(|r| r.worktrees.iter().any(|wt| wt.current));
+        let selected_repo = current_repo.unwrap_or(0);
+
+        let mut repo_state = ListState::default();
+        if !filtered_repo_indices.is_empty() {
+            repo_state.select(Some(selected_repo));
+        }
+
+        let filtered_wt_indices: Vec<usize> = if selected_repo < repos.len() {
+            (0..repos[selected_repo].worktrees.len()).collect()
         } else {
             Vec::new()
         };
 
-        let mut repo_state = ListState::default();
-        if !filtered_repo_indices.is_empty() {
-            repo_state.select(Some(0));
-        }
+        let wt_start = repos
+            .get(selected_repo)
+            .and_then(|r| r.worktrees.iter().position(|wt| wt.current))
+            .unwrap_or(0);
+
         let mut wt_state = ListState::default();
         if !filtered_wt_indices.is_empty() {
-            wt_state.select(Some(0));
+            wt_state.select(Some(wt_start));
         }
 
-        let active_pane = if filtered_repo_indices.len() == 1 {
+        let active_pane = if filtered_repo_indices.len() == 1 || current_repo.is_some() {
             Pane::Worktrees
         } else {
             Pane::Repos
@@ -714,7 +724,7 @@ mod tests {
                         dirty: false,
                         ahead: None,
                         behind: None,
-                        current: true,
+                        current: false,
                     },
                     WorktreeData {
                         path: PathBuf::from("/wt/my-app/feat"),
@@ -1133,5 +1143,105 @@ mod tests {
             panic!("expected error");
         };
         assert!(err.contains("no managed worktrees found"));
+    }
+
+    #[test]
+    fn pre_selects_current_worktree() {
+        let repos = vec![
+            RepoData {
+                name: "alpha".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/alpha/main"),
+                    display_path: "/wt/alpha/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "alpha main".into(),
+                    detached: false,
+                    locked: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                }],
+            },
+            RepoData {
+                name: "beta".into(),
+                worktrees: vec![
+                    WorktreeData {
+                        path: PathBuf::from("/wt/beta/main"),
+                        display_path: "/wt/beta/main".into(),
+                        branch: Some("main".into()),
+                        filter_candidate: "beta main".into(),
+                        detached: false,
+                        locked: false,
+                        dirty: false,
+                        ahead: None,
+                        behind: None,
+                        current: false,
+                    },
+                    WorktreeData {
+                        path: PathBuf::from("/wt/beta/feat"),
+                        display_path: "/wt/beta/feat".into(),
+                        branch: Some("feat/work".into()),
+                        filter_candidate: "beta feat/work".into(),
+                        detached: false,
+                        locked: false,
+                        dirty: false,
+                        ahead: None,
+                        behind: None,
+                        current: true,
+                    },
+                ],
+            },
+        ];
+        let app = App::new(repos);
+        assert_eq!(app.repo_state.selected(), Some(1));
+        assert_eq!(app.wt_state.selected(), Some(1));
+        assert_eq!(app.active_pane, Pane::Worktrees);
+    }
+
+    #[test]
+    fn pre_selects_current_worktree_after_navigation() {
+        let mut app = App::new(test_repos());
+        assert_eq!(app.wt_state.selected(), Some(0));
+        app.cursor_down();
+        app.cursor_up();
+        assert_eq!(app.repo_state.selected(), Some(0));
+        assert_eq!(app.wt_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn no_current_worktree_selects_first() {
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![
+                WorktreeData {
+                    path: PathBuf::from("/wt/repo/main"),
+                    display_path: "/wt/repo/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "repo main".into(),
+                    detached: false,
+                    locked: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+                WorktreeData {
+                    path: PathBuf::from("/wt/repo/feat"),
+                    display_path: "/wt/repo/feat".into(),
+                    branch: Some("feat".into()),
+                    filter_candidate: "repo feat".into(),
+                    detached: false,
+                    locked: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+            ],
+        }];
+        let app = App::new(repos);
+        assert_eq!(app.repo_state.selected(), Some(0));
+        assert_eq!(app.wt_state.selected(), Some(0));
     }
 }
