@@ -10,6 +10,7 @@ Git worktree manager.
 - **Create and switch** — check out branches into isolated worktrees with `wt new`, or use `wt switch` to find an existing worktree or create one
 - **Clean up** — `wt prune` removes worktrees whose branches are merged or whose upstream is gone
 - **Link shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
+- **Interactive picker** — run `wt` with no arguments to browse repos and worktrees, with fuzzy filtering
 - **Typo detection** — `wt switch` catches misspelled branch names with fuzzy matching before creating a new branch
 - **Script-friendly** — stdout is always data (paths, JSON); messages go to stderr
 
@@ -22,6 +23,7 @@ cargo install --path .
 ## Usage
 
 ```sh
+wt                                   # interactive picker (no args)
 wt clone git@github.com:org/repo     # clone and create first worktree
 wt new my-feature                    # check out existing branch
 wt new -c my-feature                 # create new branch from HEAD
