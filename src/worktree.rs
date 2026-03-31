@@ -92,6 +92,43 @@ pub fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Wo
         .collect()
 }
 
+pub enum Resolved<'a> {
+    Found(&'a Worktree),
+    Ambiguous {
+        matches: Vec<&'a Worktree>,
+        kind: &'static str,
+    },
+    NotFound,
+}
+
+pub fn resolve_worktree<'a>(worktrees: &'a [Worktree], name: &str, git: &Git) -> Resolved<'a> {
+    let matches = find_live_by_branch(worktrees, name);
+    if matches.len() == 1 {
+        return Resolved::Found(matches[0]);
+    }
+    if matches.len() > 1 {
+        return Resolved::Ambiguous {
+            matches,
+            kind: "name",
+        };
+    }
+
+    if let Some(sha) = git.rev_parse(name) {
+        let head_matches = find_live_by_head(worktrees, &sha);
+        if head_matches.len() == 1 {
+            return Resolved::Found(head_matches[0]);
+        }
+        if head_matches.len() > 1 {
+            return Resolved::Ambiguous {
+                matches: head_matches,
+                kind: "ref",
+            };
+        }
+    }
+
+    Resolved::NotFound
+}
+
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
     let canonical = canonicalize_or_self(path);
     worktrees
@@ -161,16 +198,18 @@ pub fn cleanup_dest(dest: &Path) {
     }
 }
 
-pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
+pub(crate) fn wt_home() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
-    Ok(Path::new(&home).join(".wt").join("worktrees"))
+    Ok(Path::new(&home).join(".wt"))
+}
+
+pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
+    wt_home().map(|p| p.join("worktrees"))
 }
 
 pub(crate) fn repos_root() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME")
-        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
-    Ok(Path::new(&home).join(".wt").join("repos"))
+    wt_home().map(|p| p.join("repos"))
 }
 
 pub fn create_bare_dest(repo_name: &str) -> Result<PathBuf, String> {
@@ -587,5 +626,48 @@ prunable gitdir file points to non-existent location
     fn format_status_bare() {
         assert_eq!(format_status(true, false, None, None), "bare");
         assert_eq!(format_status(true, true, Some(1), Some(2)), "bare");
+    }
+
+    #[test]
+    fn resolve_worktree_found_by_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("wt");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir.clone(), Some("feat"))];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "feat", &git);
+        assert!(matches!(result, Resolved::Found(wt) if wt.path == dir));
+    }
+
+    #[test]
+    fn resolve_worktree_ambiguous_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let wts = [
+            make_worktree(a, Some("feat")),
+            make_worktree(b, Some("feat")),
+        ];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "feat", &git);
+        assert!(
+            matches!(result, Resolved::Ambiguous { matches, kind } if matches.len() == 2 && kind == "name")
+        );
+    }
+
+    #[test]
+    fn resolve_worktree_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("wt");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir, Some("main"))];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "other", &git);
+        assert!(matches!(result, Resolved::NotFound));
     }
 }

@@ -20,7 +20,7 @@ struct RepoData {
     worktrees: Vec<WorktreeData>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct WorktreeData {
     path: PathBuf,
     display_path: String,
@@ -157,57 +157,22 @@ impl App {
         self.selected_worktree().map(|wt| wt.path.clone())
     }
 
-    fn cursor_up(&mut self) {
-        match self.active_pane {
-            Pane::Repos => {
-                if let Some(i) = self.repo_state.selected() {
-                    let len = self.filtered_repo_indices.len();
-                    if len == 0 {
-                        return;
-                    }
-                    self.repo_state
-                        .select(Some(if i > 0 { i - 1 } else { len - 1 }));
-                    self.refresh_wt_filter();
-                }
-            }
-            Pane::Worktrees => {
-                if let Some(i) = self.wt_state.selected() {
-                    let len = self.filtered_wt_indices.len();
-                    if len == 0 {
-                        return;
-                    }
-                    self.wt_state
-                        .select(Some(if i > 0 { i - 1 } else { len - 1 }));
-                }
-            }
+    fn cursor_move(&mut self, delta: isize) {
+        let (selected, len) = match self.active_pane {
+            Pane::Repos => (self.repo_state.selected(), self.filtered_repo_indices.len()),
+            Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
+        };
+        let Some(i) = selected else { return };
+        if len == 0 {
+            return;
         }
-    }
-
-    fn cursor_down(&mut self) {
+        let next = (i as isize + delta).rem_euclid(len as isize) as usize;
         match self.active_pane {
             Pane::Repos => {
-                if let Some(i) = self.repo_state.selected() {
-                    let len = self.filtered_repo_indices.len();
-                    if len == 0 {
-                        return;
-                    }
-                    let next = i + 1;
-                    self.repo_state
-                        .select(Some(if next < len { next } else { 0 }));
-                    self.refresh_wt_filter();
-                }
+                self.repo_state.select(Some(next));
+                self.refresh_wt_filter();
             }
-            Pane::Worktrees => {
-                if let Some(i) = self.wt_state.selected() {
-                    let len = self.filtered_wt_indices.len();
-                    if len == 0 {
-                        return;
-                    }
-                    let next = i + 1;
-                    self.wt_state
-                        .select(Some(if next < len { next } else { 0 }));
-                }
-            }
+            Pane::Worktrees => self.wt_state.select(Some(next)),
         }
     }
 
@@ -329,8 +294,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         },
         KeyCode::Tab | KeyCode::BackTab => app.next_pane(),
         KeyCode::Left | KeyCode::Right => app.next_pane(),
-        KeyCode::Up => app.cursor_up(),
-        KeyCode::Down => app.cursor_down(),
+        KeyCode::Up => app.cursor_move(-1),
+        KeyCode::Down => app.cursor_move(1),
         KeyCode::Backspace => {
             app.filter.pop();
             app.refilter();
@@ -763,13 +728,7 @@ mod tests {
                         branch: Some("main".into()),
                         filter_candidate: "my-app main".into(),
                         status: "-".into(),
-                        detached: false,
-                        locked: false,
-                        prunable: false,
-                        dirty: false,
-                        ahead: None,
-                        behind: None,
-                        current: false,
+                        ..Default::default()
                     },
                     WorktreeData {
                         path: PathBuf::from("/wt/my-app/feat"),
@@ -777,13 +736,9 @@ mod tests {
                         branch: Some("feat/login".into()),
                         filter_candidate: "my-app feat/login".into(),
                         status: "* ↑2".into(),
-                        detached: false,
-                        locked: false,
-                        prunable: false,
                         dirty: true,
                         ahead: Some(2),
-                        behind: None,
-                        current: false,
+                        ..Default::default()
                     },
                 ],
             },
@@ -795,13 +750,9 @@ mod tests {
                     branch: Some("main".into()),
                     filter_candidate: "other-repo main".into(),
                     status: "↓1".into(),
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
                     ahead: Some(0),
                     behind: Some(1),
-                    current: false,
+                    ..Default::default()
                 }],
             },
         ]
@@ -821,12 +772,12 @@ mod tests {
     #[test]
     fn cursor_down_up_repos() {
         let mut app = App::new(test_repos());
-        app.cursor_down();
+        app.cursor_move(1);
         assert_eq!(app.repo_state.selected(), Some(1));
         assert_eq!(app.filtered_wt_indices, vec![0]);
-        app.cursor_down();
+        app.cursor_move(1);
         assert_eq!(app.repo_state.selected(), Some(0));
-        app.cursor_up();
+        app.cursor_move(-1);
         assert_eq!(app.repo_state.selected(), Some(1));
     }
 
@@ -834,11 +785,11 @@ mod tests {
     fn cursor_down_up_worktrees() {
         let mut app = App::new(test_repos());
         app.active_pane = Pane::Worktrees;
-        app.cursor_down();
+        app.cursor_move(1);
         assert_eq!(app.wt_state.selected(), Some(1));
-        app.cursor_down();
+        app.cursor_move(1);
         assert_eq!(app.wt_state.selected(), Some(0));
-        app.cursor_up();
+        app.cursor_move(-1);
         assert_eq!(app.wt_state.selected(), Some(1));
     }
 
@@ -1074,7 +1025,7 @@ mod tests {
     #[test]
     fn selecting_second_repo_updates_worktrees() {
         let mut app = App::new(test_repos());
-        app.cursor_down();
+        app.cursor_move(1);
         assert_eq!(app.repo_state.selected(), Some(1));
         assert_eq!(app.filtered_wt_indices, vec![0]);
         app.active_pane = Pane::Worktrees;
@@ -1095,8 +1046,8 @@ mod tests {
         app.refilter();
         assert!(app.filtered_repo_indices.is_empty());
         assert!(app.repo_state.selected().is_none());
-        app.cursor_down();
-        app.cursor_up();
+        app.cursor_move(1);
+        app.cursor_move(-1);
         assert!(app.repo_state.selected().is_none());
     }
 
@@ -1143,17 +1094,9 @@ mod tests {
                 name: format!("repo-{i}"),
                 worktrees: vec![WorktreeData {
                     path: PathBuf::from(format!("/wt/repo-{i}/main")),
-                    display_path: format!("/wt/repo-{i}/main"),
                     branch: Some("main".into()),
                     filter_candidate: format!("repo-{i} main"),
-                    status: "-".into(),
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
+                    ..Default::default()
                 }],
             });
         }
@@ -1219,17 +1162,9 @@ mod tests {
                 name: "alpha".into(),
                 worktrees: vec![WorktreeData {
                     path: PathBuf::from("/wt/alpha/main"),
-                    display_path: "/wt/alpha/main".into(),
                     branch: Some("main".into()),
                     filter_candidate: "alpha main".into(),
-                    status: "-".into(),
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
+                    ..Default::default()
                 }],
             },
             RepoData {
@@ -1237,31 +1172,16 @@ mod tests {
                 worktrees: vec![
                     WorktreeData {
                         path: PathBuf::from("/wt/beta/main"),
-                        display_path: "/wt/beta/main".into(),
                         branch: Some("main".into()),
                         filter_candidate: "beta main".into(),
-                        status: "-".into(),
-                        detached: false,
-                        locked: false,
-                        prunable: false,
-                        dirty: false,
-                        ahead: None,
-                        behind: None,
-                        current: false,
+                        ..Default::default()
                     },
                     WorktreeData {
                         path: PathBuf::from("/wt/beta/feat"),
-                        display_path: "/wt/beta/feat".into(),
                         branch: Some("feat/work".into()),
                         filter_candidate: "beta feat/work".into(),
-                        status: "-".into(),
-                        detached: false,
-                        locked: false,
-                        prunable: false,
-                        dirty: false,
-                        ahead: None,
-                        behind: None,
                         current: true,
+                        ..Default::default()
                     },
                 ],
             },
@@ -1276,8 +1196,8 @@ mod tests {
     fn pre_selects_current_worktree_after_navigation() {
         let mut app = App::new(test_repos());
         assert_eq!(app.wt_state.selected(), Some(0));
-        app.cursor_down();
-        app.cursor_up();
+        app.cursor_move(1);
+        app.cursor_move(-1);
         assert_eq!(app.repo_state.selected(), Some(0));
         assert_eq!(app.wt_state.selected(), Some(0));
     }
@@ -1289,31 +1209,15 @@ mod tests {
             worktrees: vec![
                 WorktreeData {
                     path: PathBuf::from("/wt/repo/main"),
-                    display_path: "/wt/repo/main".into(),
                     branch: Some("main".into()),
                     filter_candidate: "repo main".into(),
-                    status: "-".into(),
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
+                    ..Default::default()
                 },
                 WorktreeData {
                     path: PathBuf::from("/wt/repo/feat"),
-                    display_path: "/wt/repo/feat".into(),
                     branch: Some("feat".into()),
                     filter_candidate: "repo feat".into(),
-                    status: "-".into(),
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
+                    ..Default::default()
                 },
             ],
         }];
@@ -1324,20 +1228,7 @@ mod tests {
 
     #[test]
     fn badge_priority() {
-        let base = WorktreeData {
-            path: PathBuf::from("/wt/r/main"),
-            display_path: "/wt/r/main".into(),
-            branch: Some("main".into()),
-            filter_candidate: "r main".into(),
-            status: "-".into(),
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: false,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
+        let base = WorktreeData::default();
 
         assert!(base.badge().is_none());
 

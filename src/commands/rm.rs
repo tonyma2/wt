@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::fuzzy;
 use crate::git::Git;
 use crate::terminal;
-use crate::worktree::{self, Worktree};
+use crate::worktree::{self, Resolved, Worktree};
 
 pub fn run(
     names: &[String],
@@ -121,33 +121,17 @@ fn resolve_target(
         let git = Git::new(&repo_root);
         let output = git.list_worktrees()?;
         let worktrees = worktree::parse_porcelain(&output);
-        let matches = worktree::find_live_by_branch(&worktrees, name_or_path);
 
-        if matches.len() == 1 {
-            let target = matches[0].path.clone();
-            return Ok((target, repo_root, worktrees));
-        }
-        if matches.len() > 1 {
-            eprintln!("ambiguous name '{name_or_path}'; matches:");
-            for m in &matches {
-                eprintln!("  - {}", m.path.display());
-            }
-            return Err("multiple worktrees match, specify a path instead".into());
-        }
-
-        if let Some(sha) = git.rev_parse(name_or_path) {
-            let head_matches = worktree::find_live_by_head(&worktrees, &sha);
-            if head_matches.len() == 1 {
-                let target = head_matches[0].path.clone();
-                return Ok((target, repo_root, worktrees));
-            }
-            if head_matches.len() > 1 {
-                eprintln!("ambiguous ref '{name_or_path}'; matches:");
-                for m in &head_matches {
+        match worktree::resolve_worktree(&worktrees, name_or_path, &git) {
+            Resolved::Found(wt) => return Ok((wt.path.clone(), repo_root, worktrees)),
+            Resolved::Ambiguous { matches, kind } => {
+                eprintln!("ambiguous {kind} '{name_or_path}'; matches:");
+                for m in &matches {
                     eprintln!("  - {}", m.path.display());
                 }
                 return Err("multiple worktrees match, specify a path instead".into());
             }
+            Resolved::NotFound => {}
         }
 
         let input = Path::new(name_or_path);
