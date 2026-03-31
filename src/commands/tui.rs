@@ -564,14 +564,8 @@ fn load_repos() -> Result<Vec<RepoData>, String> {
 }
 
 fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
-    if !wt_root.is_dir() {
-        return Err("no managed worktrees found, use `wt clone` or `wt new` first".into());
-    }
     let wt_root = worktree::canonicalize_or_self(wt_root);
     let admin_repos = worktree::discover_repos(&wt_root);
-    if admin_repos.is_empty() {
-        return Err("no managed worktrees found, use `wt clone` or `wt new` first".into());
-    }
 
     let cwd = std::env::current_dir()
         .ok()
@@ -655,7 +649,7 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
     });
 
     if repos.is_empty() {
-        return Err("no managed worktrees found, use `wt clone` or `wt new` first".into());
+        return Err("no worktrees".into());
     }
 
     repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
@@ -1133,7 +1127,7 @@ mod tests {
         let Err(err) = load_repos_from(&missing) else {
             panic!("expected error");
         };
-        assert!(err.contains("no managed worktrees found"));
+        assert!(err.contains("no worktrees"));
     }
 
     #[test]
@@ -1142,7 +1136,7 @@ mod tests {
         let Err(err) = load_repos_from(tmp.path()) else {
             panic!("expected error");
         };
-        assert!(err.contains("no managed worktrees found"));
+        assert!(err.contains("no worktrees"));
     }
 
     #[test]
