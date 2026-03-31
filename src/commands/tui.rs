@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState};
+use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 
 use crate::fuzzy;
 use crate::git::Git;
@@ -267,7 +267,16 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.quit = true;
         }
-        KeyCode::Esc => app.quit = true,
+        KeyCode::Esc => {
+            if !app.filter.is_empty() {
+                app.filter.clear();
+                app.refilter();
+            } else if app.active_pane == Pane::Worktrees {
+                app.active_pane = Pane::Repos;
+            } else {
+                app.quit = true;
+            }
+        }
         KeyCode::Enter => match app.active_pane {
             Pane::Repos => {
                 if !app.filtered_wt_indices.is_empty() {
@@ -373,10 +382,10 @@ fn render(frame: &mut Frame, app: &mut App) {
     if app.filtered_repo_indices.is_empty() {
         frame.render_widget("  no matches · backspace to edit".dim(), content_area);
     } else {
-        let repos_w = repos_pane_width(app) + 1;
+        let repos_w = repos_pane_width(app);
         let [repos_area, wt_area] =
             Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(10)])
-                .spacing(1)
+                .spacing(2)
                 .areas(content_area);
 
         render_repos(frame, app, repos_area);
@@ -387,13 +396,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = Block::new()
-        .borders(Borders::RIGHT)
-        .border_style(Style::new().dim());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let content_w = (inner.width as usize).saturating_sub(2);
+    let content_w = (area.width as usize).saturating_sub(2);
     let items: Vec<ListItem> = app
         .filtered_repo_indices
         .iter()
@@ -422,7 +425,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
     if !active {
         list = list.style(Style::new().dim());
     }
-    frame.render_stateful_widget(list, inner, &mut app.repo_state);
+    frame.render_stateful_widget(list, area, &mut app.repo_state);
 }
 
 fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -604,18 +607,16 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
 
                     wt_data.sort_unstable_by(|a, b| {
                         fn key(wt: &WorktreeData) -> (u8, &str) {
-                            let rank = if wt.current {
-                                0
-                            } else if wt
+                            let rank = if wt
                                 .branch
                                 .as_deref()
                                 .is_some_and(|b| b == "main" || b == "master")
                             {
-                                1
+                                0
                             } else if wt.branch.is_some() {
-                                2
+                                1
                             } else {
-                                3
+                                2
                             };
                             (rank, wt.branch.as_deref().unwrap_or(""))
                         }
@@ -832,14 +833,27 @@ mod tests {
     }
 
     #[test]
-    fn esc_quits_without_selection() {
+    fn esc_quits_from_repos_pane() {
         let mut app = App::new(test_repos());
+        assert_eq!(app.active_pane, Pane::Repos);
         handle_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
         );
         assert!(app.quit);
         assert!(app.selected_path.is_none());
+    }
+
+    #[test]
+    fn esc_goes_back_to_repos_from_worktrees() {
+        let mut app = App::new(test_repos());
+        app.active_pane = Pane::Worktrees;
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+        assert!(!app.quit);
+        assert_eq!(app.active_pane, Pane::Repos);
     }
 
     #[test]
@@ -873,6 +887,21 @@ mod tests {
         handle_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.quit);
+        assert!(app.filter.is_empty());
+        assert_eq!(app.filtered_repo_indices.len(), 2);
+    }
+
+    #[test]
+    fn esc_clears_filter_when_nonempty() {
+        let mut app = App::new(test_repos());
+        app.filter = "ot".into();
+        app.refilter();
+        assert_eq!(app.filtered_repo_indices.len(), 1);
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
         );
         assert!(!app.quit);
         assert!(app.filter.is_empty());
