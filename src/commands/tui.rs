@@ -20,17 +20,38 @@ struct RepoData {
     worktrees: Vec<WorktreeData>,
 }
 
+#[derive(Clone)]
 struct WorktreeData {
     path: PathBuf,
     display_path: String,
     branch: Option<String>,
     filter_candidate: String,
+    status: String,
     detached: bool,
     locked: bool,
+    prunable: bool,
     dirty: bool,
     ahead: Option<u64>,
     behind: Option<u64>,
     current: bool,
+}
+
+impl WorktreeData {
+    fn display_branch(&self) -> &str {
+        self.branch
+            .as_deref()
+            .unwrap_or(if self.detached { "(detached)" } else { "" })
+    }
+
+    fn badge(&self) -> Option<(&'static str, Color)> {
+        if self.prunable {
+            Some((" stale", Color::Red))
+        } else if self.locked {
+            Some((" lock", Color::Yellow))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +71,7 @@ struct App {
     quit: bool,
     selected_path: Option<PathBuf>,
     color: bool,
+    repos_w: u16,
     render_width: u16,
 }
 
@@ -57,7 +79,9 @@ impl App {
     fn new(repos: Vec<RepoData>) -> Self {
         let filtered_repo_indices: Vec<usize> = (0..repos.len()).collect();
 
-        let current_repo = repos.iter().position(|r| r.worktrees.iter().any(|wt| wt.current));
+        let current_repo = repos
+            .iter()
+            .position(|r| r.worktrees.iter().any(|wt| wt.current));
         let selected_repo = current_repo.unwrap_or(0);
 
         let mut repo_state = ListState::default();
@@ -88,7 +112,7 @@ impl App {
         };
 
         let color = term::color_enabled(term::is_stdout_tty());
-        let render_width = compute_render_width(&repos);
+        let (repos_w, render_width) = compute_pane_widths(&repos);
 
         Self {
             repos,
@@ -101,6 +125,7 @@ impl App {
             quit: false,
             selected_path: None,
             color,
+            repos_w,
             render_width,
         }
     }
@@ -316,9 +341,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
     }
 }
 
-fn compute_render_width(repos: &[RepoData]) -> u16 {
-    let all_wts = || repos.iter().flat_map(|r| &r.worktrees);
-
+fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
     let repos_w = {
         let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
         (max_name + 7).max(8) as u16
@@ -329,39 +352,30 @@ fn compute_render_width(repos: &[RepoData]) -> u16 {
             let branch_w = repo
                 .worktrees
                 .iter()
-                .map(|wt| {
-                    wt.branch
-                        .as_deref()
-                        .unwrap_or(if wt.detached { "(detached)" } else { "" })
-                        .len()
-                })
+                .map(|wt| wt.display_branch().len())
                 .max()
                 .unwrap_or(4)
                 .clamp(4, 40)
                 + 2;
+            let status_w = repo
+                .worktrees
+                .iter()
+                .map(|wt| wt.status.len())
+                .max()
+                .unwrap_or(1)
+                .max(1)
+                + 2;
             let badge_w: usize = repo
                 .worktrees
                 .iter()
-                .map(|wt| if wt.locked { 7 } else { 0 })
+                .map(|wt| wt.badge().map_or(0, |(s, _)| s.len()))
                 .max()
                 .unwrap_or(0);
-            (2 + branch_w + 8 + badge_w) as u16
+            (2 + branch_w + status_w + badge_w) as u16
         })
         .max()
         .unwrap_or(20);
-    let detail_w = all_wts()
-        .map(|wt| wt.display_path.len() + 2)
-        .max()
-        .unwrap_or(0) as u16;
-    let footer_w = footer_help_line().width() as u16;
-
-    let panes = repos_w + wt_w + 2;
-    panes.max(detail_w).max(footer_w)
-}
-
-fn repos_pane_width(app: &App) -> u16 {
-    let max_name = app.repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
-    (max_name + 7).max(8) as u16
+    (repos_w, repos_w + wt_w + 2)
 }
 
 fn viewport_height(app: &App) -> u16 {
@@ -379,8 +393,6 @@ fn viewport_height(app: &App) -> u16 {
 
 fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let width = app.render_width.min(area.width);
-    let area = Rect::new(area.x, area.y, width, area.height);
 
     let [content_area, detail_area, footer_area] = Layout::vertical([
         Constraint::Min(1),
@@ -389,14 +401,17 @@ fn render(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
+    let pane_w = app.render_width.min(area.width);
+    let pane_area = Rect::new(content_area.x, content_area.y, pane_w, content_area.height);
+
     if app.filtered_repo_indices.is_empty() {
-        frame.render_widget("  no matches · backspace to edit".dim(), content_area);
+        frame.render_widget("no matches · backspace to edit".dim(), pane_area);
     } else {
-        let repos_w = repos_pane_width(app);
+        let repos_w = app.repos_w.min(pane_w / 2);
         let [repos_area, wt_area] =
             Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(10)])
                 .spacing(2)
-                .areas(content_area);
+                .areas(pane_area);
 
         render_repos(frame, app, repos_area);
         render_worktrees(frame, app, wt_area);
@@ -442,37 +457,43 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(repo_idx) = app.selected_repo_index() else {
         return;
     };
-    let data_branch_width = app
-        .filtered_wt_indices
-        .iter()
-        .map(|&i| {
-            let wt = &app.repos[repo_idx].worktrees[i];
-            wt.branch
-                .as_deref()
-                .unwrap_or(if wt.detached { "(detached)" } else { "" })
-                .len()
-        })
-        .max()
-        .unwrap_or(4)
-        .clamp(4, 40)
-        + 2;
-
+    let wts = &app.repos[repo_idx].worktrees;
     let content_w = (area.width as usize).saturating_sub(2);
-    let branch_width = data_branch_width.min(content_w.saturating_sub(8));
+
+    let (ideal_branch, status_w, badge_w) = app.filtered_wt_indices.iter().fold(
+        (0usize, 0usize, 0usize),
+        |(max_b, max_s, max_badge), &i| {
+            let wt = &wts[i];
+            (
+                max_b.max(wt.display_branch().len()),
+                max_s.max(wt.status.len()),
+                max_badge.max(wt.badge().map_or(0, |(s, _)| s.len())),
+            )
+        },
+    );
+    let ideal_branch = ideal_branch.clamp(4, 40) + 2;
+    let status_w = status_w.max(1) + 2;
+    let has_badge = badge_w > 0;
+
+    let (branch_width, show_status, show_badge) = if content_w >= ideal_branch + status_w + badge_w
+    {
+        (ideal_branch, true, has_badge)
+    } else if content_w >= ideal_branch + status_w {
+        (ideal_branch, true, false)
+    } else if content_w >= ideal_branch {
+        (ideal_branch, false, false)
+    } else {
+        (content_w, false, false)
+    };
     let trunc_len = branch_width.saturating_sub(2);
 
     let items: Vec<ListItem> = app
         .filtered_wt_indices
         .iter()
         .map(|&i| {
-            let wt = &app.repos[repo_idx].worktrees[i];
-            let branch =
-                wt.branch
-                    .as_deref()
-                    .unwrap_or(if wt.detached { "(detached)" } else { "" });
+            let wt = &wts[i];
 
-            let display_branch = trunc(branch, trunc_len);
-            let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
+            let display_branch = trunc(wt.display_branch(), trunc_len);
 
             let branch_style = if wt.current {
                 app.fg(Color::Green)
@@ -480,21 +501,25 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
                 Style::new()
             };
 
-            let status_style = if wt.dirty {
-                app.fg(Color::Yellow)
-            } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
-                app.fg(Color::Cyan)
-            } else {
-                Style::new().dim()
-            };
+            let mut spans = vec![Span::styled(
+                format!("{display_branch:<branch_width$}"),
+                branch_style,
+            )];
 
-            let mut spans = vec![
-                Span::styled(format!("{display_branch:<branch_width$}"), branch_style),
-                Span::styled(format!("{status:<8}"), status_style),
-            ];
+            if show_status {
+                let status = &wt.status;
+                let status_style = if wt.dirty {
+                    app.fg(Color::Yellow)
+                } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
+                    app.fg(Color::Cyan)
+                } else {
+                    Style::new().dim()
+                };
+                spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
+            }
 
-            if wt.locked {
-                spans.push(Span::styled(" locked", app.fg(Color::Yellow)));
+            if show_badge && let Some((label, color)) = wt.badge() {
+                spans.push(Span::styled(label, app.fg(color)));
             }
             ListItem::new(Line::from(spans))
         })
@@ -509,7 +534,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if items.is_empty() {
         if app.selected_repo_index().is_some() {
-            frame.render_widget("    no matches · backspace to edit".dim(), area);
+            frame.render_widget("no matches · backspace to edit".dim(), area);
         }
     } else {
         let mut list = List::new(items)
@@ -526,35 +551,40 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(wt) = app.selected_worktree() {
-        let budget = (area.width as usize).saturating_sub(3);
+        let budget = area.width as usize;
         let display = trunc_tail(&wt.display_path, budget);
-        frame.render_widget(Line::from(vec!["  ".dim(), display.dim()]), area);
+        frame.render_widget(display.dim(), area);
     }
 }
 
-fn footer_help_line() -> Line<'static> {
+fn footer_line(app: &App, width: u16) -> Line<'static> {
+    if !app.filter.is_empty() {
+        let prefix = "/ ";
+        let budget = (width as usize).saturating_sub(prefix.len());
+        let display = trunc_tail(&app.filter, budget);
+        return Line::from(vec![prefix.dim(), Span::raw(display)]);
+    }
+
+    let (enter, esc) = match app.active_pane {
+        Pane::Repos => (" open", " quit"),
+        Pane::Worktrees => (" select", " back"),
+    };
     Line::from(vec![
-        Span::raw("  "),
-        Span::raw("↑↓"),
-        " navigate".dim(),
+        Span::raw("enter"),
+        enter.dim(),
         " · ".dim(),
-        Span::raw("←→"),
-        " switch".dim(),
+        Span::raw("esc"),
+        esc.dim(),
         " · ".dim(),
         "type to filter".dim(),
     ])
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let line = if !app.filter.is_empty() {
-        Line::from(vec!["  / ".dim(), Span::raw(&app.filter)])
-    } else {
-        let help = footer_help_line();
-        if (area.width as usize) < help.width() {
-            return;
-        }
-        help
-    };
+    let line = footer_line(app, area.width);
+    if app.filter.is_empty() && (area.width as usize) < line.width() {
+        return;
+    }
     frame.render_widget(line, area);
 }
 
@@ -584,7 +614,7 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
 
                     let mut wt_data: Vec<WorktreeData> = worktrees
                         .iter()
-                        .filter(|wt| wt.live() && !wt.bare)
+                        .filter(|wt| !wt.bare)
                         .map(|wt| {
                             let (dirty, ahead, behind) = worktree::computed_status(&git, wt);
                             let current = cwd
@@ -594,13 +624,16 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
                                 Some(b) => format!("{name} {b}"),
                                 None => name.clone(),
                             };
+                            let status = worktree::format_status(false, dirty, ahead, behind);
                             WorktreeData {
                                 display_path: term::tilde_path(&wt.path),
                                 path: wt.path.clone(),
                                 branch: wt.branch.clone(),
                                 filter_candidate,
+                                status,
                                 detached: wt.detached,
                                 locked: wt.locked,
+                                prunable: wt.prunable,
                                 dirty,
                                 ahead,
                                 behind,
@@ -713,8 +746,10 @@ mod tests {
                         display_path: "/wt/my-app/main".into(),
                         branch: Some("main".into()),
                         filter_candidate: "my-app main".into(),
+                        status: "-".into(),
                         detached: false,
                         locked: false,
+                        prunable: false,
                         dirty: false,
                         ahead: None,
                         behind: None,
@@ -725,8 +760,10 @@ mod tests {
                         display_path: "/wt/my-app/feat".into(),
                         branch: Some("feat/login".into()),
                         filter_candidate: "my-app feat/login".into(),
+                        status: "* ↑2".into(),
                         detached: false,
                         locked: false,
+                        prunable: false,
                         dirty: true,
                         ahead: Some(2),
                         behind: None,
@@ -741,8 +778,10 @@ mod tests {
                     display_path: "/wt/other-repo/main".into(),
                     branch: Some("main".into()),
                     filter_candidate: "other-repo main".into(),
+                    status: "↓1".into(),
                     detached: false,
                     locked: false,
+                    prunable: false,
                     dirty: false,
                     ahead: Some(0),
                     behind: Some(1),
@@ -1075,8 +1114,10 @@ mod tests {
                     display_path: format!("/wt/repo-{i}/main"),
                     branch: Some("main".into()),
                     filter_candidate: format!("repo-{i} main"),
+                    status: "-".into(),
                     detached: false,
                     locked: false,
+                    prunable: false,
                     dirty: false,
                     ahead: None,
                     behind: None,
@@ -1149,8 +1190,10 @@ mod tests {
                     display_path: "/wt/alpha/main".into(),
                     branch: Some("main".into()),
                     filter_candidate: "alpha main".into(),
+                    status: "-".into(),
                     detached: false,
                     locked: false,
+                    prunable: false,
                     dirty: false,
                     ahead: None,
                     behind: None,
@@ -1165,8 +1208,10 @@ mod tests {
                         display_path: "/wt/beta/main".into(),
                         branch: Some("main".into()),
                         filter_candidate: "beta main".into(),
+                        status: "-".into(),
                         detached: false,
                         locked: false,
+                        prunable: false,
                         dirty: false,
                         ahead: None,
                         behind: None,
@@ -1177,8 +1222,10 @@ mod tests {
                         display_path: "/wt/beta/feat".into(),
                         branch: Some("feat/work".into()),
                         filter_candidate: "beta feat/work".into(),
+                        status: "-".into(),
                         detached: false,
                         locked: false,
+                        prunable: false,
                         dirty: false,
                         ahead: None,
                         behind: None,
@@ -1213,8 +1260,10 @@ mod tests {
                     display_path: "/wt/repo/main".into(),
                     branch: Some("main".into()),
                     filter_candidate: "repo main".into(),
+                    status: "-".into(),
                     detached: false,
                     locked: false,
+                    prunable: false,
                     dirty: false,
                     ahead: None,
                     behind: None,
@@ -1225,8 +1274,10 @@ mod tests {
                     display_path: "/wt/repo/feat".into(),
                     branch: Some("feat".into()),
                     filter_candidate: "repo feat".into(),
+                    status: "-".into(),
                     detached: false,
                     locked: false,
+                    prunable: false,
                     dirty: false,
                     ahead: None,
                     behind: None,
@@ -1237,5 +1288,44 @@ mod tests {
         let app = App::new(repos);
         assert_eq!(app.repo_state.selected(), Some(0));
         assert_eq!(app.wt_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn badge_priority() {
+        let base = WorktreeData {
+            path: PathBuf::from("/wt/r/main"),
+            display_path: "/wt/r/main".into(),
+            branch: Some("main".into()),
+            filter_candidate: "r main".into(),
+            status: "-".into(),
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+
+        assert!(base.badge().is_none());
+
+        let locked = WorktreeData {
+            locked: true,
+            ..base.clone()
+        };
+        assert_eq!(locked.badge().unwrap(), (" lock", Color::Yellow));
+
+        let prunable = WorktreeData {
+            prunable: true,
+            ..base.clone()
+        };
+        assert_eq!(prunable.badge().unwrap(), (" stale", Color::Red));
+
+        let both = WorktreeData {
+            locked: true,
+            prunable: true,
+            ..base
+        };
+        assert_eq!(both.badge().unwrap(), (" stale", Color::Red));
     }
 }
