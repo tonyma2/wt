@@ -20,20 +20,31 @@ pub fn filter_score(query: &str, candidate: &str) -> Option<usize> {
         return Some(0);
     }
     let mut query_chars = query.chars().flat_map(char::to_lowercase).peekable();
-    let mut score = 0;
+    let mut gap_score = 0usize;
+    let mut first_pos = 0usize;
     let mut last_match: Option<usize> = None;
+    let mut prev_char: Option<char> = None;
 
     for (ci, cc) in candidate.chars().flat_map(char::to_lowercase).enumerate() {
         if query_chars.peek() == Some(&cc) {
-            if let Some(prev) = last_match {
-                score += ci - prev - 1;
+            match last_match {
+                None => first_pos = ci,
+                Some(prev) => {
+                    let gap = ci - prev - 1;
+                    if gap > 0 {
+                        let boundary =
+                            prev_char.is_some_and(|c| matches!(c, '/' | '-' | '_' | ' ' | '.'));
+                        gap_score += if boundary { 1 } else { gap + 1 };
+                    }
+                }
             }
             last_match = Some(ci);
             query_chars.next();
         }
+        prev_char = Some(cc);
     }
 
-    query_chars.peek().is_none().then_some(score)
+    query_chars.peek().is_none().then_some(gap_score * 1000 + first_pos)
 }
 
 pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
@@ -149,5 +160,19 @@ mod tests {
     #[test]
     fn filter_score_exact_match() {
         assert_eq!(filter_score("main", "main"), Some(0));
+    }
+
+    #[test]
+    fn filter_score_earlier_first_match_wins_tiebreak() {
+        let early = filter_score("m", "my-app main").unwrap();
+        let late = filter_score("m", "other-repo main").unwrap();
+        assert!(early < late);
+    }
+
+    #[test]
+    fn filter_score_boundary_match_cheaper_than_mid_word() {
+        let boundary = filter_score("fl", "feat/login").unwrap();
+        let mid_word = filter_score("fi", "flair").unwrap();
+        assert!(boundary < mid_word);
     }
 }
