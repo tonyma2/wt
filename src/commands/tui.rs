@@ -314,7 +314,9 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Enter => match app.active_pane {
             Pane::Repos => {
-                if !app.filtered_wt_indices.is_empty() {
+                if app.filtered_repo_indices.is_empty() {
+                    app.quit = true;
+                } else if !app.filtered_wt_indices.is_empty() {
                     app.active_pane = Pane::Worktrees;
                 }
             }
@@ -558,26 +560,40 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn footer_line(app: &App, width: u16) -> Line<'static> {
+    let w = width as usize;
+
     if !app.filter.is_empty() {
         let prefix = "/ ";
-        let budget = (width as usize).saturating_sub(prefix.len());
+        let budget = w.saturating_sub(prefix.len());
         let display = trunc_tail(&app.filter, budget);
         return Line::from(vec![prefix.dim(), Span::raw(display)]);
     }
 
-    let (enter, esc) = match app.active_pane {
+    let (enter_action, esc_action) = match app.active_pane {
         Pane::Repos => (" open", " quit"),
         Pane::Worktrees => (" select", " back"),
     };
-    Line::from(vec![
+
+    let base_w = 11 + enter_action.len() + esc_action.len();
+    let tab_w = 13;
+    let filter_w = 17;
+
+    let sep = " · ";
+    let mut spans: Vec<Span> = vec![
         Span::raw("enter"),
-        enter.dim(),
-        " · ".dim(),
+        enter_action.dim(),
+        sep.dim(),
         Span::raw("esc"),
-        esc.dim(),
-        " · ".dim(),
-        "type to filter".dim(),
-    ])
+        esc_action.dim(),
+    ];
+    if w >= base_w + tab_w {
+        spans.extend([sep.dim(), Span::raw("tab"), " switch".dim()]);
+        if w >= base_w + tab_w + filter_w {
+            spans.extend([sep.dim(), "type to filter".dim()]);
+        }
+    }
+
+    Line::from(spans)
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -873,6 +889,22 @@ mod tests {
         );
         assert!(app.quit);
         assert_eq!(app.selected_path, Some(PathBuf::from("/wt/my-app/main")));
+    }
+
+    #[test]
+    fn enter_quits_when_no_results() {
+        for pane in [Pane::Repos, Pane::Worktrees] {
+            let mut app = App::new(test_repos());
+            app.active_pane = pane;
+            app.filter = "zzzzz".into();
+            app.refilter();
+            handle_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            );
+            assert!(app.quit, "enter should quit with no results in {pane:?}");
+            assert!(app.selected_path.is_none());
+        }
     }
 
     #[test]
@@ -1327,5 +1359,60 @@ mod tests {
             ..base
         };
         assert_eq!(both.badge().unwrap(), (" stale", Color::Red));
+    }
+
+    fn line_text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn footer_full_width_shows_all_hints() {
+        let app = App::new(test_repos());
+        let text = line_text(&footer_line(&app, 80));
+        assert!(text.contains("enter"));
+        assert!(text.contains("esc"));
+        assert!(text.contains("tab switch"));
+        assert!(text.contains("type to filter"));
+    }
+
+    #[test]
+    fn footer_medium_width_drops_filter_hint() {
+        let app = App::new(test_repos());
+        let line = footer_line(&app, 40);
+        let text = line_text(&line);
+        assert!(text.contains("tab switch"));
+        assert!(!text.contains("type to filter"));
+    }
+
+    #[test]
+    fn footer_narrow_drops_tab_hint() {
+        let app = App::new(test_repos());
+        let line = footer_line(&app, 25);
+        let text = line_text(&line);
+        assert!(text.contains("enter"));
+        assert!(text.contains("esc"));
+        assert!(!text.contains("tab"));
+    }
+
+    #[test]
+    fn footer_repos_vs_worktrees_actions() {
+        let mut app = App::new(test_repos());
+        let text = line_text(&footer_line(&app, 80));
+        assert!(text.contains("open"));
+        assert!(text.contains("quit"));
+
+        app.active_pane = Pane::Worktrees;
+        let text = line_text(&footer_line(&app, 80));
+        assert!(text.contains("select"));
+        assert!(text.contains("back"));
+    }
+
+    #[test]
+    fn footer_filter_shows_text() {
+        let mut app = App::new(test_repos());
+        app.filter = "test".into();
+        let text = line_text(&footer_line(&app, 80));
+        assert!(text.contains("/ "));
+        assert!(text.contains("test"));
     }
 }
