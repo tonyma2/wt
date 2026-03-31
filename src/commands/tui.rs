@@ -1,7 +1,7 @@
 use std::io;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -201,8 +201,8 @@ impl App {
         Some(&self.repos[repo_idx].worktrees[wt_idx])
     }
 
-    fn selected_worktree_path(&self) -> Option<PathBuf> {
-        self.selected_worktree().map(|wt| wt.path.clone())
+    fn selected_worktree_path(&self) -> Option<&Path> {
+        self.selected_worktree().map(|wt| wt.path.as_path())
     }
 
     fn cursor_move(&mut self, delta: isize) {
@@ -334,9 +334,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                 }
             }
             Pane::Worktrees => {
-                if let Some(path) = app.selected_worktree_path() {
-                    app.selected_path = Some(path);
-                }
+                let path = app.selected_worktree_path().map(Path::to_path_buf);
+                app.selected_path = path;
                 app.quit = true;
             }
         },
@@ -581,22 +580,27 @@ fn footer_line(app: &App, width: u16) -> Line<'static> {
         Pane::Worktrees => (" select", " back"),
     };
 
-    let base_w = 11 + enter_action.len() + esc_action.len();
-    let tab_w = 13;
-    let filter_w = 17;
-
     let sep = " · ";
-    let mut spans: Vec<Span> = vec![
+    let base: Vec<Span> = vec![
         Span::raw("enter"),
         enter_action.dim(),
         sep.dim(),
         Span::raw("esc"),
         esc_action.dim(),
     ];
+    let tab_tier: Vec<Span> = vec![sep.dim(), Span::raw("tab"), " switch".dim()];
+    let filter_tier: Vec<Span> = vec![sep.dim(), "type to filter".dim()];
+
+    let span_w = |spans: &[Span]| -> usize { spans.iter().map(|s| s.content.len()).sum() };
+    let base_w = span_w(&base);
+    let tab_w = span_w(&tab_tier);
+    let filter_w = span_w(&filter_tier);
+
+    let mut spans = base;
     if w >= base_w + tab_w {
-        spans.extend([sep.dim(), Span::raw("tab"), " switch".dim()]);
+        spans.extend(tab_tier);
         if w >= base_w + tab_w + filter_w {
-            spans.extend([sep.dim(), "type to filter".dim()]);
+            spans.extend(filter_tier);
         }
     }
 
@@ -657,10 +661,7 @@ fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
 
         handles
             .into_iter()
-            .filter_map(|h| match h.join() {
-                Ok(repo) => repo,
-                Err(e) => std::panic::resume_unwind(e),
-            })
+            .filter_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
             .collect()
     });
 
@@ -1305,5 +1306,102 @@ mod tests {
         let text = line_text(&footer_line(&app, 80));
         assert!(text.contains("/ "));
         assert!(text.contains("test"));
+    }
+
+    fn init_test_repo(dir: &std::path::Path) {
+        use std::process::Command;
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(dir)
+                    .args(args)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .expect("git failed to start")
+                    .success(),
+                "git {args:?} failed"
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "t@t"]);
+        git(&["commit", "--allow-empty", "-m", "init"]);
+    }
+
+    #[test]
+    fn load_repos_from_real_repo() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let admin = tmp.path().join("repos").join("myrepo");
+        let wt_root = tmp.path().join("worktrees");
+
+        std::fs::create_dir_all(&admin).unwrap();
+        init_test_repo(&admin);
+
+        let wt_dest = wt_root.join("abc123").join("myrepo");
+        std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&admin)
+                .args(["worktree", "add"])
+                .arg(&wt_dest)
+                .args(["-b", "feat", "main"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let repos = load_repos_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "myrepo");
+        assert!(!repos[0].worktrees.is_empty());
+        assert!(
+            repos[0]
+                .worktrees
+                .iter()
+                .any(|wt| wt.branch.as_deref() == Some("feat"))
+        );
+    }
+
+    #[test]
+    fn load_repos_from_multiple_repos() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_root = tmp.path().join("worktrees");
+        std::fs::create_dir_all(&wt_root).unwrap();
+
+        for (name, branch) in [("alpha", "feat-a"), ("beta", "feat-b")] {
+            let admin = tmp.path().join("repos").join(name);
+            std::fs::create_dir_all(&admin).unwrap();
+            init_test_repo(&admin);
+
+            let wt_dest = wt_root.join(format!("id-{name}")).join(name);
+            std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&admin)
+                    .args(["worktree", "add"])
+                    .arg(&wt_dest)
+                    .args(["-b", branch, "main"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let repos = load_repos_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].name, "alpha");
+        assert_eq!(repos[1].name, "beta");
     }
 }
