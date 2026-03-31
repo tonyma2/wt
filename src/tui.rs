@@ -5,7 +5,7 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 
 pub type StdoutTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
-pub fn init(height: u16) -> io::Result<StdoutTerminal> {
+fn init(height: u16) -> io::Result<StdoutTerminal> {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = restore();
@@ -22,7 +22,7 @@ pub fn init(height: u16) -> io::Result<StdoutTerminal> {
     )
 }
 
-pub fn restore() -> io::Result<()> {
+fn restore() -> io::Result<()> {
     ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show)?;
     ratatui::crossterm::terminal::disable_raw_mode()
 }
@@ -34,6 +34,10 @@ where
     let mut terminal = init(height)?;
     let result = f(&mut terminal);
     let _ = terminal.clear();
-    restore()?;
+    if result.is_ok() {
+        restore()?;
+    } else {
+        let _ = restore();
+    }
     result
 }
