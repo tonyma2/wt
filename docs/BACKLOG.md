@@ -14,7 +14,4 @@ Delete when shipped. New entries: `- **title** (P#, S/M/L) — description`
 
 - **Pass through clone progress** (P2, S) — `bare_clone` uses `--quiet` and `Stdio::null()`, swallowing git progress. Drop `--quiet` and inherit stderr so large clones show progress without breaking the stdout-is-data contract.
 
-## Performance
-
-- **Parallelize `wt list` status checks** (P2, S) — `computed_status` shells out twice per worktree sequentially. Precompute with `thread::scope` like TUI `load_repos`. Covers single-repo and `--all` paths.
 

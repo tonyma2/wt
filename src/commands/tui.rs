@@ -11,7 +11,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 
 use crate::fuzzy;
-use crate::git::Git;
 use crate::terminal::{self as term, trunc, trunc_tail};
 use crate::worktree;
 
@@ -37,17 +36,11 @@ struct WorktreeData {
 }
 
 impl WorktreeData {
-    fn from_worktree(
-        wt: &worktree::Worktree,
-        git: &Git,
-        repo_name: &str,
-        cwd: Option<&std::path::Path>,
-    ) -> Self {
-        let (dirty, ahead, behind) = worktree::computed_status(git, wt);
-        let status = worktree::format_status(false, dirty, ahead, behind);
-        let status_color = if dirty {
+    fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
+        let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
+        let status_color = if wt.dirty {
             Some(Color::Yellow)
-        } else if ahead.is_some_and(|a| a > 0) || behind.is_some_and(|b| b > 0) {
+        } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
             Some(Color::Cyan)
         } else {
             None
@@ -66,7 +59,7 @@ impl WorktreeData {
             detached: wt.detached,
             locked: wt.locked,
             prunable: wt.prunable,
-            current: cwd.is_some_and(|c| worktree::is_cwd_inside(&wt.path, Some(c))),
+            current: wt.current,
         }
     }
 
@@ -615,62 +608,24 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(line, area);
 }
 
-fn load_repos() -> Result<Vec<RepoData>, String> {
-    let wt_root = worktree::worktrees_root()?;
-    load_repos_from(&wt_root)
-}
-
-fn load_repos_from(wt_root: &std::path::Path) -> Result<Vec<RepoData>, String> {
-    let wt_root = worktree::canonicalize_or_self(wt_root);
-    let admin_repos = worktree::discover_repos(&wt_root);
-
-    let cwd = std::env::current_dir()
-        .ok()
-        .and_then(|p| p.canonicalize().ok());
-
-    let mut repos: Vec<RepoData> = std::thread::scope(|s| {
-        let handles: Vec<_> = admin_repos
-            .iter()
-            .map(|repo_path| {
-                let cwd = &cwd;
-                s.spawn(move || {
-                    let git = Git::new(repo_path);
-                    let output = git.list_worktrees().ok()?;
-                    let worktrees = worktree::parse_porcelain(&output);
-                    let name = worktree::repo_basename(repo_path);
-
-                    let mut wt_data: Vec<WorktreeData> = worktrees
-                        .iter()
-                        .filter(|wt| !wt.bare)
-                        .map(|wt| WorktreeData::from_worktree(wt, &git, &name, cwd.as_deref()))
-                        .collect();
-
-                    wt_data.sort_unstable_by(|a, b| a.sort_key().cmp(&b.sort_key()));
-
-                    if wt_data.is_empty() {
-                        return None;
-                    }
-
-                    Some(RepoData {
-                        name,
-                        worktrees: wt_data,
-                    })
-                })
-            })
-            .collect();
-
-        handles
-            .into_iter()
-            .filter_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
-            .collect()
-    });
-
-    if repos.is_empty() {
-        return Err("no worktrees".into());
-    }
-
-    repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-    Ok(repos)
+fn build_repos(infos: Vec<worktree::RepoInfo>) -> Vec<RepoData> {
+    infos
+        .into_iter()
+        .filter_map(|repo| {
+            let name = repo.name;
+            let mut worktrees: Vec<WorktreeData> = repo
+                .worktrees
+                .iter()
+                .filter(|wt| !wt.bare)
+                .map(|wt| WorktreeData::from_info(wt, &name))
+                .collect();
+            worktrees.sort_unstable_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+            if worktrees.is_empty() {
+                return None;
+            }
+            Some(RepoData { name, worktrees })
+        })
+        .collect()
 }
 
 fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::Result<()> {
@@ -698,7 +653,11 @@ pub fn run() -> Result<(), String> {
         return Err("cannot launch picker, stdout is not a terminal".into());
     }
 
-    let repos = load_repos()?;
+    let repo_infos = worktree::load_all()?;
+    let repos = build_repos(repo_infos);
+    if repos.is_empty() {
+        return Err("no worktrees".into());
+    }
     let mut app = App::new(repos);
     let height = viewport_height(&app);
 
@@ -1138,25 +1097,6 @@ mod tests {
     }
 
     #[test]
-    fn load_repos_nonexistent_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("does-not-exist");
-        let Err(err) = load_repos_from(&missing) else {
-            panic!("expected error");
-        };
-        assert!(err.contains("no worktrees"));
-    }
-
-    #[test]
-    fn load_repos_empty_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let Err(err) = load_repos_from(tmp.path()) else {
-            panic!("expected error");
-        };
-        assert!(err.contains("no worktrees"));
-    }
-
-    #[test]
     fn pre_selects_current_worktree() {
         let repos = vec![
             RepoData {
@@ -1306,102 +1246,5 @@ mod tests {
         let text = line_text(&footer_line(&app, 80));
         assert!(text.contains("/ "));
         assert!(text.contains("test"));
-    }
-
-    fn init_test_repo(dir: &std::path::Path) {
-        use std::process::Command;
-        let git = |args: &[&str]| {
-            assert!(
-                Command::new("git")
-                    .arg("-C")
-                    .arg(dir)
-                    .args(args)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .expect("git failed to start")
-                    .success(),
-                "git {args:?} failed"
-            );
-        };
-        git(&["init", "-b", "main"]);
-        git(&["config", "user.name", "Test"]);
-        git(&["config", "user.email", "t@t"]);
-        git(&["commit", "--allow-empty", "-m", "init"]);
-    }
-
-    #[test]
-    fn load_repos_from_real_repo() {
-        use std::process::Command;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let admin = tmp.path().join("repos").join("myrepo");
-        let wt_root = tmp.path().join("worktrees");
-
-        std::fs::create_dir_all(&admin).unwrap();
-        init_test_repo(&admin);
-
-        let wt_dest = wt_root.join("abc123").join("myrepo");
-        std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
-        assert!(
-            Command::new("git")
-                .arg("-C")
-                .arg(&admin)
-                .args(["worktree", "add"])
-                .arg(&wt_dest)
-                .args(["-b", "feat", "main"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .unwrap()
-                .success()
-        );
-
-        let repos = load_repos_from(&wt_root).expect("should load repos");
-        assert_eq!(repos.len(), 1);
-        assert_eq!(repos[0].name, "myrepo");
-        assert!(!repos[0].worktrees.is_empty());
-        assert!(
-            repos[0]
-                .worktrees
-                .iter()
-                .any(|wt| wt.branch.as_deref() == Some("feat"))
-        );
-    }
-
-    #[test]
-    fn load_repos_from_multiple_repos() {
-        use std::process::Command;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let wt_root = tmp.path().join("worktrees");
-        std::fs::create_dir_all(&wt_root).unwrap();
-
-        for (name, branch) in [("alpha", "feat-a"), ("beta", "feat-b")] {
-            let admin = tmp.path().join("repos").join(name);
-            std::fs::create_dir_all(&admin).unwrap();
-            init_test_repo(&admin);
-
-            let wt_dest = wt_root.join(format!("id-{name}")).join(name);
-            std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
-            assert!(
-                Command::new("git")
-                    .arg("-C")
-                    .arg(&admin)
-                    .args(["worktree", "add"])
-                    .arg(&wt_dest)
-                    .args(["-b", branch, "main"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .unwrap()
-                    .success()
-            );
-        }
-
-        let repos = load_repos_from(&wt_root).expect("should load repos");
-        assert_eq!(repos.len(), 2);
-        assert_eq!(repos[0].name, "alpha");
-        assert_eq!(repos[1].name, "beta");
     }
 }

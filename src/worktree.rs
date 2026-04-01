@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
+use crate::terminal;
 
 #[derive(Debug, Clone)]
 pub struct Worktree {
@@ -17,6 +18,49 @@ pub struct Worktree {
 impl Worktree {
     pub fn live(&self) -> bool {
         !self.prunable && self.path.exists()
+    }
+}
+
+pub struct RepoInfo {
+    pub name: String,
+    pub worktrees: Vec<WorktreeInfo>,
+}
+
+pub struct WorktreeInfo {
+    pub path: PathBuf,
+    pub head: String,
+    pub branch: Option<String>,
+    pub bare: bool,
+    pub detached: bool,
+    pub locked: bool,
+    pub prunable: bool,
+    pub dirty: bool,
+    pub ahead: Option<u64>,
+    pub behind: Option<u64>,
+    pub current: bool,
+}
+
+impl WorktreeInfo {
+    pub(crate) fn from_worktree(
+        wt: &Worktree,
+        dirty: bool,
+        ahead: Option<u64>,
+        behind: Option<u64>,
+        current: bool,
+    ) -> Self {
+        Self {
+            path: wt.path.clone(),
+            head: wt.head.clone(),
+            branch: wt.branch.clone(),
+            bare: wt.bare,
+            detached: wt.detached,
+            locked: wt.locked,
+            prunable: wt.prunable,
+            dirty,
+            ahead,
+            behind,
+            current,
+        }
     }
 }
 
@@ -370,6 +414,108 @@ pub(crate) fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     }
 }
 
+pub fn find_current_worktree<'a>(
+    worktrees: impl IntoIterator<Item = &'a Worktree>,
+    cwd: Option<&Path>,
+) -> Option<PathBuf> {
+    let cwd = cwd?;
+    worktrees
+        .into_iter()
+        .filter(|wt| !wt.prunable)
+        .filter_map(|wt| {
+            let canonical = canonicalize_or_self(&wt.path);
+            cwd.starts_with(&canonical)
+                .then_some((wt.path.clone(), canonical))
+        })
+        .max_by_key(|(_, canonical)| canonical.components().count())
+        .map(|(path, _)| path)
+}
+
+pub(crate) fn enrich_worktrees(
+    repo_path: &Path,
+    worktrees: &[Worktree],
+    current_path: Option<&Path>,
+) -> Vec<WorktreeInfo> {
+    std::thread::scope(|s| {
+        let handles: Vec<_> = worktrees
+            .iter()
+            .map(|wt| {
+                s.spawn(move || {
+                    let (dirty, ahead, behind) = if wt.bare || wt.prunable {
+                        (false, None, None)
+                    } else {
+                        let git = Git::new(repo_path);
+                        computed_status(&git, wt)
+                    };
+                    let current = current_path == Some(wt.path.as_path());
+                    WorktreeInfo::from_worktree(wt, dirty, ahead, behind, current)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
+pub fn load_all() -> Result<Vec<RepoInfo>, String> {
+    let wt_root = worktrees_root()?;
+    load_all_from(&wt_root)
+}
+
+pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
+    let wt_root = canonicalize_or_self(wt_root);
+    let admin_repos = discover_repos(&wt_root);
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.canonicalize().ok());
+
+    let err_clr = terminal::stderr_colors();
+    let discovered: Vec<_> = admin_repos
+        .iter()
+        .filter_map(|repo_path| {
+            let git = Git::new(repo_path);
+            let output = match git.list_worktrees() {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!(
+                        "{}cannot list {}: {e}{}",
+                        err_clr.red,
+                        repo_path.display(),
+                        err_clr.reset
+                    );
+                    return None;
+                }
+            };
+            let worktrees = parse_porcelain(&output);
+            let name = repo_basename(repo_path);
+            Some((name, repo_path, worktrees))
+        })
+        .collect();
+
+    let current_path = find_current_worktree(
+        discovered.iter().flat_map(|(_, _, wts)| wts.iter()),
+        cwd.as_deref(),
+    );
+    let current_path = current_path.as_deref();
+
+    let mut repos: Vec<RepoInfo> = discovered
+        .into_iter()
+        .filter_map(|(name, repo_path, worktrees)| {
+            let worktrees = enrich_worktrees(repo_path, &worktrees, current_path);
+            if worktrees.is_empty() {
+                return None;
+            }
+            Some(RepoInfo { name, worktrees })
+        })
+        .collect();
+
+    repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    Ok(repos)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,5 +815,109 @@ prunable gitdir file points to non-existent location
 
         let result = resolve_worktree(&wts, "other", &git);
         assert!(matches!(result, Resolved::NotFound));
+    }
+
+    fn init_test_repo(dir: &std::path::Path) {
+        use std::process::Command;
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(dir)
+                    .args(args)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .expect("git failed to start")
+                    .success(),
+                "git {args:?} failed"
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "t@t"]);
+        git(&["commit", "--allow-empty", "-m", "init"]);
+    }
+
+    #[test]
+    fn load_all_from_single_repo() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let admin = tmp.path().join("repos").join("myrepo");
+        let wt_root = tmp.path().join("worktrees");
+
+        std::fs::create_dir_all(&admin).unwrap();
+        init_test_repo(&admin);
+
+        let wt_dest = wt_root.join("abc123").join("myrepo");
+        std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&admin)
+                .args(["worktree", "add"])
+                .arg(&wt_dest)
+                .args(["-b", "feat", "main"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let repos = load_all_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "myrepo");
+        assert!(!repos[0].worktrees.is_empty());
+        assert!(
+            repos[0]
+                .worktrees
+                .iter()
+                .any(|wt| wt.branch.as_deref() == Some("feat"))
+        );
+    }
+
+    #[test]
+    fn load_all_from_multiple_repos() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_root = tmp.path().join("worktrees");
+        std::fs::create_dir_all(&wt_root).unwrap();
+
+        for (name, branch) in [("alpha", "feat-a"), ("beta", "feat-b")] {
+            let admin = tmp.path().join("repos").join(name);
+            std::fs::create_dir_all(&admin).unwrap();
+            init_test_repo(&admin);
+
+            let wt_dest = wt_root.join(format!("id-{name}")).join(name);
+            std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&admin)
+                    .args(["worktree", "add"])
+                    .arg(&wt_dest)
+                    .args(["-b", branch, "main"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let repos = load_all_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].name, "alpha");
+        assert_eq!(repos[1].name, "beta");
+    }
+
+    #[test]
+    fn load_all_from_empty_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repos = load_all_from(tmp.path()).unwrap();
+        assert!(repos.is_empty());
     }
 }
