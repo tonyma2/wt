@@ -668,7 +668,8 @@ pub fn run() -> Result<(), String> {
     if let Some(path) = &app.selected_path
         && let Ok(f) = std::env::var("__WT_CD")
     {
-        std::fs::write(&f, path.as_os_str().as_bytes())
+        let canonical = crate::worktree::canonicalize_or_self(path);
+        std::fs::write(&f, canonical.as_os_str().as_bytes())
             .map_err(|e| format!("cannot write cd path: {e}"))?;
     }
 
