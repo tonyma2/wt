@@ -50,10 +50,10 @@ worktree.rs                  Data loading, parsing, queries
   │  load_all()              parallel loader for list --all, tui (one thread per repo, nested per-worktree threads)
   │  discover_repos()        filesystem walk — used by load_all and prune independently
   │  parse_porcelain()       git porcelain → Vec<Worktree>
-  │  computed_status()       dirty + ahead/behind per worktree
+  │  enrich_worktrees()      parallel dirty + ahead/behind (one thread per worktree)
   │
 git.rs                       Subprocess execution, no business logic
-     list_worktrees()  is_dirty()  ahead_behind()  find_repo()
+     list_worktrees()  worktree_status()  is_dirty()  find_repo()
 ```
 
 Most commands follow the single-repo path: `find_repo → list_worktrees → parse_porcelain → query → act`. Multi-repo commands (`list --all`, `tui`) share `load_all()`. If a new command needs all-repo status data, it should consume `load_all()`, not reimplement the pipeline.

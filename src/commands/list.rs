@@ -36,7 +36,7 @@ pub fn run(repo: Option<&Path>, json: bool, all: bool) -> Result<(), String> {
     let cwd = resolve_cwd();
     let current_path = worktree::find_current_worktree(&worktrees, cwd.as_deref());
 
-    let infos = worktree::enrich_worktrees(&repo_root, &worktrees, current_path.as_deref());
+    let infos = worktree::enrich_worktrees(&worktrees, current_path.as_deref());
 
     if json {
         let entries = build_json_entries(&infos, None);

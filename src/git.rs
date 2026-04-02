@@ -315,26 +315,42 @@ impl Git {
             .is_ok_and(|s| s.success())
     }
 
-    pub fn ahead_behind(&self, branch: &str) -> Option<(u64, u64)> {
-        let output = self
-            .cmd()
+    pub fn worktree_status(worktree_path: &Path) -> (bool, Option<u64>, Option<u64>) {
+        let output = Self::cmd_in(worktree_path)
             .args([
-                "rev-list",
-                "--left-right",
-                "--count",
-                &format!("{branch}@{{upstream}}...{branch}"),
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=normal",
             ])
             .stderr(Stdio::null())
-            .output()
-            .ok()?;
+            .output();
+        let Ok(output) = output else {
+            return (true, None, None);
+        };
         if !output.status.success() {
-            return None;
+            return (true, None, None);
         }
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut parts = text.trim().split('\t');
-        let behind: u64 = parts.next()?.parse().ok()?;
-        let ahead: u64 = parts.next()?.parse().ok()?;
-        Some((ahead, behind))
+        let mut dirty = false;
+        let mut ahead = None;
+        let mut behind = None;
+        for line in text.lines() {
+            if let Some(ab) = line.strip_prefix("# branch.ab ") {
+                let mut parts = ab.split_whitespace();
+                ahead = parts
+                    .next()
+                    .and_then(|s| s.strip_prefix('+'))
+                    .and_then(|s| s.parse().ok());
+                behind = parts
+                    .next()
+                    .and_then(|s| s.strip_prefix('-'))
+                    .and_then(|s| s.parse().ok());
+            } else if !line.starts_with('#') {
+                dirty = true;
+            }
+        }
+        (dirty, ahead, behind)
     }
 
     pub fn is_upstream_gone(&self, branch: &str) -> bool {

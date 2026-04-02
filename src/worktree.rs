@@ -284,16 +284,6 @@ pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&
         .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
-fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
-    let dirty = git.is_dirty(&wt.path);
-    let (ahead, behind) = wt
-        .branch
-        .as_deref()
-        .and_then(|b| git.ahead_behind(b))
-        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
-    (dirty, ahead, behind)
-}
-
 pub fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
     if bare {
         return "bare".into();
@@ -429,7 +419,6 @@ pub fn find_current_worktree<'a>(
 }
 
 pub(crate) fn enrich_worktrees(
-    repo_path: &Path,
     worktrees: &[Worktree],
     current_path: Option<&Path>,
 ) -> Vec<WorktreeInfo> {
@@ -441,8 +430,7 @@ pub(crate) fn enrich_worktrees(
                     let (dirty, ahead, behind) = if wt.bare || wt.prunable {
                         (false, None, None)
                     } else {
-                        let git = Git::new(repo_path);
-                        computed_status(&git, wt)
+                        Git::worktree_status(&wt.path)
                     };
                     let current = current_path == Some(wt.path.as_path());
                     WorktreeInfo::from_worktree(wt, dirty, ahead, behind, current)
@@ -490,7 +478,7 @@ pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
                     };
                     let worktrees = parse_porcelain(&output);
                     let name = repo_basename(repo_path);
-                    let infos = enrich_worktrees(repo_path, &worktrees, None);
+                    let infos = enrich_worktrees(&worktrees, None);
                     if infos.is_empty() {
                         return None;
                     }
