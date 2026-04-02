@@ -36,13 +36,7 @@ struct WorktreeData {
 impl WorktreeData {
     fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
         let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
-        let status_color = if wt.dirty {
-            Some(Color::Yellow)
-        } else if wt.ahead.is_some_and(|a| a > 0) || wt.behind.is_some_and(|b| b > 0) {
-            Some(Color::Cyan)
-        } else {
-            None
-        };
+        let status_color = if wt.dirty { Some(Color::Yellow) } else { None };
         let filter_candidate = match &wt.branch {
             Some(b) => format!("{repo_name} {b}"),
             None => repo_name.to_owned(),
@@ -112,6 +106,9 @@ struct App {
     color: bool,
     repos_w: u16,
     content_width: u16,
+    wt_branch_w: usize,
+    wt_status_w: usize,
+    match_count: usize,
 }
 
 impl App {
@@ -151,7 +148,8 @@ impl App {
         };
 
         let color = term::color_enabled(term::is_stdout_tty());
-        let (repos_w, content_width) = compute_pane_widths(&repos);
+        let (repos_w, content_width, wt_branch_w, wt_status_w) = compute_pane_widths(&repos);
+        let match_count = repos.iter().map(|r| r.worktrees.len()).sum();
 
         Self {
             repos,
@@ -166,6 +164,9 @@ impl App {
             color,
             repos_w,
             content_width,
+            wt_branch_w,
+            wt_status_w,
+            match_count,
         }
     }
 
@@ -225,22 +226,27 @@ impl App {
     fn refilter(&mut self) {
         if self.filter.is_empty() {
             self.filtered_repo_indices = (0..self.repos.len()).collect();
+            self.match_count = self.repos.iter().map(|r| r.worktrees.len()).sum();
         } else {
+            let mut total_matches = 0usize;
             let mut scored: Vec<(usize, usize)> = self
                 .repos
                 .iter()
                 .enumerate()
                 .filter_map(|(i, r)| {
-                    let best = r
-                        .worktrees
-                        .iter()
-                        .filter_map(|wt| fuzzy::filter_score(&self.filter, &wt.filter_candidate))
-                        .min();
+                    let mut best: Option<usize> = None;
+                    for wt in &r.worktrees {
+                        if let Some(s) = fuzzy::filter_score(&self.filter, &wt.filter_candidate) {
+                            total_matches += 1;
+                            best = Some(best.map_or(s, |b: usize| b.min(s)));
+                        }
+                    }
                     best.map(|s| (i, s))
                 })
                 .collect();
             scored.sort_unstable_by_key(|(_, s)| *s);
             self.filtered_repo_indices = scored.into_iter().map(|(i, _)| i).collect();
+            self.match_count = total_matches;
         }
 
         self.repo_state
@@ -346,43 +352,56 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
     }
 }
 
-fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
+fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16, usize, usize) {
     let repos_w = {
         let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
         let highlight = 2; // "› "
         let count_suffix = 5; // " (NN)"
         (max_name + highlight + count_suffix).max(8) as u16
     };
-    let wt_w: u16 = repos
-        .iter()
-        .map(|repo| {
-            let branch_w = repo
-                .worktrees
-                .iter()
-                .map(|wt| wt.display_branch().len())
-                .max()
-                .unwrap_or(4)
-                .clamp(4, 40)
-                + 2;
-            let status_w = repo
-                .worktrees
-                .iter()
-                .map(|wt| wt.status.len())
-                .max()
-                .unwrap_or(1)
-                .max(1)
-                + 2;
-            let badge_w: usize = repo
-                .worktrees
-                .iter()
-                .map(|wt| wt.badge().map_or(0, |(s, _)| s.len()))
-                .max()
-                .unwrap_or(0);
-            (2 + branch_w + status_w + badge_w) as u16
-        })
-        .max()
-        .unwrap_or(20);
-    (repos_w, repos_w + wt_w + 2)
+
+    let mut global_branch_w = 0usize;
+    let mut global_status_w = 0usize;
+    let mut max_wt_w = 0u16;
+
+    for repo in repos {
+        let branch_w = repo
+            .worktrees
+            .iter()
+            .map(|wt| wt.display_branch().len())
+            .max()
+            .unwrap_or(4)
+            .clamp(4, 40)
+            + 2;
+        let status_w = repo
+            .worktrees
+            .iter()
+            .map(|wt| wt.status.len())
+            .max()
+            .unwrap_or(1)
+            .max(1)
+            + 2;
+        let badge_w: usize = repo
+            .worktrees
+            .iter()
+            .map(|wt| wt.badge().map_or(0, |(s, _)| s.len()))
+            .max()
+            .unwrap_or(0);
+        global_branch_w = global_branch_w.max(branch_w);
+        global_status_w = global_status_w.max(status_w);
+        max_wt_w = max_wt_w.max((2 + branch_w + status_w + badge_w) as u16);
+    }
+
+    if max_wt_w == 0 {
+        max_wt_w = 20;
+    }
+
+    (
+        repos_w,
+        repos_w + max_wt_w + 2,
+        global_branch_w,
+        global_status_w,
+    )
 }
 
 fn viewport_height(app: &App) -> u16 {
@@ -424,7 +443,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_worktrees(frame, app, wt_area);
     }
     render_detail(frame, app, detail_area);
-    render_footer(frame, app, footer_area);
+    render_footer(frame, app, footer_area, content_area.height);
 }
 
 fn styled_list<'a>(items: Vec<ListItem<'a>>, active: bool, app: &App) -> List<'a> {
@@ -433,9 +452,10 @@ fn styled_list<'a>(items: Vec<ListItem<'a>>, active: bool, app: &App) -> List<'a
     } else {
         Style::new()
     };
+    let symbol = if active { "› " } else { "  " };
     let mut list = List::new(items)
         .highlight_style(highlight)
-        .highlight_symbol("› ")
+        .highlight_symbol(symbol)
         .highlight_spacing(HighlightSpacing::Always)
         .scroll_padding(1);
     if !active {
@@ -470,19 +490,14 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
     let wts = &app.repos[repo_idx].worktrees;
     let content_w = (area.width as usize).saturating_sub(2);
 
-    let (ideal_branch, status_w, badge_w) = app.filtered_wt_indices.iter().fold(
-        (0usize, 0usize, 0usize),
-        |(max_b, max_s, max_badge), &i| {
-            let wt = &wts[i];
-            (
-                max_b.max(wt.display_branch().len()),
-                max_s.max(wt.status.len()),
-                max_badge.max(wt.badge().map_or(0, |(s, _)| s.len())),
-            )
-        },
-    );
-    let ideal_branch = ideal_branch.clamp(4, 40) + 2;
-    let status_w = status_w.max(1) + 2;
+    let ideal_branch = app.wt_branch_w;
+    let status_w = app.wt_status_w;
+    let badge_w: usize = app
+        .filtered_wt_indices
+        .iter()
+        .map(|&i| wts[i].badge().map_or(0, |(s, _)| s.len()))
+        .max()
+        .unwrap_or(0);
     let has_badge = badge_w > 0;
 
     let (branch_width, show_status, show_badge) = if content_w >= ideal_branch + status_w + badge_w
@@ -518,7 +533,11 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
             if show_status {
                 let status = &wt.status;
-                let status_style = wt.status_color.map_or(Style::new().dim(), |c| app.fg(c));
+                let status_style = match wt.status_color {
+                    Some(c) => app.fg(c),
+                    None if wt.status == "-" => Style::new().dim(),
+                    None => Style::new(),
+                };
                 spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
             }
 
@@ -545,12 +564,25 @@ fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn footer_line(app: &App, width: u16) -> Line<'static> {
+fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
     let w = width as usize;
 
     if !app.filter.is_empty() {
         let prefix = "/ ";
-        let budget = w.saturating_sub(prefix.len());
+        let count_label = if app.match_count == 1 {
+            " · 1 match".to_owned()
+        } else {
+            format!(" · {} matches", app.match_count)
+        };
+        let prefix_w = prefix.len();
+        let count_w = count_label.len();
+
+        if w > prefix_w + count_w {
+            let query_budget = w - prefix_w - count_w;
+            let display = trunc_tail(&app.filter, query_budget);
+            return Line::from(vec![prefix.dim(), Span::raw(display), count_label.dim()]);
+        }
+        let budget = w.saturating_sub(prefix_w);
         let display = trunc_tail(&app.filter, budget);
         return Line::from(vec![prefix.dim(), Span::raw(display)]);
     }
@@ -571,24 +603,40 @@ fn footer_line(app: &App, width: u16) -> Line<'static> {
     let tab_tier: Vec<Span> = vec![sep.dim(), Span::raw("tab"), " switch".dim()];
     let filter_tier: Vec<Span> = vec![sep.dim(), "type to filter".dim()];
 
+    let (selected, len) = match app.active_pane {
+        Pane::Repos => (app.repo_state.selected(), app.filtered_repo_indices.len()),
+        Pane::Worktrees => (app.wt_state.selected(), app.filtered_wt_indices.len()),
+    };
+    let pos_tier: Option<Vec<Span>> = if len > visible_rows as usize {
+        selected.map(|i| vec![sep.dim(), format!("{}/{}", i + 1, len).dim()])
+    } else {
+        None
+    };
+
     let span_w = |spans: &[Span]| -> usize { spans.iter().map(|s| s.content.len()).sum() };
     let base_w = span_w(&base);
     let tab_w = span_w(&tab_tier);
     let filter_w = span_w(&filter_tier);
+    let pos_w = pos_tier.as_ref().map_or(0, |t| span_w(t));
 
     let mut spans = base;
     if w >= base_w + tab_w {
         spans.extend(tab_tier);
-        if w >= base_w + tab_w + filter_w {
+        if w >= base_w + tab_w + filter_w + pos_w {
             spans.extend(filter_tier);
+        }
+        if let Some(pos) = pos_tier
+            && w >= span_w(&spans) + pos_w
+        {
+            spans.extend(pos);
         }
     }
 
     Line::from(spans)
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let line = footer_line(app, area.width);
+fn render_footer(frame: &mut Frame, app: &App, area: Rect, visible_rows: u16) {
+    let line = footer_line(app, area.width, visible_rows);
     if app.filter.is_empty() && (area.width as usize) < line.width() {
         return;
     }
@@ -1187,7 +1235,7 @@ mod tests {
     #[test]
     fn footer_full_width_shows_all_hints() {
         let app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80));
+        let text = line_text(&footer_line(&app, 80, 10));
         assert!(text.contains("enter"));
         assert!(text.contains("esc"));
         assert!(text.contains("tab switch"));
@@ -1197,7 +1245,7 @@ mod tests {
     #[test]
     fn footer_medium_width_drops_filter_hint() {
         let app = App::new(test_repos());
-        let line = footer_line(&app, 40);
+        let line = footer_line(&app, 40, 10);
         let text = line_text(&line);
         assert!(text.contains("tab switch"));
         assert!(!text.contains("type to filter"));
@@ -1206,7 +1254,7 @@ mod tests {
     #[test]
     fn footer_narrow_drops_tab_hint() {
         let app = App::new(test_repos());
-        let line = footer_line(&app, 25);
+        let line = footer_line(&app, 25, 10);
         let text = line_text(&line);
         assert!(text.contains("enter"));
         assert!(text.contains("esc"));
@@ -1216,12 +1264,12 @@ mod tests {
     #[test]
     fn footer_repos_vs_worktrees_actions() {
         let mut app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80));
+        let text = line_text(&footer_line(&app, 80, 10));
         assert!(text.contains("open"));
         assert!(text.contains("quit"));
 
         app.active_pane = Pane::Worktrees;
-        let text = line_text(&footer_line(&app, 80));
+        let text = line_text(&footer_line(&app, 80, 10));
         assert!(text.contains("select"));
         assert!(text.contains("back"));
     }
@@ -1230,9 +1278,38 @@ mod tests {
     fn footer_filter_shows_text() {
         let mut app = App::new(test_repos());
         app.filter = "test".into();
-        let text = line_text(&footer_line(&app, 80));
+        let text = line_text(&footer_line(&app, 80, 10));
         assert!(text.contains("/ "));
         assert!(text.contains("test"));
+    }
+
+    #[test]
+    fn footer_filter_shows_match_count() {
+        let mut app = App::new(test_repos());
+        app.filter = "main".into();
+        app.refilter();
+        let text = line_text(&footer_line(&app, 80, 10));
+        assert!(text.contains("3 matches"), "got: {text}");
+    }
+
+    #[test]
+    fn footer_filter_shows_singular_match() {
+        let mut app = App::new(test_repos());
+        app.filter = "login".into();
+        app.refilter();
+        let text = line_text(&footer_line(&app, 80, 10));
+        assert!(text.contains("1 match"), "got: {text}");
+        assert!(!text.contains("matches"));
+    }
+
+    #[test]
+    fn footer_filter_hides_count_at_narrow_width() {
+        let mut app = App::new(test_repos());
+        app.filter = "main".into();
+        app.refilter();
+        let text = line_text(&footer_line(&app, 12, 10));
+        assert!(text.contains("main"));
+        assert!(!text.contains("match"));
     }
 
     #[test]
@@ -1293,7 +1370,7 @@ mod tests {
     }
 
     #[test]
-    fn from_info_ahead_behind_is_cyan() {
+    fn from_info_ahead_behind_has_no_color() {
         let info = worktree::WorktreeInfo {
             path: PathBuf::from("/wt/repo/feat"),
             head: "abc".into(),
@@ -1308,7 +1385,7 @@ mod tests {
             current: false,
         };
         let data = WorktreeData::from_info(&info, "repo");
-        assert_eq!(data.status_color, Some(Color::Cyan));
+        assert_eq!(data.status_color, None);
     }
 
     #[test]
@@ -1429,14 +1506,16 @@ mod tests {
     #[test]
     fn compute_pane_widths_basic() {
         let repos = test_repos();
-        let (repos_w, content_w) = compute_pane_widths(&repos);
+        let (repos_w, content_w, branch_w, status_w) = compute_pane_widths(&repos);
         assert!(repos_w >= 8);
         assert!(content_w > repos_w);
+        assert!(branch_w >= 6);
+        assert!(status_w >= 3);
     }
 
     #[test]
     fn compute_pane_widths_empty() {
-        let (repos_w, _) = compute_pane_widths(&[]);
+        let (repos_w, _, _, _) = compute_pane_widths(&[]);
         assert!(repos_w >= 8);
     }
 
@@ -1521,6 +1600,46 @@ mod tests {
             .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(line.contains("/wt/my-app/main"));
+    }
+
+    #[test]
+    fn footer_shows_position_when_scrollable() {
+        let app = App::new(test_repos());
+        let text = line_text(&footer_line(&app, 80, 1));
+        assert!(text.contains("1/2"), "expected position, got: {text}");
+    }
+
+    #[test]
+    fn footer_no_position_when_fits() {
+        let app = App::new(test_repos());
+        let text = line_text(&footer_line(&app, 80, 10));
+        assert!(
+            !text.contains("1/2"),
+            "should not show position, got: {text}"
+        );
+    }
+
+    #[test]
+    fn render_detail_no_position() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let app = App::new(test_repos());
+
+        terminal
+            .draw(|frame| {
+                render_detail(frame, &app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            !line.contains("1/2"),
+            "should not show position when list fits"
+        );
     }
 
     #[test]
