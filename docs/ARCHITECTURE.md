@@ -30,7 +30,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 
 ## Key Types
 
-**`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exception: `is_dirty()` runs against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
+**`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exceptions: `is_dirty()` and `worktree_status()` run against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
 
 **`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_live_by_branch()`, `find_live_by_head()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
 
