@@ -469,62 +469,72 @@ pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
         .ok()
         .and_then(|p| p.canonicalize().ok());
 
-    let discovered: Vec<_> = admin_repos
-        .iter()
-        .filter_map(|repo_path| {
-            let git = Git::new(repo_path);
-            let output = match git.list_worktrees() {
-                Ok(o) => o,
-                Err(e) => {
-                    let clr = terminal::stderr_colors();
-                    eprintln!(
-                        "{}cannot list {}: {e}{}",
-                        clr.red,
-                        repo_path.display(),
-                        clr.reset
-                    );
-                    return None;
-                }
-            };
-            let worktrees = parse_porcelain(&output);
-            let name = repo_basename(repo_path);
-            Some((name, repo_path, worktrees))
-        })
-        .collect();
-
-    let current_path = find_current_worktree(
-        discovered.iter().flat_map(|(_, _, wts)| wts.iter()),
-        cwd.as_deref(),
-    );
-    let current_path = current_path.as_deref();
-
     let mut repos: Vec<RepoInfo> = std::thread::scope(|s| {
-        let handles: Vec<_> = discovered
-            .into_iter()
-            .map(|(name, repo_path, worktrees)| {
-                (
-                    name,
-                    s.spawn(move || enrich_worktrees(repo_path, &worktrees, current_path)),
-                )
+        let handles: Vec<_> = admin_repos
+            .iter()
+            .map(|repo_path| {
+                s.spawn(move || {
+                    let git = Git::new(repo_path);
+                    let output = match git.list_worktrees() {
+                        Ok(o) => o,
+                        Err(e) => {
+                            let clr = terminal::stderr_colors();
+                            eprintln!(
+                                "{}cannot list {}: {e}{}",
+                                clr.red,
+                                repo_path.display(),
+                                clr.reset
+                            );
+                            return None;
+                        }
+                    };
+                    let worktrees = parse_porcelain(&output);
+                    let name = repo_basename(repo_path);
+                    let infos = enrich_worktrees(repo_path, &worktrees, None);
+                    if infos.is_empty() {
+                        return None;
+                    }
+                    Some(RepoInfo {
+                        name,
+                        worktrees: infos,
+                    })
+                })
             })
             .collect();
 
         handles
             .into_iter()
-            .filter_map(|(name, handle)| {
-                let worktrees = handle
-                    .join()
-                    .unwrap_or_else(|e| std::panic::resume_unwind(e));
-                if worktrees.is_empty() {
-                    return None;
-                }
-                Some(RepoInfo { name, worktrees })
-            })
+            .filter_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
             .collect()
     });
 
+    if let Some(cwd) = &cwd {
+        mark_current(&mut repos, cwd);
+    }
+
     repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     Ok(repos)
+}
+
+fn mark_current(repos: &mut [RepoInfo], cwd: &Path) {
+    let mut best: Option<(usize, usize, usize)> = None;
+    for (ri, repo) in repos.iter().enumerate() {
+        for (wi, wt) in repo.worktrees.iter().enumerate() {
+            if wt.prunable {
+                continue;
+            }
+            let canonical = canonicalize_or_self(&wt.path);
+            if cwd.starts_with(&canonical) {
+                let depth = canonical.components().count();
+                if best.is_none_or(|(_, _, d)| depth > d) {
+                    best = Some((ri, wi, depth));
+                }
+            }
+        }
+    }
+    if let Some((ri, wi, _)) = best {
+        repos[ri].worktrees[wi].current = true;
+    }
 }
 
 #[cfg(test)]
