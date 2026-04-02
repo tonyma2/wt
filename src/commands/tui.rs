@@ -535,8 +535,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
                 let status = &wt.status;
                 let status_style = match wt.status_color {
                     Some(c) => app.fg(c),
-                    None if wt.status == "-" => Style::new().dim(),
-                    None => Style::new(),
+                    None => Style::new().dim(),
                 };
                 spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
             }
