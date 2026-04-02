@@ -193,4 +193,31 @@ mod tests {
     fn trunc_tail_budget_one() {
         assert_eq!(trunc_tail("abc", 1), "c");
     }
+
+    #[test]
+    fn tilde_path_substitutes_home() {
+        let home = std::env::var("HOME").unwrap();
+        let path = std::path::PathBuf::from(&home).join("projects/repo");
+        assert_eq!(tilde_path(&path), "~/projects/repo");
+    }
+
+    #[test]
+    fn tilde_path_home_alone() {
+        let home = std::env::var("HOME").unwrap();
+        let path = std::path::PathBuf::from(&home);
+        assert_eq!(tilde_path(&path), "~");
+    }
+
+    #[test]
+    fn tilde_path_no_match() {
+        let path = std::path::PathBuf::from("/other/path");
+        assert_eq!(tilde_path(&path), "/other/path");
+    }
+
+    #[test]
+    fn tilde_path_no_false_prefix_match() {
+        let home = std::env::var("HOME").unwrap();
+        let fake = std::path::PathBuf::from(format!("{home}extra/dir"));
+        assert_eq!(tilde_path(&fake), fake.to_string_lossy().as_ref());
+    }
 }

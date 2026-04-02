@@ -19,35 +19,54 @@ pub fn filter_score(query: &str, candidate: &str) -> Option<usize> {
     if query.is_empty() {
         return Some(0);
     }
-    let mut query_chars = query.chars().flat_map(char::to_lowercase).peekable();
+    let query_lc: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    let cand_lc: Vec<char> = candidate.chars().flat_map(char::to_lowercase).collect();
+
+    let mut best = score_from(&query_lc, &cand_lc, 0);
+
+    for i in 1..cand_lc.len() {
+        if cand_lc[i] == query_lc[0]
+            && is_boundary(cand_lc[i - 1])
+            && let Some(s) = score_from(&query_lc, &cand_lc, i)
+        {
+            best = Some(best.map_or(s, |b| b.min(s)));
+        }
+    }
+
+    best
+}
+
+fn is_boundary(c: char) -> bool {
+    matches!(c, '/' | '-' | '_' | ' ' | '.')
+}
+
+fn score_from(query: &[char], candidate: &[char], start: usize) -> Option<usize> {
+    let mut qi = 0;
     let mut gap_score = 0usize;
     let mut first_pos = 0usize;
     let mut last_match: Option<usize> = None;
-    let mut prev_char: Option<char> = None;
 
-    for (ci, cc) in candidate.chars().flat_map(char::to_lowercase).enumerate() {
-        if query_chars.peek() == Some(&cc) {
+    for ci in start..candidate.len() {
+        if candidate[ci] == query[qi] {
             match last_match {
                 None => first_pos = ci,
                 Some(prev) => {
                     let gap = ci - prev - 1;
                     if gap > 0 {
-                        let boundary =
-                            prev_char.is_some_and(|c| matches!(c, '/' | '-' | '_' | ' ' | '.'));
+                        let boundary = ci > 0 && is_boundary(candidate[ci - 1]);
                         gap_score += if boundary { 1 } else { gap + 1 };
                     }
                 }
             }
             last_match = Some(ci);
-            query_chars.next();
+            qi += 1;
+            if qi == query.len() {
+                break;
+            }
         }
-        prev_char = Some(cc);
     }
 
-    query_chars
-        .peek()
-        .is_none()
-        .then_some(gap_score * 1000 + first_pos)
+    (qi == query.len()).then_some(gap_score * 1000 + first_pos)
 }
 
 pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
@@ -55,7 +74,7 @@ pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if len == 0 {
         return None;
     }
-    // ~1 edit per 3 chars, min 2 to avoid false positives on short names, capped at half the input length
+    // ~1 edit per 3 chars, capped at half the input length
     let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
     candidates
         .iter()
@@ -177,5 +196,21 @@ mod tests {
         let boundary = filter_score("fl", "feat/login").unwrap();
         let mid_word = filter_score("fi", "flair").unwrap();
         assert!(boundary < mid_word);
+    }
+
+    #[test]
+    fn filter_score_query_longer_than_candidate() {
+        assert_eq!(filter_score("abcdef", "ab"), None);
+    }
+
+    #[test]
+    fn filter_score_empty_candidate() {
+        assert_eq!(filter_score("a", ""), None);
+    }
+
+    #[test]
+    fn filter_score_boundary_start_beats_greedy() {
+        let score = filter_score("main", "my-app main").unwrap();
+        assert_eq!(score, 7, "should find 'main' at word boundary position 7");
     }
 }

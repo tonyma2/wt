@@ -284,10 +284,7 @@ pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&
         .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
-pub fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
-    if wt.bare || wt.prunable {
-        return (false, None, None);
-    }
+fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
     let dirty = git.is_dirty(&wt.path);
     let (ahead, behind) = wt
         .branch
@@ -472,7 +469,6 @@ pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
         .ok()
         .and_then(|p| p.canonicalize().ok());
 
-    let err_clr = terminal::stderr_colors();
     let discovered: Vec<_> = admin_repos
         .iter()
         .filter_map(|repo_path| {
@@ -480,11 +476,12 @@ pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
             let output = match git.list_worktrees() {
                 Ok(o) => o,
                 Err(e) => {
+                    let clr = terminal::stderr_colors();
                     eprintln!(
                         "{}cannot list {}: {e}{}",
-                        err_clr.red,
+                        clr.red,
                         repo_path.display(),
-                        err_clr.reset
+                        clr.reset
                     );
                     return None;
                 }
@@ -501,16 +498,30 @@ pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
     );
     let current_path = current_path.as_deref();
 
-    let mut repos: Vec<RepoInfo> = discovered
-        .into_iter()
-        .filter_map(|(name, repo_path, worktrees)| {
-            let worktrees = enrich_worktrees(repo_path, &worktrees, current_path);
-            if worktrees.is_empty() {
-                return None;
-            }
-            Some(RepoInfo { name, worktrees })
-        })
-        .collect();
+    let mut repos: Vec<RepoInfo> = std::thread::scope(|s| {
+        let handles: Vec<_> = discovered
+            .into_iter()
+            .map(|(name, repo_path, worktrees)| {
+                (
+                    name,
+                    s.spawn(move || enrich_worktrees(repo_path, &worktrees, current_path)),
+                )
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .filter_map(|(name, handle)| {
+                let worktrees = handle
+                    .join()
+                    .unwrap_or_else(|e| std::panic::resume_unwind(e));
+                if worktrees.is_empty() {
+                    return None;
+                }
+                Some(RepoInfo { name, worktrees })
+            })
+            .collect()
+    });
 
     repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     Ok(repos)

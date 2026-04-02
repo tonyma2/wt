@@ -1,6 +1,4 @@
 use std::io;
-#[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use ratatui::Frame;
@@ -113,7 +111,7 @@ struct App {
     selected_path: Option<PathBuf>,
     color: bool,
     repos_w: u16,
-    render_width: u16,
+    content_width: u16,
 }
 
 impl App {
@@ -153,7 +151,7 @@ impl App {
         };
 
         let color = term::color_enabled(term::is_stdout_tty());
-        let (repos_w, render_width) = compute_pane_widths(&repos);
+        let (repos_w, content_width) = compute_pane_widths(&repos);
 
         Self {
             repos,
@@ -167,7 +165,7 @@ impl App {
             selected_path: None,
             color,
             repos_w,
-            render_width,
+            content_width,
         }
     }
 
@@ -351,7 +349,9 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
 fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
     let repos_w = {
         let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
-        (max_name + 7).max(8) as u16
+        let highlight = 2; // "› "
+        let count_suffix = 5; // " (NN)"
+        (max_name + highlight + count_suffix).max(8) as u16
     };
     let wt_w: u16 = repos
         .iter()
@@ -408,7 +408,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    let pane_w = app.render_width.min(area.width);
+    let pane_w = app.content_width.min(area.width);
     let pane_area = Rect::new(content_area.x, content_area.y, pane_w, content_area.height);
 
     if app.filtered_repo_indices.is_empty() {
@@ -427,6 +427,23 @@ fn render(frame: &mut Frame, app: &mut App) {
     render_footer(frame, app, footer_area);
 }
 
+fn styled_list<'a>(items: Vec<ListItem<'a>>, active: bool, app: &App) -> List<'a> {
+    let highlight = if active {
+        app.fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let mut list = List::new(items)
+        .highlight_style(highlight)
+        .highlight_symbol("› ")
+        .highlight_spacing(HighlightSpacing::Always)
+        .scroll_padding(1);
+    if !active {
+        list = list.style(Style::new().dim());
+    }
+    list
+}
+
 fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
     let content_w = (area.width as usize).saturating_sub(2);
     let items: Vec<ListItem> = app
@@ -442,21 +459,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let active = app.active_pane == Pane::Repos;
-    let highlight = if active {
-        app.fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-
-    let mut list = List::new(items)
-        .highlight_style(highlight)
-        .highlight_symbol("› ")
-        .highlight_spacing(HighlightSpacing::Always)
-        .scroll_padding(1);
-    if !active {
-        list = list.style(Style::new().dim());
-    }
+    let list = styled_list(items, app.active_pane == Pane::Repos, app);
     frame.render_stateful_widget(list, area, &mut app.repo_state);
 }
 
@@ -526,26 +529,10 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let active = app.active_pane == Pane::Worktrees;
-    let highlight = if active {
-        app.fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-
     if items.is_empty() {
-        if app.selected_repo_index().is_some() {
-            frame.render_widget(EMPTY_HINT.dim(), area);
-        }
+        frame.render_widget(EMPTY_HINT.dim(), area);
     } else {
-        let mut list = List::new(items)
-            .highlight_style(highlight)
-            .highlight_symbol("› ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .scroll_padding(1);
-        if !active {
-            list = list.style(Style::new().dim());
-        }
+        let list = styled_list(items, app.active_pane == Pane::Worktrees, app);
         frame.render_stateful_widget(list, area, &mut app.wt_state);
     }
 }
@@ -664,12 +651,11 @@ pub fn run() -> Result<(), String> {
     crate::tui::run(height, |terminal| event_loop(terminal, &mut app))
         .map_err(|e| format!("cannot run picker: {e}"))?;
 
-    #[cfg(unix)]
     if let Some(path) = &app.selected_path
         && let Ok(f) = std::env::var("__WT_CD")
     {
         let canonical = crate::worktree::canonicalize_or_self(path);
-        std::fs::write(&f, canonical.as_os_str().as_bytes())
+        std::fs::write(&f, canonical.as_os_str().as_encoded_bytes())
             .map_err(|e| format!("cannot write cd path: {e}"))?;
     }
 
@@ -1078,8 +1064,8 @@ mod tests {
         app.filter = "main".into();
         app.refilter();
         assert_eq!(app.filtered_repo_indices.len(), 2);
-        assert_eq!(app.repos[app.filtered_repo_indices[0]].name, "other-repo");
-        assert_eq!(app.repos[app.filtered_repo_indices[1]].name, "my-app");
+        assert_eq!(app.repos[app.filtered_repo_indices[0]].name, "my-app");
+        assert_eq!(app.repos[app.filtered_repo_indices[1]].name, "other-repo");
     }
 
     #[test]
@@ -1247,5 +1233,341 @@ mod tests {
         let text = line_text(&footer_line(&app, 80));
         assert!(text.contains("/ "));
         assert!(text.contains("test"));
+    }
+
+    #[test]
+    fn sort_key_main_first() {
+        let main = WorktreeData {
+            branch: Some("main".into()),
+            ..Default::default()
+        };
+        let master = WorktreeData {
+            branch: Some("master".into()),
+            ..Default::default()
+        };
+        let feat = WorktreeData {
+            branch: Some("feat/login".into()),
+            ..Default::default()
+        };
+        let detached = WorktreeData {
+            detached: true,
+            ..Default::default()
+        };
+
+        assert!(main.sort_key() < feat.sort_key());
+        assert!(master.sort_key() < feat.sort_key());
+        assert!(feat.sort_key() < detached.sort_key());
+    }
+
+    #[test]
+    fn sort_key_branches_alphabetical() {
+        let a = WorktreeData {
+            branch: Some("feat/a".into()),
+            ..Default::default()
+        };
+        let b = WorktreeData {
+            branch: Some("feat/b".into()),
+            ..Default::default()
+        };
+        assert!(a.sort_key() < b.sort_key());
+    }
+
+    #[test]
+    fn from_info_dirty_is_yellow() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/feat"),
+            head: "abc".into(),
+            branch: Some("feat".into()),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: true,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.status_color, Some(Color::Yellow));
+        assert_eq!(data.filter_candidate, "repo feat");
+    }
+
+    #[test]
+    fn from_info_ahead_behind_is_cyan() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/feat"),
+            head: "abc".into(),
+            branch: Some("feat".into()),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: false,
+            ahead: Some(1),
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.status_color, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn from_info_clean_has_no_color() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/main"),
+            head: "abc".into(),
+            branch: Some("main".into()),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.status_color, None);
+    }
+
+    #[test]
+    fn from_info_detached_no_branch_candidate() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/detached"),
+            head: "abc123".into(),
+            branch: None,
+            bare: false,
+            detached: true,
+            locked: false,
+            prunable: false,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.filter_candidate, "repo");
+        assert_eq!(data.display_branch(), "(detached)");
+    }
+
+    #[test]
+    fn build_repos_filters_bare_and_sorts() {
+        let infos = vec![worktree::RepoInfo {
+            name: "repo".into(),
+            worktrees: vec![
+                worktree::WorktreeInfo {
+                    path: PathBuf::from("/admin"),
+                    head: "abc".into(),
+                    branch: Some("main".into()),
+                    bare: true,
+                    detached: false,
+                    locked: false,
+                    prunable: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+                worktree::WorktreeInfo {
+                    path: PathBuf::from("/wt/feat"),
+                    head: "def".into(),
+                    branch: Some("feat/z".into()),
+                    bare: false,
+                    detached: false,
+                    locked: false,
+                    prunable: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+                worktree::WorktreeInfo {
+                    path: PathBuf::from("/wt/main"),
+                    head: "ghi".into(),
+                    branch: Some("main".into()),
+                    bare: false,
+                    detached: false,
+                    locked: false,
+                    prunable: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+            ],
+        }];
+
+        let repos = build_repos(infos);
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].worktrees.len(), 2);
+        assert_eq!(repos[0].worktrees[0].branch.as_deref(), Some("main"));
+        assert_eq!(repos[0].worktrees[1].branch.as_deref(), Some("feat/z"));
+    }
+
+    #[test]
+    fn build_repos_drops_empty() {
+        let infos = vec![worktree::RepoInfo {
+            name: "bare-only".into(),
+            worktrees: vec![worktree::WorktreeInfo {
+                path: PathBuf::from("/admin"),
+                head: "abc".into(),
+                branch: None,
+                bare: true,
+                detached: false,
+                locked: false,
+                prunable: false,
+                dirty: false,
+                ahead: None,
+                behind: None,
+                current: false,
+            }],
+        }];
+
+        assert!(build_repos(infos).is_empty());
+    }
+
+    #[test]
+    fn compute_pane_widths_basic() {
+        let repos = test_repos();
+        let (repos_w, content_w) = compute_pane_widths(&repos);
+        assert!(repos_w >= 8);
+        assert!(content_w > repos_w);
+    }
+
+    #[test]
+    fn compute_pane_widths_empty() {
+        let (repos_w, _) = compute_pane_widths(&[]);
+        assert!(repos_w >= 8);
+    }
+
+    #[test]
+    fn render_repos_pane() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+
+        terminal
+            .draw(|frame| {
+                render_repos(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(first_line.contains("my-app"));
+    }
+
+    #[test]
+    fn render_worktrees_pane() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(50, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+        app.active_pane = Pane::Worktrees;
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(first_line.contains("main"));
+    }
+
+    #[test]
+    fn render_worktrees_empty_shows_hint() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+        app.filtered_wt_indices.clear();
+        app.wt_state.select(None);
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(first_line.contains("no matches"));
+    }
+
+    #[test]
+    fn render_detail_shows_path() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let app = App::new(test_repos());
+
+        terminal
+            .draw(|frame| {
+                render_detail(frame, &app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(line.contains("/wt/my-app/main"));
+    }
+
+    #[test]
+    fn render_full_layout() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(60, 6);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+
+        terminal
+            .draw(|frame| {
+                render(frame, &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = (0..buf.area().height)
+            .flat_map(|y| {
+                let buf = &buf;
+                (0..buf.area().width)
+                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(all_text.contains("my-app"));
+        assert!(all_text.contains("enter"));
+    }
+
+    #[test]
+    fn render_worktrees_column_collapse() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(15, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            first_line.contains("main"),
+            "branch should still show at narrow width"
+        );
     }
 }

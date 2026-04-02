@@ -22,7 +22,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 │   └── tui.rs          Interactive picker — two-pane repo/worktree browser with fuzzy filter
 ├── tui.rs              Ratatui terminal setup/teardown (inline viewport, raw mode, panic hook)
 ├── config.rs           Read/write ~/.wt/config TOML (auto-link persistence)
-├── fuzzy.rs            Levenshtein distance + close-match detection for typo prevention
+├── fuzzy.rs            Levenshtein distance + close-match detection + subsequence scoring for TUI filter
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
 ├── worktree.rs         Worktree type + porcelain parser + query helpers + shared parallel loader (load_all)
 └── terminal.rs         TTY/color detection, stderr color support, terminal width (COLUMNS env, ioctl fallback, then 132)
@@ -47,7 +47,7 @@ commands/                    Formatting, display, user interaction
   │  multi-repo:  load_all() → Vec<RepoInfo> → format/render
   │
 worktree.rs                  Data loading, parsing, queries
-  │  load_all()              parallel loader for list --all, tui (bounded by available_parallelism)
+  │  load_all()              parallel loader for list --all, tui (one thread per repo, nested per-worktree threads)
   │  discover_repos()        filesystem walk — used by load_all and prune independently
   │  parse_porcelain()       git porcelain → Vec<Worktree>
   │  computed_status()       dirty + ahead/behind per worktree
