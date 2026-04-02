@@ -8,7 +8,7 @@ const SH_WRAPPER: &str = "wt() {
     __wt_cd=$(mktemp) || return 1
     __WT_CD=\"$__wt_cd\" command wt
     local ret=$?
-    [ -s \"$__wt_cd\" ] && cd -- \"$(cat \"$__wt_cd\")\"
+    if [ -s \"$__wt_cd\" ]; then cd -- \"$(cat \"$__wt_cd\")\" || ret=$?; fi
     rm -f \"$__wt_cd\"
     return $ret
   fi
@@ -26,7 +26,9 @@ const FISH_WRAPPER: &str = "function wt --wraps=wt
     set -l __wt_cd (mktemp); or return 1
     __WT_CD=$__wt_cd command wt
     set -l ret $status
-    test -s $__wt_cd; and cd -- (cat $__wt_cd)
+    if test -s $__wt_cd
+      cd -- (cat $__wt_cd); or set ret $status
+    end
     rm -f $__wt_cd
     return $ret
   end
