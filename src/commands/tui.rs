@@ -29,7 +29,6 @@ struct WorktreeData {
     status_color: Option<Color>,
     detached: bool,
     locked: bool,
-    prunable: bool,
     current: bool,
 }
 
@@ -50,7 +49,6 @@ impl WorktreeData {
             status_color,
             detached: wt.detached,
             locked: wt.locked,
-            prunable: wt.prunable,
             current: wt.current,
         }
     }
@@ -77,9 +75,7 @@ impl WorktreeData {
     }
 
     fn badge(&self) -> Option<(&'static str, Color)> {
-        if self.prunable {
-            Some((" stale", Color::Red))
-        } else if self.locked {
+        if self.locked {
             Some((" lock", Color::Yellow))
         } else {
             None
@@ -650,7 +646,7 @@ fn build_repos(infos: Vec<worktree::RepoInfo>) -> Vec<RepoData> {
             let mut worktrees: Vec<WorktreeData> = repo
                 .worktrees
                 .iter()
-                .filter(|wt| !wt.bare)
+                .filter(|wt| !wt.bare && !wt.prunable)
                 .map(|wt| WorktreeData::from_info(wt, &name))
                 .collect();
             worktrees.sort_unstable_by(|a, b| a.sort_key().cmp(&b.sort_key()));
@@ -1202,29 +1198,15 @@ mod tests {
     }
 
     #[test]
-    fn badge_priority() {
+    fn badge_locked() {
         let base = WorktreeData::default();
-
         assert!(base.badge().is_none());
 
         let locked = WorktreeData {
             locked: true,
-            ..base.clone()
-        };
-        assert_eq!(locked.badge().unwrap(), (" lock", Color::Yellow));
-
-        let prunable = WorktreeData {
-            prunable: true,
-            ..base.clone()
-        };
-        assert_eq!(prunable.badge().unwrap(), (" stale", Color::Red));
-
-        let both = WorktreeData {
-            locked: true,
-            prunable: true,
             ..base
         };
-        assert_eq!(both.badge().unwrap(), (" stale", Color::Red));
+        assert_eq!(locked.badge().unwrap(), (" lock", Color::Yellow));
     }
 
     fn line_text(line: &Line) -> String {
@@ -1427,7 +1409,7 @@ mod tests {
     }
 
     #[test]
-    fn build_repos_filters_bare_and_sorts() {
+    fn build_repos_filters_bare_prunable_and_sorts() {
         let infos = vec![worktree::RepoInfo {
             name: "repo".into(),
             worktrees: vec![
@@ -1439,6 +1421,19 @@ mod tests {
                     detached: false,
                     locked: false,
                     prunable: false,
+                    dirty: false,
+                    ahead: None,
+                    behind: None,
+                    current: false,
+                },
+                worktree::WorktreeInfo {
+                    path: PathBuf::from("/wt/stale"),
+                    head: "xxx".into(),
+                    branch: Some("stale-branch".into()),
+                    bare: false,
+                    detached: false,
+                    locked: false,
+                    prunable: true,
                     dirty: false,
                     ahead: None,
                     behind: None,
