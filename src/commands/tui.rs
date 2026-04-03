@@ -295,6 +295,14 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.quit = true;
         }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if !app.filter.is_empty() {
+                let pane = app.active_pane;
+                app.filter.clear();
+                app.refilter();
+                app.active_pane = pane;
+            }
+        }
         KeyCode::Esc => {
             if !app.filter.is_empty() {
                 app.filter.clear();
@@ -485,6 +493,8 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
             let branch_style = if wt.current {
                 app.fg(Color::Green)
+            } else if wt.detached {
+                app.fg(Color::Yellow)
             } else {
                 Style::new()
             };
@@ -903,6 +913,35 @@ mod tests {
         assert!(!app.quit);
         assert!(app.filter.is_empty());
         assert_eq!(app.filtered_repo_indices.len(), 2);
+    }
+
+    #[test]
+    fn ctrl_u_clears_filter_preserving_pane() {
+        let mut app = App::new(test_repos());
+        app.active_pane = Pane::Worktrees;
+        app.filter = "ot".into();
+        app.refilter();
+        assert_eq!(app.active_pane, Pane::Worktrees);
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.quit);
+        assert!(app.filter.is_empty());
+        assert_eq!(app.filtered_repo_indices.len(), 2);
+        assert_eq!(app.active_pane, Pane::Worktrees);
+    }
+
+    #[test]
+    fn ctrl_u_noop_when_filter_empty() {
+        let mut app = App::new(test_repos());
+        app.active_pane = Pane::Worktrees;
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.quit);
+        assert_eq!(app.active_pane, Pane::Worktrees);
     }
 
     #[test]
@@ -1550,6 +1589,44 @@ mod tests {
             .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(first_line.contains("main"));
+    }
+
+    #[test]
+    fn detached_worktree_styled_yellow() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![
+                WorktreeData {
+                    path: PathBuf::from("/wt/repo/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "repo main".into(),
+                    ..Default::default()
+                },
+                WorktreeData {
+                    path: PathBuf::from("/wt/repo/detached"),
+                    branch: None,
+                    detached: true,
+                    filter_candidate: "repo".into(),
+                    ..Default::default()
+                },
+            ],
+        }];
+        let backend = TestBackend::new(50, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+        app.active_pane = Pane::Worktrees;
+        app.color = true;
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let cell = &buf[(2, 1)];
+        assert_eq!(cell.fg, Color::Yellow);
     }
 
     #[test]
