@@ -32,7 +32,7 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 
 **`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exceptions: `is_dirty()` and `worktree_status()` run against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
 
-**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `find_live_by_branch()`, `find_live_by_head()`, `find_by_path()`, `branch_checked_out_elsewhere()`.
+**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `resolve_worktree()`, `find_by_path()`, `branch_checked_out_elsewhere()`, `find_current_worktree()`, `find_primary()`.
 
 **`RepoInfo` / `WorktreeInfo`** (`worktree.rs`) — Returned by `load_all()`. `WorktreeInfo` mirrors `Worktree` fields and adds computed status: `dirty`, `ahead`, `behind`, `current`. `RepoInfo` groups worktrees by repo name. This is the canonical data model for multi-repo views — both `list --all` and `tui` consume it.
 
