@@ -193,9 +193,6 @@ impl App {
             Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
         };
         let Some(i) = selected else { return };
-        if len == 0 {
-            return;
-        }
         let next = (i as isize + delta).rem_euclid(len as isize) as usize;
         match self.active_pane {
             Pane::Repos => {
@@ -312,7 +309,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             Pane::Repos => {
                 if app.filtered_repo_indices.is_empty() {
                     app.quit = true;
-                } else if !app.filtered_wt_indices.is_empty() {
+                } else {
                     app.active_pane = Pane::Worktrees;
                 }
             }
@@ -324,11 +321,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         },
         KeyCode::Tab | KeyCode::BackTab => app.next_pane(),
         KeyCode::Left => app.active_pane = Pane::Repos,
-        KeyCode::Right => {
-            if !app.filtered_wt_indices.is_empty() {
-                app.active_pane = Pane::Worktrees;
-            }
-        }
+        KeyCode::Right => app.active_pane = Pane::Worktrees,
         KeyCode::Up => app.cursor_move(-1),
         KeyCode::Down => app.cursor_move(1),
         KeyCode::Backspace => {
@@ -359,7 +352,11 @@ fn worktree_column_widths<'a>(
 
 fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
     let repos_w = {
-        let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
+        let max_name = repos
+            .iter()
+            .map(|r| r.name.chars().count())
+            .max()
+            .unwrap_or(4);
         let highlight = 2; // "› "
         let count_suffix = 5; // " (NN)"
         (max_name + highlight + count_suffix).max(8) as u16
@@ -370,10 +367,6 @@ fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
     for repo in repos {
         let (branch_w, status_w, badge_w) = worktree_column_widths(repo.worktrees.iter());
         max_wt_w = max_wt_w.max((2 + branch_w + status_w + badge_w) as u16);
-    }
-
-    if max_wt_w == 0 {
-        max_wt_w = 20;
     }
 
     (repos_w, repos_w + max_wt_w + 2)
@@ -518,12 +511,8 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    if items.is_empty() {
-        frame.render_widget(EMPTY_HINT.dim(), area);
-    } else {
-        let list = styled_list(items, app.active_pane == Pane::Worktrees, app);
-        frame.render_stateful_widget(list, area, &mut app.wt_state);
-    }
+    let list = styled_list(items, app.active_pane == Pane::Worktrees, app);
+    frame.render_stateful_widget(list, area, &mut app.wt_state);
 }
 
 fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
@@ -1046,17 +1035,6 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_repos_pane_does_not_switch_when_no_worktrees() {
-        let mut app = App::new(test_repos());
-        app.filtered_wt_indices.clear();
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
     fn backspace_on_empty_filter_is_noop() {
         let mut app = App::new(test_repos());
         assert!(app.filter.is_empty());
@@ -1572,28 +1550,6 @@ mod tests {
             .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(first_line.contains("main"));
-    }
-
-    #[test]
-    fn render_worktrees_empty_shows_hint() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(40, 3);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-        app.filtered_wt_indices.clear();
-        app.wt_state.select(None);
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(first_line.contains("no matches"));
     }
 
     #[test]

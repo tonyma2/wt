@@ -875,16 +875,26 @@ prunable gitdir file points to non-existent location
                 .success()
         );
 
+        std::fs::write(wt_dest.join("dirty.txt"), "change").unwrap();
+
         let repos = load_all_from(&wt_root).expect("should load repos");
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].name, "myrepo");
         assert!(!repos[0].worktrees.is_empty());
-        assert!(
-            repos[0]
-                .worktrees
-                .iter()
-                .any(|wt| wt.branch.as_deref() == Some("feat"))
-        );
+
+        let feat = repos[0]
+            .worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feat"))
+            .expect("should have feat worktree");
+        assert!(feat.dirty);
+
+        let clean = repos[0]
+            .worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() != Some("feat"))
+            .expect("should have other worktree");
+        assert!(!clean.dirty);
     }
 
     #[test]

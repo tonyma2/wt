@@ -271,4 +271,57 @@ mod tests {
         assert_eq!(trunc_tail("abcde", 5), "abcde");
         assert_eq!(trunc_tail("abcde", 4), "...e");
     }
+
+    #[test]
+    fn color_enabled_respects_tty() {
+        assert!(!color_enabled(false));
+    }
+
+    #[test]
+    fn color_enabled_respects_no_color() {
+        let had = std::env::var("NO_COLOR").ok();
+        unsafe { std::env::set_var("NO_COLOR", "1") };
+        let result = color_enabled(true);
+        match had {
+            Some(v) => unsafe { std::env::set_var("NO_COLOR", v) },
+            None => unsafe { std::env::remove_var("NO_COLOR") },
+        }
+        assert!(!result);
+    }
+
+    #[test]
+    fn color_enabled_respects_term_dumb() {
+        let had = std::env::var("TERM").ok();
+        unsafe { std::env::set_var("TERM", "dumb") };
+        let result = color_enabled(true);
+        match had {
+            Some(v) => unsafe { std::env::set_var("TERM", v) },
+            None => unsafe { std::env::remove_var("TERM") },
+        }
+        assert!(!result);
+    }
+
+    #[test]
+    fn width_from_columns_env() {
+        let had = std::env::var("COLUMNS").ok();
+        unsafe { std::env::set_var("COLUMNS", "200") };
+        let w = width();
+        match had {
+            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
+            None => unsafe { std::env::remove_var("COLUMNS") },
+        }
+        assert_eq!(w, 200);
+    }
+
+    #[test]
+    fn width_clamps_to_72() {
+        let had = std::env::var("COLUMNS").ok();
+        unsafe { std::env::set_var("COLUMNS", "40") };
+        let w = width();
+        match had {
+            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
+            None => unsafe { std::env::remove_var("COLUMNS") },
+        }
+        assert_eq!(w, 72);
+    }
 }
