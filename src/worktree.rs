@@ -284,9 +284,14 @@ pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&
         .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
-pub fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
+pub fn format_status(
+    bare: bool,
+    dirty: bool,
+    ahead: Option<u64>,
+    behind: Option<u64>,
+) -> Option<String> {
     if bare {
-        return "bare".into();
+        return Some("bare".into());
     }
     let mut parts: Vec<String> = Vec::new();
     if dirty {
@@ -303,9 +308,9 @@ pub fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option
         parts.push(format!("↓{b}"));
     }
     if parts.is_empty() {
-        "-".into()
+        None
     } else {
-        parts.join(" ")
+        Some(parts.join(" "))
     }
 }
 
@@ -761,26 +766,82 @@ prunable gitdir file points to non-existent location
 
     #[test]
     fn format_status_clean() {
-        assert_eq!(format_status(false, false, None, None), "-");
-        assert_eq!(format_status(false, false, Some(0), Some(0)), "-");
+        assert_eq!(format_status(false, false, None, None), None);
+        assert_eq!(format_status(false, false, Some(0), Some(0)), None);
     }
 
     #[test]
     fn format_status_dirty() {
-        assert_eq!(format_status(false, true, None, None), "*");
+        assert_eq!(format_status(false, true, None, None), Some("*".into()));
     }
 
     #[test]
     fn format_status_ahead_behind() {
-        assert_eq!(format_status(false, false, Some(2), None), "↑2");
-        assert_eq!(format_status(false, false, None, Some(3)), "↓3");
-        assert_eq!(format_status(false, true, Some(1), Some(2)), "* ↑1 ↓2");
+        assert_eq!(
+            format_status(false, false, Some(2), None),
+            Some("↑2".into())
+        );
+        assert_eq!(
+            format_status(false, false, None, Some(3)),
+            Some("↓3".into())
+        );
+        assert_eq!(
+            format_status(false, true, Some(1), Some(2)),
+            Some("* ↑1 ↓2".into())
+        );
     }
 
     #[test]
     fn format_status_bare() {
-        assert_eq!(format_status(true, false, None, None), "bare");
-        assert_eq!(format_status(true, true, Some(1), Some(2)), "bare");
+        assert_eq!(format_status(true, false, None, None), Some("bare".into()));
+        assert_eq!(
+            format_status(true, true, Some(1), Some(2)),
+            Some("bare".into())
+        );
+    }
+
+    #[test]
+    fn parse_gitdir_absolute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "gitdir: /abs/path/to/.git/worktrees/feat").unwrap();
+        let result = parse_gitdir(&dot_git);
+        assert_eq!(
+            result,
+            Some(PathBuf::from("/abs/path/to/.git/worktrees/feat"))
+        );
+    }
+
+    #[test]
+    fn parse_gitdir_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let dot_git = sub.join(".git");
+        std::fs::write(&dot_git, "gitdir: ../../admin/.git/worktrees/feat").unwrap();
+        let result = parse_gitdir(&dot_git).unwrap();
+        assert_eq!(result, sub.join("../../admin/.git/worktrees/feat"));
+    }
+
+    #[test]
+    fn parse_gitdir_empty_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "gitdir: ").unwrap();
+        assert_eq!(parse_gitdir(&dot_git), None);
+    }
+
+    #[test]
+    fn parse_gitdir_no_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "some random content").unwrap();
+        assert_eq!(parse_gitdir(&dot_git), None);
+    }
+
+    #[test]
+    fn parse_gitdir_missing_file() {
+        assert_eq!(parse_gitdir(Path::new("/nonexistent/.git")), None);
     }
 
     #[test]

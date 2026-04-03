@@ -142,7 +142,8 @@ fn print_table(worktrees: &[WorktreeInfo], cols: usize, clr: &Colors, indent: &s
             .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
-        let status = worktree::format_status(wt.bare, wt.dirty, wt.ahead, wt.behind);
+        let status = worktree::format_status(wt.bare, wt.dirty, wt.ahead, wt.behind)
+            .unwrap_or_else(|| "-".into());
         let status_trunc = trunc(&status, status_w);
 
         let path_str = terminal::tilde_path(&wt.path);

@@ -19,7 +19,7 @@ struct RepoData {
     worktrees: Vec<WorktreeData>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct WorktreeData {
     path: PathBuf,
     display_path: String,
@@ -34,8 +34,8 @@ struct WorktreeData {
 
 impl WorktreeData {
     fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
-        let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
-        let status = if status == "-" { String::new() } else { status };
+        let status =
+            worktree::format_status(false, wt.dirty, wt.ahead, wt.behind).unwrap_or_default();
         let filter_candidate = match &wt.branch {
             Some(b) => format!("{repo_name} {b}"),
             None => repo_name.to_owned(),
@@ -193,6 +193,9 @@ impl App {
             Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
         };
         let Some(i) = selected else { return };
+        if len == 0 {
+            return;
+        }
         let next = (i as isize + delta).rem_euclid(len as isize) as usize;
         match self.active_pane {
             Pane::Repos => {
@@ -366,7 +369,8 @@ fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
             .max()
             .unwrap_or(4);
         let highlight = 2; // "› "
-        let count_suffix = 5; // " (NN)"
+        let max_count = repos.iter().map(|r| r.worktrees.len()).max().unwrap_or(0);
+        let count_suffix = format!(" ({max_count})").chars().count();
         (max_name + highlight + count_suffix).max(8) as u16
     };
 
@@ -1523,6 +1527,87 @@ mod tests {
     fn compute_pane_widths_empty() {
         let (repos_w, _) = compute_pane_widths(&[]);
         assert!(repos_w >= 8);
+    }
+
+    #[test]
+    fn compute_pane_widths_three_digit_count() {
+        let worktrees: Vec<WorktreeData> = (0..100)
+            .map(|i| WorktreeData {
+                path: PathBuf::from(format!("/wt/repo/{i}")),
+                branch: Some(format!("b{i}")),
+                filter_candidate: format!("repo b{i}"),
+                ..Default::default()
+            })
+            .collect();
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees,
+        }];
+        let (repos_w, _) = compute_pane_widths(&repos);
+        // " (100)" is 6 chars + "repo" is 4 + highlight 2 = 12
+        assert!(repos_w >= 12, "repos_w={repos_w} should fit 3-digit count");
+    }
+
+    #[test]
+    fn worktree_column_widths_empty_status() {
+        let wts = [
+            WorktreeData {
+                branch: Some("main".into()),
+                ..Default::default()
+            },
+            WorktreeData {
+                branch: Some("feat".into()),
+                ..Default::default()
+            },
+        ];
+        let (_, status_w, _) = worktree_column_widths(wts.iter());
+        assert_eq!(status_w, 0);
+    }
+
+    #[test]
+    fn worktree_column_widths_branch_clamped() {
+        let wts = [WorktreeData {
+            branch: Some("a".repeat(60)),
+            ..Default::default()
+        }];
+        let (branch_w, _, _) = worktree_column_widths(wts.iter());
+        assert_eq!(branch_w, 42, "long branch should clamp to 40 + 2 padding");
+
+        let short = [WorktreeData {
+            branch: Some("ab".into()),
+            ..Default::default()
+        }];
+        let (branch_w, _, _) = worktree_column_widths(short.iter());
+        assert_eq!(branch_w, 6, "short branch should clamp to 4 + 2 padding");
+    }
+
+    #[test]
+    fn render_empty_filter_shows_hint() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(60, 6);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+        app.filter = "zzzzzzz".into();
+        app.refilter();
+
+        terminal
+            .draw(|frame| {
+                render(frame, &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = (0..buf.area().height)
+            .flat_map(|y| {
+                let buf = &buf;
+                (0..buf.area().width)
+                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(
+            all_text.contains("no matches"),
+            "empty filter should show hint, got: {all_text}"
+        );
     }
 
     #[test]
