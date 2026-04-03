@@ -26,8 +26,9 @@ fn init(height: u16) -> io::Result<StdoutTerminal> {
 }
 
 fn restore() -> io::Result<()> {
-    ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show)?;
-    ratatui::crossterm::terminal::disable_raw_mode()
+    let cursor = ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show);
+    let raw = ratatui::crossterm::terminal::disable_raw_mode();
+    cursor.and(raw)
 }
 
 pub fn run<F, R>(height: u16, f: F) -> io::Result<R>

@@ -1,14 +1,13 @@
 pub fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut curr = vec![0; b.len() + 1];
 
-    for i in 1..=a.len() {
-        curr[0] = i;
-        for j in 1..=b.len() {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+    for (i, a_char) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, &b_char) in b.iter().enumerate() {
+            let cost = usize::from(a_char != b_char);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -53,7 +52,7 @@ fn score_from(query: &[char], candidate: &[char], start: usize) -> Option<usize>
                 Some(prev) => {
                     let gap = ci - prev - 1;
                     if gap > 0 {
-                        let boundary = ci > 0 && is_boundary(candidate[ci - 1]);
+                        let boundary = is_boundary(candidate[ci - 1]);
                         gap_score += if boundary { 1 } else { gap + 1 };
                     }
                 }
@@ -74,7 +73,6 @@ pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if len == 0 {
         return None;
     }
-    // ~1 edit per 3 chars, capped at half the input length
     let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
     candidates
         .iter()
@@ -212,5 +210,43 @@ mod tests {
     fn filter_score_boundary_start_beats_greedy() {
         let score = filter_score("main", "my-app main").unwrap();
         assert_eq!(score, 7, "should find 'main' at word boundary position 7");
+    }
+
+    #[test]
+    fn filter_score_greedy_fails_but_boundary_succeeds() {
+        let score = filter_score("log", "long-log").unwrap();
+        assert_eq!(score, 5);
+    }
+
+    #[test]
+    fn filter_score_best_boundary_wins_among_multiple() {
+        let earlier = filter_score("ab", "xx-ab.ab").unwrap();
+        let later_only = filter_score("ab", "xx-xx.ab").unwrap();
+        assert!(earlier < later_only);
+    }
+
+    #[test]
+    fn filter_score_single_char_query() {
+        assert_eq!(filter_score("f", "feat/login"), Some(0));
+        assert_eq!(filter_score("l", "feat/login"), Some(5));
+    }
+
+    #[test]
+    fn filter_score_full_candidate() {
+        assert_eq!(filter_score("feat/login", "feat/login"), Some(0));
+    }
+
+    #[test]
+    fn filter_score_gap_penalty_scales_with_distance() {
+        let small_gap = filter_score("fn", "fxn").unwrap();
+        let large_gap = filter_score("fn", "fxxxxn").unwrap();
+        assert!(small_gap < large_gap);
+    }
+
+    #[test]
+    fn filter_score_multiple_boundary_gaps() {
+        let one_boundary = filter_score("fl", "feat/login").unwrap();
+        let two_boundaries = filter_score("flb", "feat/login-bar").unwrap();
+        assert!(two_boundaries > one_boundary);
     }
 }

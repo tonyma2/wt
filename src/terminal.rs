@@ -1,10 +1,10 @@
+use std::io::IsTerminal;
+
 pub fn is_stdout_tty() -> bool {
-    use std::io::IsTerminal;
     std::io::stdout().is_terminal()
 }
 
 pub fn is_stderr_tty() -> bool {
-    use std::io::IsTerminal;
     std::io::stderr().is_terminal()
 }
 
@@ -59,6 +59,9 @@ pub fn tilde_path(path: &std::path::Path) -> String {
     let Ok(home) = std::env::var("HOME") else {
         return path_str.into_owned();
     };
+    if home.is_empty() {
+        return path_str.into_owned();
+    }
     if let Some(rest) = path_str.strip_prefix(&home)
         && (rest.is_empty() || rest.starts_with('/'))
     {
@@ -219,5 +222,53 @@ mod tests {
         let home = std::env::var("HOME").unwrap();
         let fake = std::path::PathBuf::from(format!("{home}extra/dir"));
         assert_eq!(tilde_path(&fake), fake.to_string_lossy().as_ref());
+    }
+
+    #[test]
+    fn tilde_path_empty_home() {
+        let original = std::env::var("HOME").unwrap();
+        unsafe { std::env::set_var("HOME", "") };
+        let path = std::path::PathBuf::from("/some/path");
+        let result = tilde_path(&path);
+        unsafe { std::env::set_var("HOME", &original) };
+        assert_eq!(result, "/some/path");
+    }
+
+    #[test]
+    fn trunc_multibyte_chars() {
+        assert_eq!(trunc("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "a...");
+        assert_eq!(
+            trunc("\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+        assert_eq!(
+            trunc("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+    }
+
+    #[test]
+    fn trunc_tail_multibyte_chars() {
+        assert_eq!(trunc_tail("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "...\u{00e9}");
+        assert_eq!(
+            trunc_tail("\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+        assert_eq!(
+            trunc_tail("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 2),
+            "\u{00e9}\u{00e9}"
+        );
+    }
+
+    #[test]
+    fn trunc_exact_boundary() {
+        assert_eq!(trunc("abcde", 5), "abcde");
+        assert_eq!(trunc("abcde", 4), "a...");
+    }
+
+    #[test]
+    fn trunc_tail_exact_boundary() {
+        assert_eq!(trunc_tail("abcde", 5), "abcde");
+        assert_eq!(trunc_tail("abcde", 4), "...e");
     }
 }

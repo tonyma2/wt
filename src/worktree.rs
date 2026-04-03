@@ -122,14 +122,14 @@ pub fn parse_porcelain(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
-pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
+fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
     worktrees
         .iter()
         .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
         .collect()
 }
 
-pub fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Worktree> {
+fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Worktree> {
     worktrees
         .iter()
         .filter(|wt| wt.detached && wt.head == sha && wt.live())
@@ -319,7 +319,7 @@ pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {
     }
 }
 
-pub fn is_managed_worktree_dir(dir: &Path) -> bool {
+fn is_managed_worktree_dir(dir: &Path) -> bool {
     let Ok(wt_base) = worktrees_root() else {
         return false;
     };
@@ -928,5 +928,93 @@ prunable gitdir file points to non-existent location
         let tmp = tempfile::tempdir().unwrap();
         let repos = load_all_from(tmp.path()).unwrap();
         assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn find_current_worktree_matches_deepest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let wts = [
+            make_worktree(outer.clone(), Some("main")),
+            make_worktree(inner.clone(), Some("feat")),
+        ];
+
+        let cwd = inner.canonicalize().unwrap();
+        let result = find_current_worktree(&wts, Some(&cwd));
+        assert_eq!(result, Some(inner));
+    }
+
+    #[test]
+    fn find_current_worktree_none_when_cwd_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("project");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir, Some("main"))];
+
+        assert_eq!(find_current_worktree(&wts, None), None);
+    }
+
+    #[test]
+    fn find_current_worktree_none_when_cwd_outside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let wts = [make_worktree(project, Some("main"))];
+
+        let cwd = other.canonicalize().unwrap();
+        assert_eq!(find_current_worktree(&wts, Some(&cwd)), None);
+    }
+
+    #[test]
+    fn find_current_worktree_skips_prunable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("project");
+        std::fs::create_dir(&dir).unwrap();
+
+        let wts = [Worktree {
+            prunable: true,
+            ..make_worktree(dir.clone(), Some("stale"))
+        }];
+
+        let cwd = dir.canonicalize().unwrap();
+        assert_eq!(find_current_worktree(&wts, Some(&cwd)), None);
+    }
+
+    #[test]
+    fn mark_current_picks_deepest_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let mut repos = vec![RepoInfo {
+            name: "repo".into(),
+            worktrees: vec![
+                WorktreeInfo::from_worktree(
+                    &make_worktree(outer, Some("main")),
+                    false,
+                    None,
+                    None,
+                    false,
+                ),
+                WorktreeInfo::from_worktree(
+                    &make_worktree(inner.clone(), Some("feat")),
+                    false,
+                    None,
+                    None,
+                    false,
+                ),
+            ],
+        }];
+
+        let cwd = inner.canonicalize().unwrap();
+        mark_current(&mut repos, &cwd);
+        assert!(!repos[0].worktrees[0].current);
+        assert!(repos[0].worktrees[1].current);
     }
 }

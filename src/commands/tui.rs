@@ -116,15 +116,12 @@ impl App {
         let selected_repo = current_repo.unwrap_or(0);
 
         let mut repo_state = ListState::default();
-        if !filtered_repo_indices.is_empty() {
-            repo_state.select(Some(selected_repo));
-        }
+        repo_state.select((!filtered_repo_indices.is_empty()).then_some(selected_repo));
 
-        let filtered_wt_indices: Vec<usize> = if selected_repo < repos.len() {
-            (0..repos[selected_repo].worktrees.len()).collect()
-        } else {
-            Vec::new()
-        };
+        let filtered_wt_indices: Vec<usize> = repos
+            .get(selected_repo)
+            .map(|r| (0..r.worktrees.len()).collect())
+            .unwrap_or_default();
 
         let wt_start = repos
             .get(selected_repo)
@@ -132,9 +129,7 @@ impl App {
             .unwrap_or(0);
 
         let mut wt_state = ListState::default();
-        if !filtered_wt_indices.is_empty() {
-            wt_state.select(Some(wt_start));
-        }
+        wt_state.select((!filtered_wt_indices.is_empty()).then_some(wt_start));
 
         let active_pane = if filtered_repo_indices.len() == 1 || current_repo.is_some() {
             Pane::Worktrees
@@ -233,7 +228,7 @@ impl App {
                     for wt in &r.worktrees {
                         if let Some(s) = fuzzy::filter_score(&self.filter, &wt.filter_candidate) {
                             total_matches += 1;
-                            best = Some(best.map_or(s, |b: usize| b.min(s)));
+                            best = Some(best.map_or(s, |b| b.min(s)));
                         }
                     }
                     best.map(|s| (i, s))
@@ -245,11 +240,7 @@ impl App {
         }
 
         self.repo_state
-            .select(if self.filtered_repo_indices.is_empty() {
-                None
-            } else {
-                Some(0)
-            });
+            .select((!self.filtered_repo_indices.is_empty()).then_some(0));
 
         if self.filtered_repo_indices.len() == 1 {
             self.active_pane = Pane::Worktrees;
@@ -282,11 +273,7 @@ impl App {
         }
 
         self.wt_state
-            .select(if self.filtered_wt_indices.is_empty() {
-                None
-            } else {
-                Some(0)
-            });
+            .select((!self.filtered_wt_indices.is_empty()).then_some(0));
     }
 }
 
@@ -569,8 +556,8 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         } else {
             format!(" · {} matches", app.match_count)
         };
-        let prefix_w = prefix.len();
-        let count_w = count_label.len();
+        let prefix_w = prefix.chars().count();
+        let count_w = count_label.chars().count();
 
         if w > prefix_w + count_w {
             let query_budget = w - prefix_w - count_w;
@@ -608,7 +595,8 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         None
     };
 
-    let span_w = |spans: &[Span]| -> usize { spans.iter().map(|s| s.content.len()).sum() };
+    let span_w =
+        |spans: &[Span]| -> usize { spans.iter().map(|s| s.content.chars().count()).sum() };
     let base_w = span_w(&base);
     let tab_w = span_w(&tab_tier);
     let filter_w = span_w(&filter_tier);
@@ -699,7 +687,7 @@ pub fn run() -> Result<(), String> {
     {
         let canonical = crate::worktree::canonicalize_or_self(path);
         std::fs::write(&f, canonical.as_os_str().as_encoded_bytes())
-            .map_err(|e| format!("cannot write cd path: {e}"))?;
+            .map_err(|e| format!("cannot write {f}: {e}"))?;
     }
 
     Ok(())
@@ -1293,6 +1281,30 @@ mod tests {
     }
 
     #[test]
+    fn footer_width_counts_display_columns_not_bytes() {
+        let app = App::new(test_repos());
+        let line = footer_line(&app, 51, 10);
+        let text = line_text(&line);
+        assert!(
+            text.contains("type to filter"),
+            "filter hint should fit at exact display width: {text}"
+        );
+    }
+
+    #[test]
+    fn footer_filter_width_counts_display_columns_not_bytes() {
+        let mut app = App::new(test_repos());
+        app.filter = "main".into();
+        app.refilter();
+        let line = footer_line(&app, 16, 10);
+        let text = line_text(&line);
+        assert!(
+            text.contains("3 matches"),
+            "match count should fit at exact display width: {text}"
+        );
+    }
+
+    #[test]
     fn sort_key_main_first() {
         let main = WorktreeData {
             branch: Some("main".into()),
@@ -1643,5 +1655,119 @@ mod tests {
             first_line.contains("main"),
             "branch should still show at narrow width"
         );
+    }
+
+    #[test]
+    fn from_info_ahead_behind() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/feat"),
+            head: "abc".into(),
+            branch: Some("feat".into()),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: true,
+            ahead: Some(3),
+            behind: Some(1),
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.status, "* \u{2191}3 \u{2193}1");
+    }
+
+    #[test]
+    fn from_info_locked_sets_badge() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/feat"),
+            head: "abc".into(),
+            branch: Some("feat".into()),
+            bare: false,
+            detached: false,
+            locked: true,
+            prunable: false,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert!(data.locked);
+        assert!(data.badge().is_some());
+    }
+
+    #[test]
+    fn refilter_on_empty_app() {
+        let mut app = App::new(Vec::new());
+        app.filter = "test".into();
+        app.refilter();
+        assert!(app.filtered_repo_indices.is_empty());
+        assert_eq!(app.match_count, 0);
+        assert!(app.repo_state.selected().is_none());
+    }
+
+    #[test]
+    fn match_count_tracks_worktree_matches() {
+        let mut app = App::new(test_repos());
+        assert_eq!(app.match_count, 3);
+
+        app.filter = "main".into();
+        app.refilter();
+        assert_eq!(app.match_count, 3);
+
+        app.filter = "login".into();
+        app.refilter();
+        assert_eq!(app.match_count, 1);
+
+        app.filter = "zzzzz".into();
+        app.refilter();
+        assert_eq!(app.match_count, 0);
+
+        app.filter.clear();
+        app.refilter();
+        assert_eq!(app.match_count, 3);
+    }
+
+    #[test]
+    fn build_repos_drops_all_prunable() {
+        let infos = vec![worktree::RepoInfo {
+            name: "stale-repo".into(),
+            worktrees: vec![worktree::WorktreeInfo {
+                path: PathBuf::from("/wt/stale"),
+                head: "abc".into(),
+                branch: Some("feat".into()),
+                bare: false,
+                detached: false,
+                locked: false,
+                prunable: true,
+                dirty: false,
+                ahead: None,
+                behind: None,
+                current: false,
+            }],
+        }];
+
+        assert!(build_repos(infos).is_empty());
+    }
+
+    #[test]
+    fn display_branch_no_branch_not_detached() {
+        let wt = WorktreeData::default();
+        assert_eq!(wt.display_branch(), "");
+    }
+
+    #[test]
+    fn viewport_height_single_worktree() {
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![WorktreeData {
+                path: PathBuf::from("/wt/repo/main"),
+                branch: Some("main".into()),
+                filter_candidate: "repo main".into(),
+                ..Default::default()
+            }],
+        }];
+        let app = App::new(repos);
+        assert_eq!(viewport_height(&app), 3);
     }
 }
