@@ -20,6 +20,9 @@ fn init(height: u16) -> io::Result<StdoutTerminal> {
             viewport: Viewport::Inline(height),
         },
     )
+    .inspect_err(|_| {
+        let _ = restore();
+    })
 }
 
 fn restore() -> io::Result<()> {
