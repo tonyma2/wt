@@ -35,6 +35,7 @@ struct WorktreeData {
 impl WorktreeData {
     fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
         let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
+        let status = if status == "-" { String::new() } else { status };
         let filter_candidate = match &wt.branch {
             Some(b) => format!("{repo_name} {b}"),
             None => repo_name.to_owned(),
@@ -75,7 +76,7 @@ impl WorktreeData {
 
     fn badge(&self) -> Option<(&'static str, Color)> {
         if self.locked {
-            Some((" lock", Color::Yellow))
+            Some(("lock", Color::Yellow))
         } else {
             None
         }
@@ -91,6 +92,7 @@ enum Pane {
 struct App {
     repos: Vec<RepoData>,
     filtered_repo_indices: Vec<usize>,
+    filtered_repo_wt_counts: Vec<usize>,
     filtered_wt_indices: Vec<usize>,
     repo_state: ListState,
     wt_state: ListState,
@@ -101,13 +103,12 @@ struct App {
     color: bool,
     repos_w: u16,
     content_width: u16,
-    wt_branch_w: usize,
-    wt_status_w: usize,
     match_count: usize,
 }
 
 impl App {
     fn new(repos: Vec<RepoData>) -> Self {
+        let filtered_repo_wt_counts: Vec<usize> = repos.iter().map(|r| r.worktrees.len()).collect();
         let filtered_repo_indices: Vec<usize> = (0..repos.len()).collect();
 
         let current_repo = repos
@@ -138,12 +139,13 @@ impl App {
         };
 
         let color = term::color_enabled(term::is_stdout_tty());
-        let (repos_w, content_width, wt_branch_w, wt_status_w) = compute_pane_widths(&repos);
+        let (repos_w, content_width) = compute_pane_widths(&repos);
         let match_count = repos.iter().map(|r| r.worktrees.len()).sum();
 
         Self {
             repos,
             filtered_repo_indices,
+            filtered_repo_wt_counts,
             filtered_wt_indices,
             repo_state,
             wt_state,
@@ -154,8 +156,6 @@ impl App {
             color,
             repos_w,
             content_width,
-            wt_branch_w,
-            wt_status_w,
             match_count,
         }
     }
@@ -216,26 +216,30 @@ impl App {
     fn refilter(&mut self) {
         if self.filter.is_empty() {
             self.filtered_repo_indices = (0..self.repos.len()).collect();
-            self.match_count = self.repos.iter().map(|r| r.worktrees.len()).sum();
+            self.filtered_repo_wt_counts = self.repos.iter().map(|r| r.worktrees.len()).collect();
+            self.match_count = self.filtered_repo_wt_counts.iter().sum();
         } else {
             let mut total_matches = 0usize;
-            let mut scored: Vec<(usize, usize)> = self
+            let mut scored: Vec<(usize, usize, usize)> = self
                 .repos
                 .iter()
                 .enumerate()
                 .filter_map(|(i, r)| {
                     let mut best: Option<usize> = None;
+                    let mut count = 0usize;
                     for wt in &r.worktrees {
                         if let Some(s) = fuzzy::filter_score(&self.filter, &wt.filter_candidate) {
-                            total_matches += 1;
+                            count += 1;
                             best = Some(best.map_or(s, |b| b.min(s)));
                         }
                     }
-                    best.map(|s| (i, s))
+                    total_matches += count;
+                    best.map(|s| (i, s, count))
                 })
                 .collect();
-            scored.sort_unstable_by_key(|(_, s)| *s);
-            self.filtered_repo_indices = scored.into_iter().map(|(i, _)| i).collect();
+            scored.sort_unstable_by_key(|&(_, s, _)| s);
+            self.filtered_repo_indices = scored.iter().map(|&(i, _, _)| i).collect();
+            self.filtered_repo_wt_counts = scored.iter().map(|&(_, _, c)| c).collect();
             self.match_count = total_matches;
         }
 
@@ -319,7 +323,12 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             }
         },
         KeyCode::Tab | KeyCode::BackTab => app.next_pane(),
-        KeyCode::Left | KeyCode::Right => app.next_pane(),
+        KeyCode::Left => app.active_pane = Pane::Repos,
+        KeyCode::Right => {
+            if !app.filtered_wt_indices.is_empty() {
+                app.active_pane = Pane::Worktrees;
+            }
+        }
         KeyCode::Up => app.cursor_move(-1),
         KeyCode::Down => app.cursor_move(1),
         KeyCode::Backspace => {
@@ -334,7 +343,21 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
     }
 }
 
-fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16, usize, usize) {
+fn worktree_column_widths<'a>(
+    wts: impl Iterator<Item = &'a WorktreeData>,
+) -> (usize, usize, usize) {
+    let (mut max_branch, mut max_status, mut max_badge) = (0usize, 0usize, 0usize);
+    for wt in wts {
+        max_branch = max_branch.max(wt.display_branch().chars().count());
+        max_status = max_status.max(wt.status.chars().count());
+        max_badge = max_badge.max(wt.badge().map_or(0, |(s, _)| s.chars().count()));
+    }
+    let branch_w = max_branch.clamp(4, 40) + 2;
+    let status_w = if max_status > 0 { max_status + 2 } else { 0 };
+    (branch_w, status_w, max_badge)
+}
+
+fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
     let repos_w = {
         let max_name = repos.iter().map(|r| r.name.len()).max().unwrap_or(4);
         let highlight = 2; // "› "
@@ -342,35 +365,10 @@ fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16, usize, usize) {
         (max_name + highlight + count_suffix).max(8) as u16
     };
 
-    let mut global_branch_w = 0usize;
-    let mut global_status_w = 0usize;
     let mut max_wt_w = 0u16;
 
     for repo in repos {
-        let branch_w = repo
-            .worktrees
-            .iter()
-            .map(|wt| wt.display_branch().len())
-            .max()
-            .unwrap_or(4)
-            .clamp(4, 40)
-            + 2;
-        let status_w = repo
-            .worktrees
-            .iter()
-            .map(|wt| wt.status.len())
-            .max()
-            .unwrap_or(1)
-            .max(1)
-            + 2;
-        let badge_w: usize = repo
-            .worktrees
-            .iter()
-            .map(|wt| wt.badge().map_or(0, |(s, _)| s.len()))
-            .max()
-            .unwrap_or(0);
-        global_branch_w = global_branch_w.max(branch_w);
-        global_status_w = global_status_w.max(status_w);
+        let (branch_w, status_w, badge_w) = worktree_column_widths(repo.worktrees.iter());
         max_wt_w = max_wt_w.max((2 + branch_w + status_w + badge_w) as u16);
     }
 
@@ -378,12 +376,7 @@ fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16, usize, usize) {
         max_wt_w = 20;
     }
 
-    (
-        repos_w,
-        repos_w + max_wt_w + 2,
-        global_branch_w,
-        global_status_w,
-    )
+    (repos_w, repos_w + max_wt_w + 2)
 }
 
 fn viewport_height(app: &App) -> u16 {
@@ -451,9 +444,10 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = app
         .filtered_repo_indices
         .iter()
-        .map(|&i| {
+        .enumerate()
+        .map(|(j, &i)| {
             let repo = &app.repos[i];
-            let wt_count = repo.worktrees.len();
+            let wt_count = app.filtered_repo_wt_counts[j];
             let suffix = format!(" ({wt_count})");
             let name_budget = content_w.saturating_sub(suffix.len());
             let name = trunc(&repo.name, name_budget);
@@ -472,14 +466,8 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
     let wts = &app.repos[repo_idx].worktrees;
     let content_w = (area.width as usize).saturating_sub(2);
 
-    let ideal_branch = app.wt_branch_w;
-    let status_w = app.wt_status_w;
-    let badge_w: usize = app
-        .filtered_wt_indices
-        .iter()
-        .map(|&i| wts[i].badge().map_or(0, |(s, _)| s.len()))
-        .max()
-        .unwrap_or(0);
+    let (ideal_branch, status_w, badge_w) =
+        worktree_column_widths(app.filtered_wt_indices.iter().map(|&i| &wts[i]));
     let has_badge = badge_w > 0;
 
     let (branch_width, show_status, show_badge) = if content_w >= ideal_branch + status_w + badge_w
@@ -707,7 +695,6 @@ mod tests {
                         display_path: "/wt/my-app/main".into(),
                         branch: Some("main".into()),
                         filter_candidate: "my-app main".into(),
-                        status: "-".into(),
                         ..Default::default()
                     },
                     WorktreeData {
@@ -781,19 +768,37 @@ mod tests {
     }
 
     #[test]
-    fn left_right_arrows_switch_panes() {
+    fn left_right_arrows_are_directional() {
         let mut app = App::new(test_repos());
         assert_eq!(app.active_pane, Pane::Repos);
+
         handle_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
         );
         assert_eq!(app.active_pane, Pane::Worktrees);
+
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            app.active_pane,
+            Pane::Worktrees,
+            "right is no-op in worktrees"
+        );
+
         handle_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
         );
         assert_eq!(app.active_pane, Pane::Repos);
+
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        );
+        assert_eq!(app.active_pane, Pane::Repos, "left is no-op in repos");
     }
 
     #[test]
@@ -1193,7 +1198,7 @@ mod tests {
             locked: true,
             ..base
         };
-        assert_eq!(locked.badge().unwrap(), (" lock", Color::Yellow));
+        assert_eq!(locked.badge().unwrap(), ("lock", Color::Yellow));
     }
 
     fn line_text(line: &Line) -> String {
@@ -1382,6 +1387,25 @@ mod tests {
     }
 
     #[test]
+    fn from_info_clean_status_is_empty() {
+        let info = worktree::WorktreeInfo {
+            path: PathBuf::from("/wt/repo/main"),
+            head: "abc".into(),
+            branch: Some("main".into()),
+            bare: false,
+            detached: false,
+            locked: false,
+            prunable: false,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            current: false,
+        };
+        let data = WorktreeData::from_info(&info, "repo");
+        assert!(data.status.is_empty());
+    }
+
+    #[test]
     fn build_repos_filters_bare_prunable_and_sorts() {
         let infos = vec![worktree::RepoInfo {
             name: "repo".into(),
@@ -1473,16 +1497,14 @@ mod tests {
     #[test]
     fn compute_pane_widths_basic() {
         let repos = test_repos();
-        let (repos_w, content_w, branch_w, status_w) = compute_pane_widths(&repos);
+        let (repos_w, content_w) = compute_pane_widths(&repos);
         assert!(repos_w >= 8);
         assert!(content_w > repos_w);
-        assert!(branch_w >= 6);
-        assert!(status_w >= 3);
     }
 
     #[test]
     fn compute_pane_widths_empty() {
-        let (repos_w, _, _, _) = compute_pane_widths(&[]);
+        let (repos_w, _) = compute_pane_widths(&[]);
         assert!(repos_w >= 8);
     }
 
@@ -1504,6 +1526,31 @@ mod tests {
             .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(first_line.contains("my-app"));
+    }
+
+    #[test]
+    fn render_repos_filtered_count() {
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(test_repos());
+        app.filter = "login".into();
+        app.refilter();
+
+        terminal
+            .draw(|frame| {
+                render_repos(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            first_line.contains("(1)"),
+            "filtered count should show 1, got: {first_line}"
+        );
     }
 
     #[test]
