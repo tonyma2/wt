@@ -26,7 +26,7 @@ struct WorktreeData {
     branch: Option<String>,
     filter_candidate: String,
     status: String,
-    status_color: Option<Color>,
+    dirty: bool,
     detached: bool,
     locked: bool,
     current: bool,
@@ -35,7 +35,6 @@ struct WorktreeData {
 impl WorktreeData {
     fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
         let status = worktree::format_status(false, wt.dirty, wt.ahead, wt.behind);
-        let status_color = if wt.dirty { Some(Color::Yellow) } else { None };
         let filter_candidate = match &wt.branch {
             Some(b) => format!("{repo_name} {b}"),
             None => repo_name.to_owned(),
@@ -46,7 +45,7 @@ impl WorktreeData {
             branch: wt.branch.clone(),
             filter_candidate,
             status,
-            status_color,
+            dirty: wt.dirty,
             detached: wt.detached,
             locked: wt.locked,
             current: wt.current,
@@ -529,9 +528,10 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
 
             if show_status {
                 let status = &wt.status;
-                let status_style = match wt.status_color {
-                    Some(c) => app.fg(c),
-                    None => Style::new().dim(),
+                let status_style = if wt.dirty {
+                    app.fg(Color::Yellow)
+                } else {
+                    Style::new().dim()
                 };
                 spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
             }
@@ -728,7 +728,7 @@ mod tests {
                         branch: Some("feat/login".into()),
                         filter_candidate: "my-app feat/login".into(),
                         status: "* ↑2".into(),
-                        status_color: Some(Color::Yellow),
+                        dirty: true,
                         ..Default::default()
                     },
                 ],
@@ -741,7 +741,6 @@ mod tests {
                     branch: Some("main".into()),
                     filter_candidate: "other-repo main".into(),
                     status: "↓1".into(),
-                    status_color: Some(Color::Cyan),
                     ..Default::default()
                 }],
             },
@@ -1331,7 +1330,7 @@ mod tests {
     }
 
     #[test]
-    fn from_info_dirty_is_yellow() {
+    fn from_info_dirty() {
         let info = worktree::WorktreeInfo {
             path: PathBuf::from("/wt/repo/feat"),
             head: "abc".into(),
@@ -1346,46 +1345,8 @@ mod tests {
             current: false,
         };
         let data = WorktreeData::from_info(&info, "repo");
-        assert_eq!(data.status_color, Some(Color::Yellow));
+        assert!(data.dirty);
         assert_eq!(data.filter_candidate, "repo feat");
-    }
-
-    #[test]
-    fn from_info_ahead_behind_has_no_color() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/feat"),
-            head: "abc".into(),
-            branch: Some("feat".into()),
-            bare: false,
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: false,
-            ahead: Some(1),
-            behind: None,
-            current: false,
-        };
-        let data = WorktreeData::from_info(&info, "repo");
-        assert_eq!(data.status_color, None);
-    }
-
-    #[test]
-    fn from_info_clean_has_no_color() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/main"),
-            head: "abc".into(),
-            branch: Some("main".into()),
-            bare: false,
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: false,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
-        let data = WorktreeData::from_info(&info, "repo");
-        assert_eq!(data.status_color, None);
     }
 
     #[test]
