@@ -22,6 +22,8 @@ fn zsh_init_includes_dynamic_worktree_helpers() {
     assert!(stdout.contains("_wt_switch_targets()"));
     assert!(stdout.contains("_wt_new_name()"));
     assert!(stdout.contains("_wt_new_base()"));
+    assert!(stdout.contains("_wt_adaptive_max_path()"));
+    assert!(stdout.contains("_wt_format_branch_desc()"));
     assert!(stdout.contains("_wt_link_files()"));
     assert!(stdout.contains("_wt_unlink_files()"));
     assert!(stdout.contains("cmd+=(worktree list --porcelain)"));
@@ -77,6 +79,8 @@ fn bash_init_excludes_zsh_specific_helpers() {
     assert!(!stdout.contains("_wt_switch_targets()"));
     assert!(!stdout.contains("_wt_new_name()"));
     assert!(!stdout.contains("_wt_new_base()"));
+    assert!(!stdout.contains("_wt_adaptive_max_path()"));
+    assert!(!stdout.contains("_wt_format_branch_desc()"));
 }
 
 #[test]
