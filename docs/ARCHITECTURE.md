@@ -65,7 +65,7 @@ Most commands follow the single-repo path: `find_repo → list_worktrees → par
 - **rm** — `resolve_target()` has a three-stage fallback: branch → ref-to-SHA → filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
 - **prune** — global mode (no `--repo`) uses `discover_repos()` directly, not `load_all()`, because it needs `Git` handles for prune operations rather than precomputed status
 - **switch** — auto-prunes stale worktree metadata when it encounters a prunable match before creating
-- **tui** — consumes `load_all()`, maps `WorktreeInfo` → display structs, filters bare. Default command when no subcommand is given. Coupling is one-way: `commands/tui.rs` depends on `worktree`, `fuzzy`, `terminal`, and `tui` — none of those modules reference the TUI. Shared logic belongs in the dependency, not the consumer
+- **tui** — consumes `load_all()`, maps `WorktreeInfo` → display structs, filters bare and prunable. Default command when no subcommand is given. Coupling is one-way: `commands/tui.rs` depends on `worktree`, `fuzzy`, `terminal`, and `tui` — none of those modules reference the TUI. Shared logic belongs in the dependency, not the consumer
 - **init** — patches clap_complete's generated script via string replacement to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base`/`files` args in `cli.rs` — each must be unique per subcommand. Guarded by the `zsh_completion_is_dynamic` and `zsh_link_unlink_completions_are_dynamic` unit tests (see [decisions.md](decisions.md))
 
 ## Filesystem Layout

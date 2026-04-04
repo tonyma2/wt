@@ -332,25 +332,7 @@ impl Git {
             return (true, None, None);
         }
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut dirty = false;
-        let mut ahead = None;
-        let mut behind = None;
-        for line in text.lines() {
-            if let Some(ab) = line.strip_prefix("# branch.ab ") {
-                let mut parts = ab.split_whitespace();
-                ahead = parts
-                    .next()
-                    .and_then(|s| s.strip_prefix('+'))
-                    .and_then(|s| s.parse().ok());
-                behind = parts
-                    .next()
-                    .and_then(|s| s.strip_prefix('-'))
-                    .and_then(|s| s.parse().ok());
-            } else if !line.starts_with('#') {
-                dirty = true;
-            }
-        }
-        (dirty, ahead, behind)
+        parse_porcelain_status(&text)
     }
 
     pub fn is_upstream_gone(&self, branch: &str) -> bool {
@@ -425,6 +407,28 @@ impl Git {
     }
 }
 
+fn parse_porcelain_status(text: &str) -> (bool, Option<u64>, Option<u64>) {
+    let mut dirty = false;
+    let mut ahead = None;
+    let mut behind = None;
+    for line in text.lines() {
+        if let Some(ab) = line.strip_prefix("# branch.ab ") {
+            let mut parts = ab.split_whitespace();
+            ahead = parts
+                .next()
+                .and_then(|s| s.strip_prefix('+'))
+                .and_then(|s| s.parse().ok());
+            behind = parts
+                .next()
+                .and_then(|s| s.strip_prefix('-'))
+                .and_then(|s| s.parse().ok());
+        } else if !line.starts_with('#') {
+            dirty = true;
+        }
+    }
+    (dirty, ahead, behind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,5 +485,46 @@ mod tests {
             git_err("cannot create worktree", &out),
             "cannot create worktree: bad object: abc"
         );
+    }
+
+    #[test]
+    fn parse_status_clean_with_upstream() {
+        let text = "# branch.oid abc123\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n";
+        assert_eq!(parse_porcelain_status(text), (false, Some(0), Some(0)));
+    }
+
+    #[test]
+    fn parse_status_ahead_behind() {
+        let text = "# branch.oid abc123\n# branch.head feat\n# branch.ab +3 -1\n";
+        assert_eq!(parse_porcelain_status(text), (false, Some(3), Some(1)));
+    }
+
+    #[test]
+    fn parse_status_dirty_with_changes() {
+        let text = "# branch.oid abc123\n# branch.head main\n# branch.ab +0 -0\n1 .M N... 100644 100644 100644 abc def src/main.rs\n";
+        assert_eq!(parse_porcelain_status(text), (true, Some(0), Some(0)));
+    }
+
+    #[test]
+    fn parse_status_dirty_untracked() {
+        let text = "# branch.oid abc123\n# branch.head main\n? newfile.txt\n";
+        assert_eq!(parse_porcelain_status(text), (true, None, None));
+    }
+
+    #[test]
+    fn parse_status_no_upstream() {
+        let text = "# branch.oid abc123\n# branch.head main\n";
+        assert_eq!(parse_porcelain_status(text), (false, None, None));
+    }
+
+    #[test]
+    fn parse_status_detached_head() {
+        let text = "# branch.oid abc123\n# branch.head (detached)\n";
+        assert_eq!(parse_porcelain_status(text), (false, None, None));
+    }
+
+    #[test]
+    fn parse_status_empty_output() {
+        assert_eq!(parse_porcelain_status(""), (false, None, None));
     }
 }
