@@ -2058,6 +2058,38 @@ mod tests {
     }
 
     #[test]
+    fn refilter_preserves_pane_on_zero_results() {
+        let mut app = App::new(test_repos());
+        app.active_pane = Pane::Worktrees;
+        app.filter = "zzzzz".into();
+        app.refilter();
+        assert!(app.filtered_repo_indices.is_empty());
+        assert_eq!(
+            app.active_pane,
+            Pane::Worktrees,
+            "pane should be preserved when filter yields 0 results"
+        );
+
+        app.filter = "ot".into();
+        app.refilter();
+        assert_eq!(app.filtered_repo_indices.len(), 1);
+        assert_eq!(
+            app.active_pane,
+            Pane::Worktrees,
+            "single result should switch to worktrees"
+        );
+
+        app.filter.clear();
+        app.refilter();
+        assert_eq!(app.filtered_repo_indices.len(), 2);
+        assert_eq!(
+            app.active_pane,
+            Pane::Repos,
+            "multiple results should switch to repos"
+        );
+    }
+
+    #[test]
     fn viewport_height_single_worktree() {
         let repos = vec![RepoData {
             name: "repo".into(),

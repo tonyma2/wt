@@ -1103,4 +1103,46 @@ prunable gitdir file points to non-existent location
         assert!(!repos[0].worktrees[0].current);
         assert!(repos[0].worktrees[1].current);
     }
+
+    #[test]
+    fn mark_current_picks_deepest_across_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shallow = tmp.path().join("shallow");
+        let deep = shallow.join("nested");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let mut repos = vec![
+            RepoInfo {
+                name: "alpha".into(),
+                worktrees: vec![WorktreeInfo::from_worktree(
+                    &make_worktree(shallow, Some("main")),
+                    false,
+                    None,
+                    None,
+                    false,
+                )],
+            },
+            RepoInfo {
+                name: "beta".into(),
+                worktrees: vec![WorktreeInfo::from_worktree(
+                    &make_worktree(deep.clone(), Some("feat")),
+                    false,
+                    None,
+                    None,
+                    false,
+                )],
+            },
+        ];
+
+        let cwd = deep.canonicalize().unwrap();
+        mark_current(&mut repos, &cwd);
+        assert!(
+            !repos[0].worktrees[0].current,
+            "shallow match in different repo should not be marked"
+        );
+        assert!(
+            repos[1].worktrees[0].current,
+            "deepest match across repos should win"
+        );
+    }
 }

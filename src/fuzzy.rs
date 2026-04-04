@@ -262,6 +262,35 @@ mod tests {
     }
 
     #[test]
+    fn filter_score_boundary_discount_applies_at_adjacent_char() {
+        let adjacent = filter_score("ad", "a/d").unwrap();
+        let mid_word = filter_score("ad", "axd").unwrap();
+        assert!(
+            adjacent < mid_word,
+            "boundary-adjacent gap (a/d) should score lower than mid-word gap (axd): {adjacent} vs {mid_word}"
+        );
+
+        let non_adjacent = filter_score("ad", "a/xd").unwrap();
+        assert!(
+            non_adjacent > adjacent,
+            "non-adjacent boundary (a/xd) should not get discount: {non_adjacent} vs {adjacent}"
+        );
+    }
+
+    #[test]
+    fn close_match_single_char_never_matches() {
+        assert_eq!(close_match("a", &["b"]), None);
+        assert_eq!(close_match("a", &["a"]), None);
+        assert_eq!(close_match("x", &["y", "z"]), None);
+    }
+
+    #[test]
+    fn close_match_two_char_allows_distance_one() {
+        assert_eq!(close_match("ab", &["ac"]), Some("ac"));
+        assert_eq!(close_match("ab", &["xy"]), None);
+    }
+
+    #[test]
     fn levenshtein_unicode() {
         assert_eq!(levenshtein("caf\u{00e9}", "cafe"), 1);
         assert_eq!(levenshtein("\u{00fc}ber", "\u{00fc}ber"), 0);
