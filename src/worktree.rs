@@ -1057,6 +1057,21 @@ prunable gitdir file points to non-existent location
     }
 
     #[test]
+    fn discover_repos_ignores_plain_git_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_root = tmp.path().join("worktrees");
+        let plain = wt_root.join("some-dir");
+        std::fs::create_dir_all(&plain).unwrap();
+        init_test_repo(&plain);
+
+        let repos = discover_repos(&wt_root);
+        assert!(
+            repos.is_empty(),
+            "a plain git repo (with .git directory) should not be discovered"
+        );
+    }
+
+    #[test]
     fn mark_current_picks_deepest_match() {
         let tmp = tempfile::tempdir().unwrap();
         let outer = tmp.path().join("outer");

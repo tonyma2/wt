@@ -1922,6 +1922,142 @@ mod tests {
     }
 
     #[test]
+    fn cursor_single_repo_wraps_to_self() {
+        let repos = vec![test_repos().remove(0)];
+        let mut app = App::new(repos);
+        app.active_pane = Pane::Repos;
+        app.cursor_move(1);
+        assert_eq!(app.repo_state.selected(), Some(0));
+        app.cursor_move(-1);
+        assert_eq!(app.repo_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn cursor_single_worktree_wraps_to_self() {
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![WorktreeData {
+                path: PathBuf::from("/wt/repo/main"),
+                branch: Some("main".into()),
+                filter_candidate: "repo main".into(),
+                ..Default::default()
+            }],
+        }];
+        let mut app = App::new(repos);
+        app.active_pane = Pane::Worktrees;
+        app.cursor_move(1);
+        assert_eq!(app.wt_state.selected(), Some(0));
+        app.cursor_move(-1);
+        assert_eq!(app.wt_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn worktree_column_widths_with_badge() {
+        let wts = [
+            WorktreeData {
+                branch: Some("main".into()),
+                ..Default::default()
+            },
+            WorktreeData {
+                branch: Some("feat".into()),
+                locked: true,
+                ..Default::default()
+            },
+        ];
+        let (_, _, badge_w) = worktree_column_widths(wts.iter());
+        assert_eq!(badge_w, 4, "badge 'lock' is 4 chars");
+    }
+
+    #[test]
+    fn render_worktrees_locked_badge_visible() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![WorktreeData {
+                path: PathBuf::from("/wt/repo/feat"),
+                display_path: "/wt/repo/feat".into(),
+                branch: Some("feat".into()),
+                filter_candidate: "repo feat".into(),
+                locked: true,
+                ..Default::default()
+            }],
+        }];
+        let backend = TestBackend::new(50, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+        app.active_pane = Pane::Worktrees;
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            first_line.contains("lock"),
+            "badge should render at sufficient width, got: {first_line}"
+        );
+    }
+
+    #[test]
+    fn render_worktrees_badge_collapses_at_narrow_width() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![RepoData {
+            name: "repo".into(),
+            worktrees: vec![WorktreeData {
+                path: PathBuf::from("/wt/repo/feat"),
+                display_path: "/wt/repo/feat".into(),
+                branch: Some("feat".into()),
+                filter_candidate: "repo feat".into(),
+                locked: true,
+                status: "* ↑2".into(),
+                dirty: true,
+                ..Default::default()
+            }],
+        }];
+        let backend = TestBackend::new(16, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+        app.active_pane = Pane::Worktrees;
+
+        terminal
+            .draw(|frame| {
+                render_worktrees(frame, &mut app, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_line: String = (0..buf.area().width)
+            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            !first_line.contains("lock"),
+            "badge should collapse at narrow width, got: {first_line}"
+        );
+    }
+
+    #[test]
+    fn footer_position_drops_when_too_narrow_for_it() {
+        let app = App::new(test_repos());
+        let full = line_text(&footer_line(&app, 80, 1));
+        assert!(full.contains("1/2"), "position should show at wide width");
+
+        let narrow = line_text(&footer_line(&app, 38, 1));
+        assert!(
+            narrow.contains("tab"),
+            "tab hint should fit at width 38: {narrow}"
+        );
+        assert!(
+            !narrow.contains("1/2"),
+            "position should drop at width 38: {narrow}"
+        );
+    }
+
+    #[test]
     fn viewport_height_single_worktree() {
         let repos = vec![RepoData {
             name: "repo".into(),
