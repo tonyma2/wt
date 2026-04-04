@@ -454,7 +454,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
             let repo = &app.repos[i];
             let wt_count = app.filtered_repo_wt_counts[j];
             let suffix = format!(" ({wt_count})");
-            let name_budget = content_w.saturating_sub(suffix.len());
+            let name_budget = content_w.saturating_sub(suffix.chars().count());
             let name = trunc(&repo.name, name_budget);
             ListItem::new(Line::from(vec![Span::raw(name), suffix.dim()]))
         })
