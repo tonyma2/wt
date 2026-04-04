@@ -249,4 +249,21 @@ mod tests {
         let two_boundaries = filter_score("flb", "feat/login-bar").unwrap();
         assert!(two_boundaries > one_boundary);
     }
+
+    #[test]
+    fn filter_score_unicode_accented() {
+        assert!(filter_score("uber", "\u{00fc}ber-feature").is_none());
+        assert!(filter_score("\u{00fc}ber", "\u{00fc}ber-feature").is_some());
+    }
+
+    #[test]
+    fn filter_score_unicode_case_folding() {
+        assert!(filter_score("\u{00dc}BER", "\u{00fc}ber-feature").is_some());
+    }
+
+    #[test]
+    fn levenshtein_unicode() {
+        assert_eq!(levenshtein("caf\u{00e9}", "cafe"), 1);
+        assert_eq!(levenshtein("\u{00fc}ber", "\u{00fc}ber"), 0);
+    }
 }
