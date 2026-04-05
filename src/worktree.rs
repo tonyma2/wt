@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
+use crate::terminal;
 
 #[derive(Debug, Clone)]
 pub struct Worktree {
@@ -17,6 +18,49 @@ pub struct Worktree {
 impl Worktree {
     pub fn live(&self) -> bool {
         !self.prunable && self.path.exists()
+    }
+}
+
+pub struct RepoInfo {
+    pub name: String,
+    pub worktrees: Vec<WorktreeInfo>,
+}
+
+pub struct WorktreeInfo {
+    pub path: PathBuf,
+    pub head: String,
+    pub branch: Option<String>,
+    pub bare: bool,
+    pub detached: bool,
+    pub locked: bool,
+    pub prunable: bool,
+    pub dirty: bool,
+    pub ahead: Option<u64>,
+    pub behind: Option<u64>,
+    pub current: bool,
+}
+
+impl WorktreeInfo {
+    pub(crate) fn from_worktree(
+        wt: &Worktree,
+        dirty: bool,
+        ahead: Option<u64>,
+        behind: Option<u64>,
+        current: bool,
+    ) -> Self {
+        Self {
+            path: wt.path.clone(),
+            head: wt.head.clone(),
+            branch: wt.branch.clone(),
+            bare: wt.bare,
+            detached: wt.detached,
+            locked: wt.locked,
+            prunable: wt.prunable,
+            dirty,
+            ahead,
+            behind,
+            current,
+        }
     }
 }
 
@@ -78,18 +122,55 @@ pub fn parse_porcelain(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
-pub fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
+fn find_live_by_branch<'a>(worktrees: &'a [Worktree], name: &str) -> Vec<&'a Worktree> {
     worktrees
         .iter()
         .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
         .collect()
 }
 
-pub fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Worktree> {
+fn find_live_by_head<'a>(worktrees: &'a [Worktree], sha: &str) -> Vec<&'a Worktree> {
     worktrees
         .iter()
         .filter(|wt| wt.detached && wt.head == sha && wt.live())
         .collect()
+}
+
+pub enum Resolved<'a> {
+    Found(&'a Worktree),
+    Ambiguous {
+        matches: Vec<&'a Worktree>,
+        kind: &'static str,
+    },
+    NotFound,
+}
+
+pub fn resolve_worktree<'a>(worktrees: &'a [Worktree], name: &str, git: &Git) -> Resolved<'a> {
+    let matches = find_live_by_branch(worktrees, name);
+    if matches.len() == 1 {
+        return Resolved::Found(matches[0]);
+    }
+    if matches.len() > 1 {
+        return Resolved::Ambiguous {
+            matches,
+            kind: "name",
+        };
+    }
+
+    if let Some(sha) = git.rev_parse(name) {
+        let head_matches = find_live_by_head(worktrees, &sha);
+        if head_matches.len() == 1 {
+            return Resolved::Found(head_matches[0]);
+        }
+        if head_matches.len() > 1 {
+            return Resolved::Ambiguous {
+                matches: head_matches,
+                kind: "ref",
+            };
+        }
+    }
+
+    Resolved::NotFound
 }
 
 pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Worktree> {
@@ -161,16 +242,18 @@ pub fn cleanup_dest(dest: &Path) {
     }
 }
 
-pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
+pub(crate) fn wt_home() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
-    Ok(Path::new(&home).join(".wt").join("worktrees"))
+    Ok(Path::new(&home).join(".wt"))
+}
+
+pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
+    wt_home().map(|p| p.join("worktrees"))
 }
 
 pub(crate) fn repos_root() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME")
-        .map_err(|_| "cannot determine home directory: HOME is not set".to_string())?;
-    Ok(Path::new(&home).join(".wt").join("repos"))
+    wt_home().map(|p| p.join("repos"))
 }
 
 pub fn create_bare_dest(repo_name: &str) -> Result<PathBuf, String> {
@@ -201,6 +284,36 @@ pub fn find_primary<'a>(worktrees: &'a [Worktree], repo_root: &Path) -> Option<&
         .or_else(|| worktrees.iter().find(|wt| !wt.bare))
 }
 
+pub fn format_status(
+    bare: bool,
+    dirty: bool,
+    ahead: Option<u64>,
+    behind: Option<u64>,
+) -> Option<String> {
+    if bare {
+        return Some("bare".into());
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if dirty {
+        parts.push("*".into());
+    }
+    if let Some(a) = ahead
+        && a > 0
+    {
+        parts.push(format!("↑{a}"));
+    }
+    if let Some(b) = behind
+        && b > 0
+    {
+        parts.push(format!("↓{b}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
 pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {
     if let Some(parent) = path.parent()
         && is_managed_worktree_dir(parent)
@@ -211,7 +324,7 @@ pub fn cleanup_empty_parent(path: &Path, cwd: Option<&Path>) {
     }
 }
 
-pub fn is_managed_worktree_dir(dir: &Path) -> bool {
+fn is_managed_worktree_dir(dir: &Path) -> bool {
     let Ok(wt_base) = worktrees_root() else {
         return false;
     };
@@ -290,6 +403,130 @@ pub(crate) fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     } else {
         let parent = dot_git_file.parent()?;
         Some(parent.join(gitdir_path))
+    }
+}
+
+pub fn find_current_worktree<'a>(
+    worktrees: impl IntoIterator<Item = &'a Worktree>,
+    cwd: Option<&Path>,
+) -> Option<PathBuf> {
+    let cwd = cwd?;
+    worktrees
+        .into_iter()
+        .filter(|wt| !wt.prunable)
+        .filter_map(|wt| {
+            let canonical = canonicalize_or_self(&wt.path);
+            cwd.starts_with(&canonical)
+                .then_some((wt.path.clone(), canonical))
+        })
+        .max_by_key(|(_, canonical)| canonical.components().count())
+        .map(|(path, _)| path)
+}
+
+pub(crate) fn enrich_worktrees(
+    worktrees: &[Worktree],
+    current_path: Option<&Path>,
+) -> Vec<WorktreeInfo> {
+    std::thread::scope(|s| {
+        let handles: Vec<_> = worktrees
+            .iter()
+            .map(|wt| {
+                s.spawn(move || {
+                    let (dirty, ahead, behind) = if wt.bare || wt.prunable {
+                        (false, None, None)
+                    } else {
+                        Git::worktree_status(&wt.path)
+                    };
+                    let current = current_path == Some(wt.path.as_path());
+                    WorktreeInfo::from_worktree(wt, dirty, ahead, behind, current)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
+pub fn load_all() -> Result<Vec<RepoInfo>, String> {
+    let wt_root = worktrees_root()?;
+    load_all_from(&wt_root)
+}
+
+pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
+    let wt_root = canonicalize_or_self(wt_root);
+    let admin_repos = discover_repos(&wt_root);
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.canonicalize().ok());
+
+    let mut repos: Vec<RepoInfo> = std::thread::scope(|s| {
+        let handles: Vec<_> = admin_repos
+            .iter()
+            .map(|repo_path| {
+                s.spawn(move || {
+                    let git = Git::new(repo_path);
+                    let output = match git.list_worktrees() {
+                        Ok(o) => o,
+                        Err(e) => {
+                            let clr = terminal::stderr_colors();
+                            eprintln!(
+                                "{}cannot list {}: {e}{}",
+                                clr.red,
+                                repo_path.display(),
+                                clr.reset
+                            );
+                            return None;
+                        }
+                    };
+                    let worktrees = parse_porcelain(&output);
+                    let name = repo_basename(repo_path);
+                    let infos = enrich_worktrees(&worktrees, None);
+                    if infos.is_empty() {
+                        return None;
+                    }
+                    Some(RepoInfo {
+                        name,
+                        worktrees: infos,
+                    })
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
+
+    if let Some(cwd) = &cwd {
+        mark_current(&mut repos, cwd);
+    }
+
+    repos.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    Ok(repos)
+}
+
+fn mark_current(repos: &mut [RepoInfo], cwd: &Path) {
+    let mut best: Option<(usize, usize, usize)> = None;
+    for (ri, repo) in repos.iter().enumerate() {
+        for (wi, wt) in repo.worktrees.iter().enumerate() {
+            if wt.prunable {
+                continue;
+            }
+            let canonical = canonicalize_or_self(&wt.path);
+            if cwd.starts_with(&canonical) {
+                let depth = canonical.components().count();
+                if best.is_none_or(|(_, _, d)| depth > d) {
+                    best = Some((ri, wi, depth));
+                }
+            }
+        }
+    }
+    if let Some((ri, wi, _)) = best {
+        repos[ri].worktrees[wi].current = true;
     }
 }
 
@@ -525,5 +762,387 @@ prunable gitdir file points to non-existent location
 
         assert!(branch_checked_out_elsewhere(&wts, "feat", &link_a));
         assert!(!branch_checked_out_elsewhere(&wts, "other", &link_a));
+    }
+
+    #[test]
+    fn format_status_clean() {
+        assert_eq!(format_status(false, false, None, None), None);
+        assert_eq!(format_status(false, false, Some(0), Some(0)), None);
+    }
+
+    #[test]
+    fn format_status_dirty() {
+        assert_eq!(format_status(false, true, None, None), Some("*".into()));
+    }
+
+    #[test]
+    fn format_status_ahead_behind() {
+        assert_eq!(
+            format_status(false, false, Some(2), None),
+            Some("↑2".into())
+        );
+        assert_eq!(
+            format_status(false, false, None, Some(3)),
+            Some("↓3".into())
+        );
+        assert_eq!(
+            format_status(false, true, Some(1), Some(2)),
+            Some("* ↑1 ↓2".into())
+        );
+    }
+
+    #[test]
+    fn format_status_bare() {
+        assert_eq!(format_status(true, false, None, None), Some("bare".into()));
+        assert_eq!(
+            format_status(true, true, Some(1), Some(2)),
+            Some("bare".into())
+        );
+    }
+
+    #[test]
+    fn parse_gitdir_absolute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "gitdir: /abs/path/to/.git/worktrees/feat").unwrap();
+        let result = parse_gitdir(&dot_git);
+        assert_eq!(
+            result,
+            Some(PathBuf::from("/abs/path/to/.git/worktrees/feat"))
+        );
+    }
+
+    #[test]
+    fn parse_gitdir_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let dot_git = sub.join(".git");
+        std::fs::write(&dot_git, "gitdir: ../../admin/.git/worktrees/feat").unwrap();
+        let result = parse_gitdir(&dot_git).unwrap();
+        assert_eq!(result, sub.join("../../admin/.git/worktrees/feat"));
+    }
+
+    #[test]
+    fn parse_gitdir_empty_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "gitdir: ").unwrap();
+        assert_eq!(parse_gitdir(&dot_git), None);
+    }
+
+    #[test]
+    fn parse_gitdir_no_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dot_git = tmp.path().join(".git");
+        std::fs::write(&dot_git, "some random content").unwrap();
+        assert_eq!(parse_gitdir(&dot_git), None);
+    }
+
+    #[test]
+    fn parse_gitdir_missing_file() {
+        assert_eq!(parse_gitdir(Path::new("/nonexistent/.git")), None);
+    }
+
+    #[test]
+    fn resolve_worktree_found_by_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("wt");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir.clone(), Some("feat"))];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "feat", &git);
+        assert!(matches!(result, Resolved::Found(wt) if wt.path == dir));
+    }
+
+    #[test]
+    fn resolve_worktree_ambiguous_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let wts = [
+            make_worktree(a, Some("feat")),
+            make_worktree(b, Some("feat")),
+        ];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "feat", &git);
+        assert!(
+            matches!(result, Resolved::Ambiguous { matches, kind } if matches.len() == 2 && kind == "name")
+        );
+    }
+
+    #[test]
+    fn resolve_worktree_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("wt");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir, Some("main"))];
+        let git = Git::new("/nonexistent");
+
+        let result = resolve_worktree(&wts, "other", &git);
+        assert!(matches!(result, Resolved::NotFound));
+    }
+
+    fn init_test_repo(dir: &std::path::Path) {
+        use std::process::Command;
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(dir)
+                    .args(args)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .expect("git failed to start")
+                    .success(),
+                "git {args:?} failed"
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "t@t"]);
+        git(&["commit", "--allow-empty", "-m", "init"]);
+    }
+
+    #[test]
+    fn load_all_from_single_repo() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let admin = tmp.path().join("repos").join("myrepo");
+        let wt_root = tmp.path().join("worktrees");
+
+        std::fs::create_dir_all(&admin).unwrap();
+        init_test_repo(&admin);
+
+        let wt_dest = wt_root.join("abc123").join("myrepo");
+        std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&admin)
+                .args(["worktree", "add"])
+                .arg(&wt_dest)
+                .args(["-b", "feat", "main"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        std::fs::write(wt_dest.join("dirty.txt"), "change").unwrap();
+
+        let repos = load_all_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "myrepo");
+        assert!(!repos[0].worktrees.is_empty());
+
+        let feat = repos[0]
+            .worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feat"))
+            .expect("should have feat worktree");
+        assert!(feat.dirty);
+
+        let clean = repos[0]
+            .worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() != Some("feat"))
+            .expect("should have other worktree");
+        assert!(!clean.dirty);
+    }
+
+    #[test]
+    fn load_all_from_multiple_repos() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_root = tmp.path().join("worktrees");
+        std::fs::create_dir_all(&wt_root).unwrap();
+
+        for (name, branch) in [("alpha", "feat-a"), ("beta", "feat-b")] {
+            let admin = tmp.path().join("repos").join(name);
+            std::fs::create_dir_all(&admin).unwrap();
+            init_test_repo(&admin);
+
+            let wt_dest = wt_root.join(format!("id-{name}")).join(name);
+            std::fs::create_dir_all(wt_dest.parent().unwrap()).unwrap();
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&admin)
+                    .args(["worktree", "add"])
+                    .arg(&wt_dest)
+                    .args(["-b", branch, "main"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let repos = load_all_from(&wt_root).expect("should load repos");
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].name, "alpha");
+        assert_eq!(repos[1].name, "beta");
+    }
+
+    #[test]
+    fn load_all_from_empty_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repos = load_all_from(tmp.path()).unwrap();
+        assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn find_current_worktree_matches_deepest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let wts = [
+            make_worktree(outer.clone(), Some("main")),
+            make_worktree(inner.clone(), Some("feat")),
+        ];
+
+        let cwd = inner.canonicalize().unwrap();
+        let result = find_current_worktree(&wts, Some(&cwd));
+        assert_eq!(result, Some(inner));
+    }
+
+    #[test]
+    fn find_current_worktree_none_when_cwd_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("project");
+        std::fs::create_dir(&dir).unwrap();
+        let wts = [make_worktree(dir, Some("main"))];
+
+        assert_eq!(find_current_worktree(&wts, None), None);
+    }
+
+    #[test]
+    fn find_current_worktree_none_when_cwd_outside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let wts = [make_worktree(project, Some("main"))];
+
+        let cwd = other.canonicalize().unwrap();
+        assert_eq!(find_current_worktree(&wts, Some(&cwd)), None);
+    }
+
+    #[test]
+    fn find_current_worktree_skips_prunable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("project");
+        std::fs::create_dir(&dir).unwrap();
+
+        let wts = [Worktree {
+            prunable: true,
+            ..make_worktree(dir.clone(), Some("stale"))
+        }];
+
+        let cwd = dir.canonicalize().unwrap();
+        assert_eq!(find_current_worktree(&wts, Some(&cwd)), None);
+    }
+
+    #[test]
+    fn discover_repos_ignores_plain_git_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_root = tmp.path().join("worktrees");
+        let plain = wt_root.join("some-dir");
+        std::fs::create_dir_all(&plain).unwrap();
+        init_test_repo(&plain);
+
+        let repos = discover_repos(&wt_root);
+        assert!(
+            repos.is_empty(),
+            "a plain git repo (with .git directory) should not be discovered"
+        );
+    }
+
+    #[test]
+    fn mark_current_picks_deepest_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let mut repos = vec![RepoInfo {
+            name: "repo".into(),
+            worktrees: vec![
+                WorktreeInfo::from_worktree(
+                    &make_worktree(outer, Some("main")),
+                    false,
+                    None,
+                    None,
+                    false,
+                ),
+                WorktreeInfo::from_worktree(
+                    &make_worktree(inner.clone(), Some("feat")),
+                    false,
+                    None,
+                    None,
+                    false,
+                ),
+            ],
+        }];
+
+        let cwd = inner.canonicalize().unwrap();
+        mark_current(&mut repos, &cwd);
+        assert!(!repos[0].worktrees[0].current);
+        assert!(repos[0].worktrees[1].current);
+    }
+
+    #[test]
+    fn mark_current_picks_deepest_across_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shallow = tmp.path().join("shallow");
+        let deep = shallow.join("nested");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let mut repos = vec![
+            RepoInfo {
+                name: "alpha".into(),
+                worktrees: vec![WorktreeInfo::from_worktree(
+                    &make_worktree(shallow, Some("main")),
+                    false,
+                    None,
+                    None,
+                    false,
+                )],
+            },
+            RepoInfo {
+                name: "beta".into(),
+                worktrees: vec![WorktreeInfo::from_worktree(
+                    &make_worktree(deep.clone(), Some("feat")),
+                    false,
+                    None,
+                    None,
+                    false,
+                )],
+            },
+        ];
+
+        let cwd = deep.canonicalize().unwrap();
+        mark_current(&mut repos, &cwd);
+        assert!(
+            !repos[0].worktrees[0].current,
+            "shallow match in different repo should not be marked"
+        );
+        assert!(
+            repos[1].worktrees[0].current,
+            "deepest match across repos should win"
+        );
     }
 }

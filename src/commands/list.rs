@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::git::Git;
-use crate::terminal::{self, Colors};
-use crate::worktree::{self, Worktree};
+use crate::terminal::{self, Colors, trunc, trunc_tail};
+use crate::worktree::{self, WorktreeInfo};
 
 #[derive(Serialize)]
 struct WorktreeEntry {
@@ -30,15 +30,16 @@ pub fn run(repo: Option<&Path>, json: bool, all: bool) -> Result<(), String> {
     }
 
     let repo_root = Git::find_repo(repo)?;
-    let git = Git::new(&repo_root);
 
-    let output = git.list_worktrees()?;
+    let output = Git::new(&repo_root).list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
     let cwd = resolve_cwd();
-    let current_path = find_current(&worktrees, cwd.as_deref());
+    let current_path = worktree::find_current_worktree(&worktrees, cwd.as_deref());
+
+    let infos = worktree::enrich_worktrees(&worktrees, current_path.as_deref());
 
     if json {
-        let entries = build_json_entries(&git, &worktrees, current_path, None);
+        let entries = build_json_entries(&infos, None);
         let json_str =
             serde_json::to_string(&entries).map_err(|e| format!("cannot serialize json: {e}"))?;
         println!("{json_str}");
@@ -47,23 +48,13 @@ pub fn run(repo: Option<&Path>, json: bool, all: bool) -> Result<(), String> {
 
     let cols = terminal::width();
     let clr = terminal::colors();
-    print_table(&git, &worktrees, current_path, cols, &clr, "");
+    print_table(&infos, cols, &clr, "");
 
     Ok(())
 }
 
 fn run_all(json: bool) -> Result<(), String> {
-    let wt_root = worktree::worktrees_root()?;
-
-    if !wt_root.is_dir() {
-        if json {
-            println!("[]");
-        }
-        return Ok(());
-    }
-    let wt_root = worktree::canonicalize_or_self(&wt_root);
-    let repos = worktree::discover_repos(&wt_root);
-
+    let repos = worktree::load_all()?;
     if repos.is_empty() {
         if json {
             println!("[]");
@@ -71,50 +62,23 @@ fn run_all(json: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let cwd = resolve_cwd();
-
-    let err_clr = terminal::stderr_colors();
-    let repo_data: Vec<_> = repos
-        .iter()
-        .filter_map(|repo_path| {
-            let git = Git::new(repo_path);
-            let output = match git.list_worktrees() {
-                Ok(o) => o,
-                Err(e) => {
-                    eprintln!(
-                        "{}cannot list {}: {e}{}",
-                        err_clr.red,
-                        repo_path.display(),
-                        err_clr.reset
-                    );
-                    return None;
-                }
-            };
-            let worktrees = worktree::parse_porcelain(&output);
-            let name = worktree::repo_basename(repo_path);
-            Some((name, git, worktrees))
-        })
-        .collect();
-
     if json {
-        let mut all_entries = Vec::new();
-        for (name, git, worktrees) in &repo_data {
-            let current_path = find_current(worktrees, cwd.as_deref());
-            all_entries.extend(build_json_entries(git, worktrees, current_path, Some(name)));
-        }
-        let json_str = serde_json::to_string(&all_entries)
-            .map_err(|e| format!("cannot serialize json: {e}"))?;
+        let entries: Vec<_> = repos
+            .iter()
+            .flat_map(|repo| build_json_entries(&repo.worktrees, Some(&repo.name)))
+            .collect();
+        let json_str =
+            serde_json::to_string(&entries).map_err(|e| format!("cannot serialize json: {e}"))?;
         println!("{json_str}");
     } else {
         let cols = terminal::width();
         let clr = terminal::colors();
-        for (i, (name, git, worktrees)) in repo_data.iter().enumerate() {
-            let current_path = find_current(worktrees, cwd.as_deref());
+        for (i, repo) in repos.iter().enumerate() {
             if i > 0 {
                 println!();
             }
-            println!("{}{}:{}", clr.bold, name, clr.reset);
-            print_table(git, worktrees, current_path, cols, &clr, "  ");
+            println!("{}{}:{}", clr.bold, repo.name, clr.reset);
+            print_table(&repo.worktrees, cols, &clr, "  ");
         }
     }
 
@@ -127,31 +91,10 @@ fn resolve_cwd() -> Option<PathBuf> {
         .and_then(|p| p.canonicalize().ok())
 }
 
-fn find_current<'a>(worktrees: &'a [Worktree], cwd: Option<&Path>) -> Option<&'a Path> {
-    let cwd = cwd?;
-    worktrees
-        .iter()
-        .filter(|wt| !wt.prunable)
-        .filter_map(|wt| {
-            let canonical = worktree::canonicalize_or_self(&wt.path);
-            cwd.starts_with(&canonical)
-                .then_some((wt.path.as_path(), canonical))
-        })
-        .max_by_key(|(_, canonical)| canonical.components().count())
-        .map(|(path, _)| path)
-}
-
-fn build_json_entries(
-    git: &Git,
-    worktrees: &[Worktree],
-    current_path: Option<&Path>,
-    repo_name: Option<&str>,
-) -> Vec<WorktreeEntry> {
+fn build_json_entries(worktrees: &[WorktreeInfo], repo_name: Option<&str>) -> Vec<WorktreeEntry> {
     worktrees
         .iter()
         .map(|wt| {
-            let is_current = current_path == Some(wt.path.as_path());
-            let (dirty, ahead, behind) = computed_status(git, wt);
             let path = wt.path.to_string_lossy().into_owned();
             let branch = wt.branch.clone();
             let name = branch.clone().unwrap_or_else(|| path.clone());
@@ -165,23 +108,16 @@ fn build_json_entries(
                 detached: wt.detached,
                 locked: wt.locked,
                 prunable: wt.prunable,
-                dirty,
-                ahead,
-                behind,
-                current: is_current,
+                dirty: wt.dirty,
+                ahead: wt.ahead,
+                behind: wt.behind,
+                current: wt.current,
             }
         })
         .collect()
 }
 
-fn print_table(
-    git: &Git,
-    worktrees: &[Worktree],
-    current_path: Option<&Path>,
-    cols: usize,
-    clr: &Colors,
-    indent: &str,
-) {
+fn print_table(worktrees: &[WorktreeInfo], cols: usize, clr: &Colors, indent: &str) {
     let cur_w: usize = 1;
     let branch_min: usize = 14;
     let branch_max: usize = 24;
@@ -200,16 +136,14 @@ fn print_table(
     );
 
     for wt in worktrees {
-        let is_current = current_path == Some(wt.path.as_path());
-
         let branch = wt
             .branch
             .as_deref()
             .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
         let branch_trunc = trunc(branch, branch_w);
 
-        let (dirty, ahead, behind) = computed_status(git, wt);
-        let status = format_status(wt.bare, dirty, ahead, behind);
+        let status = worktree::format_status(wt.bare, wt.dirty, wt.ahead, wt.behind)
+            .unwrap_or_else(|| "-".into());
         let status_trunc = trunc(&status, status_w);
 
         let path_str = terminal::tilde_path(&wt.path);
@@ -218,7 +152,7 @@ fn print_table(
         let badges = worktree_badges(wt, clr);
 
         let branch_pad = branch_w.saturating_sub(branch_trunc.chars().count());
-        let branch_color = if is_current { clr.green } else { "" };
+        let branch_color = if wt.current { clr.green } else { "" };
         let branch_col = format!(
             "{}{}{}{}",
             branch_color,
@@ -227,7 +161,7 @@ fn print_table(
             " ".repeat(branch_pad)
         );
 
-        let cur_col = if is_current { "*" } else { " " };
+        let cur_col = if wt.current { "*" } else { " " };
 
         let row_suffix = if badges.is_empty() {
             path_trunc
@@ -242,45 +176,7 @@ fn print_table(
     }
 }
 
-fn computed_status(git: &Git, wt: &Worktree) -> (bool, Option<u64>, Option<u64>) {
-    if wt.bare || wt.prunable {
-        return (false, None, None);
-    }
-    let dirty = git.is_dirty(&wt.path);
-    let (ahead, behind) = wt
-        .branch
-        .as_deref()
-        .and_then(|b| git.ahead_behind(b))
-        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
-    (dirty, ahead, behind)
-}
-
-fn format_status(bare: bool, dirty: bool, ahead: Option<u64>, behind: Option<u64>) -> String {
-    if bare {
-        return "bare".into();
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if dirty {
-        parts.push("*".into());
-    }
-    if let Some(a) = ahead
-        && a > 0
-    {
-        parts.push(format!("↑{a}"));
-    }
-    if let Some(b) = behind
-        && b > 0
-    {
-        parts.push(format!("↓{b}"));
-    }
-    if parts.is_empty() {
-        "-".into()
-    } else {
-        parts.join(" ")
-    }
-}
-
-fn worktree_badges(wt: &Worktree, clr: &Colors) -> String {
+fn worktree_badges(wt: &WorktreeInfo, clr: &Colors) -> String {
     if wt.bare {
         return String::new();
     }
@@ -295,31 +191,4 @@ fn worktree_badges(wt: &Worktree, clr: &Colors) -> String {
         badges.push(format!("{}[prunable]{}", clr.red, clr.reset));
     }
     badges.join(" ")
-}
-
-fn trunc(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        return s.chars().take(max).collect();
-    }
-    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
-    format!("{}...", &s[..end])
-}
-
-fn trunc_tail(s: &str, max: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max {
-        return s.to_string();
-    }
-    if max <= 3 {
-        let start = s.char_indices().nth(char_count - max).map_or(0, |(i, _)| i);
-        return s[start..].to_string();
-    }
-    let start = s
-        .char_indices()
-        .nth(char_count - max + 3)
-        .map_or(0, |(i, _)| i);
-    format!("...{}", &s[start..])
 }

@@ -1,17 +1,14 @@
 # wt
 
-Git worktree manager.
+Git worktree manager. Work on multiple branches simultaneously — each in its own directory, sharing one repo.
 
-`wt` creates worktrees under `~/.wt/worktrees/`, manages branch lifecycle, and keeps shared files in sync across worktrees.
-
-## Features
-
-- **Clone** — `wt clone <url>` clones a repository and creates the first worktree, ready to go
-- **Create and switch** — check out branches into isolated worktrees with `wt new`, or use `wt switch` to find an existing worktree or create one
-- **Clean up** — `wt prune` removes worktrees whose branches are merged or whose upstream is gone
-- **Link shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
-- **Typo detection** — `wt switch` catches misspelled branch names with fuzzy matching before creating a new branch
-- **Script-friendly** — stdout is always data (paths, JSON); messages go to stderr
+```sh
+wt                          # pick a worktree (interactive fuzzy picker)
+wt clone <url>              # clone a repo and create the first worktree
+wt new -c my-feature        # create a branch and cd into its worktree
+wt switch my-feature        # jump to an existing worktree, or create one
+wt prune                    # clean up worktrees for merged branches
+```
 
 ## Install
 
@@ -19,46 +16,39 @@ Git worktree manager.
 cargo install --path .
 ```
 
-## Usage
+### Shell integration
+
+Add to your shell config for tab completion and auto-cd:
 
 ```sh
-wt clone git@github.com:org/repo     # clone and create first worktree
-wt new my-feature                    # check out existing branch
-wt new -c my-feature                 # create new branch from HEAD
-wt new -c my-feature develop         # create from base
-wt new v2.0                          # check out tag (detached HEAD)
-wt switch my-feature                 # get or create worktree
-wt list                              # list worktrees
-wt list --json                       # machine-readable JSON output
-wt remove my-feature                 # remove worktree and branch
-wt remove my-feature --keep-branch   # remove worktree, keep branch
-wt path my-feature                   # print worktree path
-wt prune                             # remove merged worktrees
-wt prune --gone                      # also remove upstream-gone
-wt prune --base develop              # override base branch
-wt link .env .env.local              # symlink into all worktrees
-wt link --list                       # show configured links
-wt unlink .env                       # remove symlinks
-wt unlink --all                      # remove all linked files
-```
-
-Short aliases: `cl`, `n`, `s`, `ls`, `rm`, `p`, `ln`.
-
-All commands accept `--repo <path>`. Run `wt <command> --help` for full options.
-
-## Shell Integration
-
-Add to your shell config for tab completion and auto-cd after `clone`, `new`, and `switch`:
-
-```sh
-# zsh (~/.zshrc) — must be AFTER compinit
+# zsh — after compinit
 eval "$(wt init zsh)"
 
-# bash (~/.bashrc)
+# bash
 eval "$(wt init bash)"
 
-# fish (~/.config/fish/config.fish)
+# fish
 wt init fish | source
 ```
 
-**zsh**: the generated script calls `compdef`, so the `eval` line must appear _after_ `compinit`. If you use a framework (oh-my-zsh, zinit, etc.), add it after the framework is sourced. If completions don't load, run `echo $functions[_wt]` — if empty, the `eval` is too early.
+## Commands
+
+| Command | Alias | What it does |
+|---------|-------|--------------|
+| `wt` | | Interactive picker with fuzzy filtering |
+| `wt clone <url>` | `cl` | Clone repo, create first worktree |
+| `wt new <branch>` | `n` | Check out a branch or ref into a new worktree |
+| `wt switch <branch>` | `s` | Find or create a worktree for a branch |
+| `wt list [--json]` | `ls` | List worktrees (JSON for scripts) |
+| `wt remove <branch>` | `rm` | Remove worktree and delete branch |
+| `wt path <branch>` | `p` | Print worktree path |
+| `wt prune [--gone]` | | Remove merged (and upstream-gone) worktrees |
+| `wt link <file>` | `ln` | Symlink shared files across worktrees |
+| `wt unlink <file>` | | Remove symlinked files |
+
+## Highlights
+
+- **Interactive picker** — run bare `wt` to browse all repos and worktrees with fuzzy search, status indicators, and keyboard navigation
+- **Typo detection** — misspell a branch name and `wt` suggests the closest match before creating anything
+- **Shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
+- **Script-friendly** — stdout is always data (paths, JSON); messages go to stderr

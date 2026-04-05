@@ -22,6 +22,8 @@ fn zsh_init_includes_dynamic_worktree_helpers() {
     assert!(stdout.contains("_wt_switch_targets()"));
     assert!(stdout.contains("_wt_new_name()"));
     assert!(stdout.contains("_wt_new_base()"));
+    assert!(stdout.contains("_wt_adaptive_max_path()"));
+    assert!(stdout.contains("_wt_format_branch_desc()"));
     assert!(stdout.contains("_wt_link_files()"));
     assert!(stdout.contains("_wt_unlink_files()"));
     assert!(stdout.contains("cmd+=(worktree list --porcelain)"));
@@ -54,8 +56,11 @@ fn zsh_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("new|n|switch|s|clone|cl)"));
-    assert!(stdout.contains(r#"cd "$out""#));
+    assert!(stdout.contains(r#"cd -- "$out""#));
 }
 
 #[test]
@@ -74,6 +79,8 @@ fn bash_init_excludes_zsh_specific_helpers() {
     assert!(!stdout.contains("_wt_switch_targets()"));
     assert!(!stdout.contains("_wt_new_name()"));
     assert!(!stdout.contains("_wt_new_base()"));
+    assert!(!stdout.contains("_wt_adaptive_max_path()"));
+    assert!(!stdout.contains("_wt_format_branch_desc()"));
 }
 
 #[test]
@@ -82,8 +89,11 @@ fn bash_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("wt() {"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("new|n|switch|s|clone|cl)"));
-    assert!(stdout.contains(r#"cd "$out""#));
+    assert!(stdout.contains(r#"cd -- "$out""#));
 }
 
 #[test]
@@ -92,9 +102,12 @@ fn fish_init_includes_wrapper() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("function wt --wraps=wt"));
+    assert!(stdout.contains("mktemp"));
+    assert!(stdout.contains("__WT_CD="));
+    assert!(stdout.contains("rm -f"));
     assert!(stdout.contains("command wt $argv"));
     assert!(stdout.contains("case new n switch s"));
-    assert!(stdout.contains("and cd $out"));
+    assert!(stdout.contains("and cd -- $out"));
 }
 
 #[test]

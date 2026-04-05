@@ -3,21 +3,40 @@ use clap::CommandFactory;
 use crate::cli::Cli;
 
 const SH_WRAPPER: &str = "wt() {
+  if [ $# -eq 0 ]; then
+    local __wt_cd
+    __wt_cd=$(mktemp) || return 1
+    __WT_CD=\"$__wt_cd\" command wt
+    local ret=$?
+    if [ -s \"$__wt_cd\" ]; then cd -- \"$(cat \"$__wt_cd\")\" || ret=$?; fi
+    rm -f \"$__wt_cd\"
+    return $ret
+  fi
   case \"$1\" in
     new|n|switch|s|clone|cl)
       local out
-      out=$(command wt \"$@\") && [ -d \"$out\" ] && cd \"$out\" ;;
+      out=$(command wt \"$@\") && [ -d \"$out\" ] && cd -- \"$out\" ;;
     *) command wt \"$@\" ;;
   esac
 }
 ";
 
 const FISH_WRAPPER: &str = "function wt --wraps=wt
+  if test (count $argv) -eq 0
+    set -l __wt_cd (mktemp); or return 1
+    __WT_CD=$__wt_cd command wt
+    set -l ret $status
+    if test -s $__wt_cd
+      cd -- (cat $__wt_cd); or set ret $status
+    end
+    rm -f $__wt_cd
+    return $ret
+  end
   switch $argv[1]
     case new n switch s clone cl
       set -l out (command wt $argv)
       and test -d $out
-      and cd $out
+      and cd -- $out
     case '*'
       command wt $argv
   end
@@ -185,17 +204,47 @@ _wt_find_current_branch() {
     (( best_idx > 0 )) && _wt_current_branch="${_wt_completion_branches[best_idx]}"
 }
 
+_wt_adaptive_max_path() {
+    local max_branch=$1
+    local cols=${COLUMNS:-0}
+    typeset -g _wt_max_path=72
+    if (( cols > max_branch + 14 )); then
+        _wt_max_path=$(( cols - max_branch - 10 ))
+    fi
+    (( _wt_max_path < 24 )) && _wt_max_path=24
+}
+
+_wt_format_branch_desc() {
+    local b=$1 idx=$2 max_branch=$3 max_path=$4 current_branch=$5
+    local path_display branch_color details flag
+    path_display="${_wt_completion_paths[idx]/#${HOME}/~}"
+    if (( ${#path_display} > max_path )); then
+        path_display="...${path_display[-$((max_path - 3)),-1]}"
+    fi
+    details="($path_display)"
+    for flag in ${(s: :)_wt_completion_flags[idx]}; do
+        case $flag in
+            locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
+            detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
+            prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
+        esac
+    done
+    if [[ $b == "$current_branch" ]]; then
+        branch_color="$_wt_current_color"
+    else
+        branch_color=""
+    fi
+    # \e[0m before padding cancels menu-select highlight so it stops at the branch name
+    REPLY="${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details"
+}
+
 _wt_complete_branches_with_paths() {
     local -a values descs
-    local idx max_branch=0 details path_display branch_color current_branch="" b flag
-    local cols=${COLUMNS:-0}
-    local max_path=72
+    local idx max_branch=0 b
     _wt_setup_colors
 
     _wt_collect_worktree_rows || return 1
-
     _wt_find_current_branch
-    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -203,36 +252,14 @@ _wt_complete_branches_with_paths() {
         values+=("$b")
         (( ${#b} > max_branch )) && max_branch=${#b}
     done
-    if (( ${#values[@]} == 0 )); then
-        return 1
-    fi
-    if (( cols > max_branch + 14 )); then
-        max_path=$(( cols - max_branch - 10 ))
-    fi
-    (( max_path < 24 )) && max_path=24
+    (( ${#values[@]} == 0 )) && return 1
+    _wt_adaptive_max_path $max_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
         [[ -z $b ]] && continue
-        path_display="${_wt_completion_paths[idx]/#${HOME}/~}"
-        if (( ${#path_display} > max_path )); then
-            path_display="...${path_display[-$((max_path - 3)),-1]}"
-        fi
-        details="($path_display)"
-        for flag in ${(s: :)_wt_completion_flags[idx]}; do
-            case $flag in
-                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
-                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
-                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
-            esac
-        done
-        if [[ $b == "$current_branch" ]]; then
-            branch_color="$_wt_current_color"
-        else
-            branch_color=""
-        fi
-        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
+        _wt_format_branch_desc "$b" $idx $max_branch $_wt_max_path "$_wt_current_branch"
+        descs+=("$REPLY")
     done
     compadd -l -d descs -- "${values[@]}"
 }
@@ -257,9 +284,7 @@ _wt_path_branches() {
 
 _wt_remove_targets() {
     local -a wt_values descs detached_values detached_descs
-    local idx max_branch=0 details path_display branch_color current_branch="" b flag
-    local cols=${COLUMNS:-0}
-    local max_path=72
+    local idx max_branch=0 b
     _wt_setup_colors
     local -A seen_set
     local i w
@@ -282,7 +307,6 @@ _wt_remove_targets() {
     done
 
     _wt_find_current_branch
-    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -292,35 +316,15 @@ _wt_remove_targets() {
         wt_values+=("$b")
         (( ${#b} > max_branch )) && max_branch=${#b}
     done
-    if (( cols > max_branch + 14 )); then
-        max_path=$(( cols - max_branch - 10 ))
-    fi
-    (( max_path < 24 )) && max_path=24
+    _wt_adaptive_max_path $max_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
         [[ -z $b ]] && continue
         [[ ${_wt_completion_paths[idx]} == "$_wt_main_path" ]] && continue
         (( ${+seen_set[$b]} )) && continue
-        path_display="${_wt_completion_paths[idx]/#${HOME}/~}"
-        if (( ${#path_display} > max_path )); then
-            path_display="...${path_display[-$((max_path - 3)),-1]}"
-        fi
-        details="($path_display)"
-        for flag in ${(s: :)_wt_completion_flags[idx]}; do
-            case $flag in
-                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
-                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
-                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
-            esac
-        done
-        if [[ $b == "$current_branch" ]]; then
-            branch_color="$_wt_current_color"
-        else
-            branch_color=""
-        fi
-        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
+        _wt_format_branch_desc "$b" $idx $max_branch $_wt_max_path "$_wt_current_branch"
+        descs+=("$REPLY")
     done
 
     _wt_collect_tags
@@ -345,16 +349,12 @@ _wt_remove_targets() {
 _wt_switch_targets() {
     local -A wt_set
     local -a wt_values wt_descs other_values other_descs
-    local idx max_branch=0 details path_display branch branch_color current_branch="" b flag
-    local cols=${COLUMNS:-0}
-    local max_path=72
+    local idx max_branch=0 branch b
     _wt_setup_colors
 
     _wt_collect_worktree_rows
     _wt_collect_local_branches
-
     _wt_find_current_branch
-    current_branch=$_wt_current_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
@@ -369,33 +369,13 @@ _wt_switch_targets() {
         other_values+=("$branch")
         (( ${#branch} > max_branch )) && max_branch=${#branch}
     done
-    if (( cols > max_branch + 14 )); then
-        max_path=$(( cols - max_branch - 10 ))
-    fi
-    (( max_path < 24 )) && max_path=24
+    _wt_adaptive_max_path $max_branch
 
     for (( idx = 1; idx <= ${#_wt_completion_branches[@]}; idx++ )); do
         b="${_wt_completion_branches[idx]}"
         [[ -z $b ]] && continue
-        path_display="${_wt_completion_paths[idx]/#${HOME}/~}"
-        if (( ${#path_display} > max_path )); then
-            path_display="...${path_display[-$((max_path - 3)),-1]}"
-        fi
-        details="($path_display)"
-        for flag in ${(s: :)_wt_completion_flags[idx]}; do
-            case $flag in
-                locked)   details="$details [${_wt_bold_yellow}locked${_wt_reset}]" ;;
-                detached) details="$details [${_wt_dim}detached${_wt_reset}]" ;;
-                prunable) details="$details [${_wt_prunable_color}prunable${_wt_reset}]" ;;
-            esac
-        done
-        if [[ $b == "$current_branch" ]]; then
-            branch_color="$_wt_current_color"
-        else
-            branch_color=""
-        fi
-        # reset before padding: \e[0m cancels menu-select highlight so it stops at the branch name
-        wt_descs+=("${branch_color}${b}${_wt_reset}${(r:$((max_branch-${#b})):):-}  $details")
+        _wt_format_branch_desc "$b" $idx $max_branch $_wt_max_path "$_wt_current_branch"
+        wt_descs+=("$REPLY")
     done
     for branch in "${other_values[@]}"; do
         other_descs+=("${_wt_dim}${branch}${_wt_reset}")
@@ -455,7 +435,10 @@ _wt_unlink_files() {
         [[ $i -eq $CURRENT ]] && continue
         w="${words[i]}"
         [[ $w == wt || $w == unlink ]] && continue
-        [[ $w == --* || $w == -* ]] && continue
+        if [[ $w == --* || $w == -* ]]; then
+            [[ $w == "--repo" ]] && (( i++ ))
+            continue
+        fi
         [[ -n $w ]] && seen_set[$w]=1
     done
 
@@ -572,27 +555,39 @@ mod tests {
     fn zsh_init_includes_wrapper() {
         let script = render(clap_complete::Shell::Zsh).unwrap();
         assert!(script.contains("wt() {"));
+        assert!(script.contains("if [ $# -eq 0 ]"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt \"$@\""));
         assert!(script.contains("new|n|switch|s|clone|cl)"));
-        assert!(script.contains("cd \"$out\""));
+        assert!(script.contains("cd -- \"$out\""));
     }
 
     #[test]
     fn bash_init_includes_wrapper() {
         let script = render(clap_complete::Shell::Bash).unwrap();
         assert!(script.contains("wt() {"));
+        assert!(script.contains("if [ $# -eq 0 ]"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt \"$@\""));
         assert!(script.contains("new|n|switch|s|clone|cl)"));
-        assert!(script.contains("cd \"$out\""));
+        assert!(script.contains("cd -- \"$out\""));
     }
 
     #[test]
     fn fish_init_includes_wrapper() {
         let script = render(clap_complete::Shell::Fish).unwrap();
         assert!(script.contains("function wt --wraps=wt"));
+        assert!(script.contains("if test (count $argv) -eq 0"));
+        assert!(script.contains("mktemp"));
+        assert!(script.contains("__WT_CD="));
+        assert!(script.contains("rm -f"));
         assert!(script.contains("command wt $argv"));
         assert!(script.contains("case new n switch s clone cl"));
-        assert!(script.contains("and cd $out"));
+        assert!(script.contains("and cd -- $out"));
     }
 
     #[test]
@@ -605,6 +600,8 @@ mod tests {
             "_wt_collect_tags()",
             "_wt_setup_colors()",
             "_wt_find_current_branch()",
+            "_wt_adaptive_max_path()",
+            "_wt_format_branch_desc()",
             "_wt_complete_branches_with_paths()",
             "_wt_path_branches()",
             "_wt_remove_targets()",
@@ -702,5 +699,7 @@ mod tests {
         assert!(!script.contains("_wt_new_base()"));
         assert!(!script.contains("_wt_link_files()"));
         assert!(!script.contains("_wt_unlink_files()"));
+        assert!(!script.contains("_wt_adaptive_max_path()"));
+        assert!(!script.contains("_wt_format_branch_desc()"));
     }
 }

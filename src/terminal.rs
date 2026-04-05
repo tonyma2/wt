@@ -1,10 +1,10 @@
+use std::io::IsTerminal;
+
 pub fn is_stdout_tty() -> bool {
-    use std::io::IsTerminal;
     std::io::stdout().is_terminal()
 }
 
 pub fn is_stderr_tty() -> bool {
-    use std::io::IsTerminal;
     std::io::stderr().is_terminal()
 }
 
@@ -18,7 +18,7 @@ pub struct Colors {
     pub reset: &'static str,
 }
 
-fn color_enabled(is_tty: bool) -> bool {
+pub fn color_enabled(is_tty: bool) -> bool {
     is_tty && std::env::var("NO_COLOR").is_err() && std::env::var("TERM").as_deref() != Ok("dumb")
 }
 
@@ -59,6 +59,9 @@ pub fn tilde_path(path: &std::path::Path) -> String {
     let Ok(home) = std::env::var("HOME") else {
         return path_str.into_owned();
     };
+    if home.is_empty() {
+        return path_str.into_owned();
+    }
     if let Some(rest) = path_str.strip_prefix(&home)
         && (rest.is_empty() || rest.starts_with('/'))
     {
@@ -72,6 +75,34 @@ pub fn tilde_path(path: &std::path::Path) -> String {
         return format!("~{rest}");
     }
     path_str.into_owned()
+}
+
+pub fn trunc(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
+    format!("{}...", &s[..end])
+}
+
+pub fn trunc_tail(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    if max <= 3 {
+        let start = s.char_indices().nth(count - max).map_or(0, |(i, _)| i);
+        return s[start..].to_string();
+    }
+    let start = s.char_indices().nth(count - max + 3).map_or(0, |(i, _)| i);
+    format!("...{}", &s[start..])
 }
 
 pub fn print_cd_hint(name: &str) {
@@ -114,4 +145,183 @@ fn tiocgwinsz() -> Option<usize> {
 #[cfg(not(unix))]
 fn tiocgwinsz() -> Option<usize> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trunc_short_string_unchanged() {
+        assert_eq!(trunc("main", 10), "main");
+        assert_eq!(trunc("main", 4), "main");
+    }
+
+    #[test]
+    fn trunc_long_string_adds_ellipsis() {
+        assert_eq!(trunc("feat/very-long-branch-name", 10), "feat/ve...");
+        assert_eq!(trunc("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn trunc_zero_budget() {
+        assert_eq!(trunc("anything", 0), "");
+    }
+
+    #[test]
+    fn trunc_budget_one() {
+        assert_eq!(trunc("abc", 1), "a");
+    }
+
+    #[test]
+    fn trunc_tail_short_string_unchanged() {
+        assert_eq!(trunc_tail("main", 10), "main");
+        assert_eq!(trunc_tail("main", 4), "main");
+    }
+
+    #[test]
+    fn trunc_tail_long_string_keeps_tail() {
+        assert_eq!(
+            trunc_tail("~/.wt/worktrees/abc123/my-repo", 15),
+            "...c123/my-repo"
+        );
+    }
+
+    #[test]
+    fn trunc_tail_zero_budget() {
+        assert_eq!(trunc_tail("anything", 0), "");
+    }
+
+    #[test]
+    fn trunc_tail_budget_one() {
+        assert_eq!(trunc_tail("abc", 1), "c");
+    }
+
+    #[test]
+    fn tilde_path_substitutes_home() {
+        let home = std::env::var("HOME").unwrap();
+        let path = std::path::PathBuf::from(&home).join("projects/repo");
+        assert_eq!(tilde_path(&path), "~/projects/repo");
+    }
+
+    #[test]
+    fn tilde_path_home_alone() {
+        let home = std::env::var("HOME").unwrap();
+        let path = std::path::PathBuf::from(&home);
+        assert_eq!(tilde_path(&path), "~");
+    }
+
+    #[test]
+    fn tilde_path_no_match() {
+        let path = std::path::PathBuf::from("/other/path");
+        assert_eq!(tilde_path(&path), "/other/path");
+    }
+
+    #[test]
+    fn tilde_path_no_false_prefix_match() {
+        let home = std::env::var("HOME").unwrap();
+        let fake = std::path::PathBuf::from(format!("{home}extra/dir"));
+        assert_eq!(tilde_path(&fake), fake.to_string_lossy().as_ref());
+    }
+
+    #[test]
+    fn tilde_path_empty_home() {
+        let original = std::env::var("HOME").unwrap();
+        unsafe { std::env::set_var("HOME", "") };
+        let path = std::path::PathBuf::from("/some/path");
+        let result = tilde_path(&path);
+        unsafe { std::env::set_var("HOME", &original) };
+        assert_eq!(result, "/some/path");
+    }
+
+    #[test]
+    fn trunc_multibyte_chars() {
+        assert_eq!(trunc("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "a...");
+        assert_eq!(
+            trunc("\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+        assert_eq!(
+            trunc("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+    }
+
+    #[test]
+    fn trunc_tail_multibyte_chars() {
+        assert_eq!(trunc_tail("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "...\u{00e9}");
+        assert_eq!(
+            trunc_tail("\u{00e9}\u{00e9}\u{00e9}", 3),
+            "\u{00e9}\u{00e9}\u{00e9}"
+        );
+        assert_eq!(
+            trunc_tail("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 2),
+            "\u{00e9}\u{00e9}"
+        );
+    }
+
+    #[test]
+    fn trunc_exact_boundary() {
+        assert_eq!(trunc("abcde", 5), "abcde");
+        assert_eq!(trunc("abcde", 4), "a...");
+    }
+
+    #[test]
+    fn trunc_tail_exact_boundary() {
+        assert_eq!(trunc_tail("abcde", 5), "abcde");
+        assert_eq!(trunc_tail("abcde", 4), "...e");
+    }
+
+    #[test]
+    fn color_enabled_respects_tty() {
+        assert!(!color_enabled(false));
+    }
+
+    #[test]
+    fn color_enabled_respects_no_color() {
+        let had = std::env::var("NO_COLOR").ok();
+        unsafe { std::env::set_var("NO_COLOR", "1") };
+        let result = color_enabled(true);
+        match had {
+            Some(v) => unsafe { std::env::set_var("NO_COLOR", v) },
+            None => unsafe { std::env::remove_var("NO_COLOR") },
+        }
+        assert!(!result);
+    }
+
+    #[test]
+    fn color_enabled_respects_term_dumb() {
+        let had = std::env::var("TERM").ok();
+        unsafe { std::env::set_var("TERM", "dumb") };
+        let result = color_enabled(true);
+        match had {
+            Some(v) => unsafe { std::env::set_var("TERM", v) },
+            None => unsafe { std::env::remove_var("TERM") },
+        }
+        assert!(!result);
+    }
+
+    #[test]
+    fn width_from_columns_env() {
+        let had = std::env::var("COLUMNS").ok();
+        unsafe { std::env::set_var("COLUMNS", "200") };
+        let w = width();
+        match had {
+            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
+            None => unsafe { std::env::remove_var("COLUMNS") },
+        }
+        assert_eq!(w, 200);
+    }
+
+    #[test]
+    fn width_clamps_to_72() {
+        let had = std::env::var("COLUMNS").ok();
+        unsafe { std::env::set_var("COLUMNS", "40") };
+        let w = width();
+        match had {
+            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
+            None => unsafe { std::env::remove_var("COLUMNS") },
+        }
+        assert_eq!(w, 72);
+    }
 }

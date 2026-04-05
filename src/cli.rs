@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "wt", version, about = "Git worktree manager")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]

@@ -49,9 +49,9 @@ After creating a worktree, `new` and `switch` print a `cd "$(wt path '...')"` hi
 - Branch name is single-quoted to prevent shell expansion of `$`, `` ` ``, and `"` characters
 - When `wt init` wrapper is active, stdout is captured by `$()`, so `is_stdout_tty()` returns false and the hint is naturally suppressed
 
-## Do not extend auto-cd to other subcommands
+## Do not use stdout capture for TUI cd-back
 
-`wt init <shell>` outputs a wrapper that intercepts `new`/`n`/`switch`/`s` to auto-cd. `path` is excluded — it stays a pure query for scripting (`$EDITOR "$(command wt path ...)"`). All other subcommands pass through to the binary unchanged.
+Subcommands like `new` and `switch` return paths via stdout, captured by the shell wrapper with `out=$(command wt ...)`. The TUI picker can't do this — it renders to stdout. Instead, the zero-arg wrapper creates a temp file with `mktemp`, passes its path via `__WT_CD`, and the binary writes the selected path there. The shell reads it back after the process exits. Any new subcommand that uses both stdout rendering and cd-back must use the temp-file mechanism, not stdout capture.
 
 ## Do not store bare repos in the current directory
 
