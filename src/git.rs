@@ -45,7 +45,10 @@ impl Git {
             cmd.arg("-C").arg(p);
         }
         cmd.args(["rev-parse", "--show-toplevel"]);
-        let output = cmd.output().map_err(|e| format!("cannot run git: {e}"))?;
+        let output = cmd
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
         if !output.status.success() {
             return Err("not a git repository, use --repo or run inside one".into());
         }
@@ -57,6 +60,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["remote", "get-url", remote])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         if !output.status.success() {
@@ -71,14 +75,16 @@ impl Git {
     }
 
     pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
-        let output = self
+        let status = self
             .cmd()
-            .args(["fetch", "--prune", "--quiet", remote])
+            .args(["fetch", "--prune", remote])
             .stdout(Stdio::null())
-            .output()
+            .stderr(Stdio::inherit())
+            .status()
             .map_err(|e| format!("cannot run git fetch: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err(format!("cannot fetch from '{remote}'"), &output));
+        if !status.success() {
+            // detail already visible on inherited stderr
+            return Err(format!("cannot fetch from '{remote}'"));
         }
         Ok(())
     }
@@ -129,6 +135,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+            .stderr(Stdio::null())
             .output()
             .ok();
         match output {
@@ -345,6 +352,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["config", "--get", &format!("branch.{branch}.remote")])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         if !output.status.success() {
@@ -355,14 +363,16 @@ impl Git {
     }
 
     pub fn bare_clone(url: &str, dest: &Path) -> Result<(), String> {
-        let output = Command::new("git")
-            .args(["clone", "--bare", "--quiet", url])
+        let status = Command::new("git")
+            .args(["clone", "--bare", url])
             .arg(dest)
             .stdout(Stdio::null())
-            .output()
+            .stderr(Stdio::inherit())
+            .status()
             .map_err(|e| format!("cannot run git clone: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot clone repository", &output));
+        if !status.success() {
+            // detail already visible on inherited stderr
+            return Err("cannot clone repository".to_string());
         }
         Ok(())
     }
@@ -400,6 +410,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["for-each-ref", "--format=%(upstream:short)", refspec])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
