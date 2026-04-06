@@ -71,14 +71,16 @@ impl Git {
     }
 
     pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
-        let output = self
+        let status = self
             .cmd()
-            .args(["fetch", "--prune", "--quiet", remote])
+            .args(["fetch", "--prune", remote])
             .stdout(Stdio::null())
-            .output()
+            .stderr(Stdio::inherit())
+            .status()
             .map_err(|e| format!("cannot run git fetch: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err(format!("cannot fetch from '{remote}'"), &output));
+        if !status.success() {
+            // detail already visible on inherited stderr
+            return Err(format!("cannot fetch from '{remote}'"));
         }
         Ok(())
     }
@@ -355,14 +357,16 @@ impl Git {
     }
 
     pub fn bare_clone(url: &str, dest: &Path) -> Result<(), String> {
-        let output = Command::new("git")
-            .args(["clone", "--bare", "--quiet", url])
+        let status = Command::new("git")
+            .args(["clone", "--bare", url])
             .arg(dest)
             .stdout(Stdio::null())
-            .output()
+            .stderr(Stdio::inherit())
+            .status()
             .map_err(|e| format!("cannot run git clone: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot clone repository", &output));
+        if !status.success() {
+            // detail already visible on inherited stderr
+            return Err("cannot clone repository".to_string());
         }
         Ok(())
     }
