@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use crate::git::Git;
 use crate::terminal::{self, Colors};
@@ -10,7 +9,7 @@ use crate::worktree;
 pub fn run(
     dry_run: bool,
     gone: bool,
-    stale: Option<u64>,
+    stale: bool,
     repo: Option<&Path>,
     base: Option<&str>,
 ) -> Result<(), String> {
@@ -247,20 +246,11 @@ fn cleanup_dir_chain(mut dir: &Path, wt_root: &Path, cwd: Option<&Path>, clr: &C
     }
 }
 
-fn commit_age_days(git: &Git, branch_ref: &str) -> Option<u64> {
-    let epoch = git.commit_epoch(branch_ref)?;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
-    Some(now.saturating_sub(epoch).max(0) as u64 / 86400)
-}
-
 fn prune_merged(
     git: &Git,
     dry_run: bool,
     gone: bool,
-    stale: Option<u64>,
+    stale: bool,
     cwd: Option<&Path>,
     base_override: Option<&str>,
     messages: &mut Vec<String>,
@@ -270,7 +260,7 @@ fn prune_merged(
         path: PathBuf,
         merged: bool,
         remote: Option<String>,
-        stale_days: Option<u64>,
+        no_upstream: bool,
     }
 
     let base = if let Some(b) = base_override {
@@ -309,16 +299,9 @@ fn prune_merged(
             let branch_ref = format!("refs/heads/{branch}");
             let upstream = git.upstream_remote(branch);
 
-            let stale_age = if upstream.is_none() {
-                stale.and_then(|max_days| {
-                    let age = commit_age_days(git, &branch_ref)?;
-                    (age >= max_days).then_some(age)
-                })
-            } else {
-                None
-            };
+            let no_upstream = upstream.is_none();
 
-            if upstream.is_none() && base_override.is_none() && stale_age.is_none() {
+            if no_upstream && base_override.is_none() && !stale {
                 let merged = base
                     .as_ref()
                     .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
@@ -337,7 +320,7 @@ fn prune_merged(
                 path: wt.path.clone(),
                 merged,
                 remote: if gone { upstream } else { None },
-                stale_days: stale_age,
+                no_upstream: no_upstream && stale,
             })
         })
         .collect();
@@ -358,16 +341,8 @@ fn prune_merged(
 
         if (base_override.is_some() || upstream.is_some()) && is_merged {
             messages.push(format!("skipping {branch} (merged, locked)"));
-        } else if let Some(age) = upstream
-            .is_none()
-            .then(|| {
-                stale.and_then(|max_days| {
-                    commit_age_days(git, &branch_ref).filter(|&d| d >= max_days)
-                })
-            })
-            .flatten()
-        {
-            messages.push(format!("skipping {branch} (stale {age}d, locked)"));
+        } else if upstream.is_none() && stale {
+            messages.push(format!("skipping {branch} (no upstream, locked)"));
         }
     }
 
@@ -406,11 +381,11 @@ fn prune_merged(
             })
         };
 
-        if !candidate.merged && !upstream_gone && candidate.stale_days.is_none() {
+        if !candidate.merged && !upstream_gone && !candidate.no_upstream {
             continue;
         }
 
-        let reason = build_reason(candidate.merged, upstream_gone, candidate.stale_days);
+        let reason = build_reason(candidate.merged, upstream_gone, candidate.no_upstream);
 
         let label = &candidate.branch;
 
@@ -456,16 +431,16 @@ fn prune_merged(
     Ok(())
 }
 
-fn build_reason(merged: bool, upstream_gone: bool, stale_days: Option<u64>) -> String {
-    let mut parts: Vec<String> = Vec::new();
+fn build_reason(merged: bool, upstream_gone: bool, no_upstream: bool) -> String {
+    let mut parts: Vec<&str> = Vec::new();
     if merged {
-        parts.push("merged".into());
+        parts.push("merged");
     }
     if upstream_gone {
-        parts.push("upstream gone".into());
+        parts.push("upstream gone");
     }
-    if let Some(days) = stale_days {
-        parts.push(format!("stale {days}d"));
+    if no_upstream {
+        parts.push("no upstream");
     }
     parts.join(", ")
 }

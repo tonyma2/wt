@@ -335,19 +335,6 @@ impl Git {
         parse_porcelain_status(&text)
     }
 
-    pub fn commit_epoch(&self, refname: &str) -> Option<i64> {
-        let output = self
-            .cmd()
-            .args(["log", "-1", "--format=%ct", refname])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        String::from_utf8_lossy(&output.stdout).trim().parse().ok()
-    }
-
     pub fn is_upstream_gone(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
         self.upstream_for(&branch_ref)
