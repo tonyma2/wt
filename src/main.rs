@@ -38,9 +38,10 @@ fn main() {
         Some(Command::Prune {
             dry_run,
             gone,
+            stale,
             repo,
             base,
-        }) => commands::prune::run(*dry_run, *gone, repo.as_deref(), base.as_deref()),
+        }) => commands::prune::run(*dry_run, *gone, *stale, repo.as_deref(), base.as_deref()),
         Some(Command::Path { name, repo }) => commands::path::run(name, repo.as_deref()),
         Some(Command::Switch { name, create, repo }) => {
             commands::switch::run(name, *create, repo.as_deref())

@@ -1979,3 +1979,368 @@ fn silent_repos_omitted_from_grouped_output() {
         "silent repo should not appear in output, got: {stderr}",
     );
 }
+
+fn make_old_commit(dir: &std::path::Path, days_ago: u64) {
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - days_ago * 86400;
+    let date = format!("{epoch} +0000");
+    assert_git_success_with(dir, |cmd| {
+        cmd.args(["commit", "--allow-empty", "-m", "old commit"])
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date);
+    });
+}
+
+#[test]
+fn stale_prunes_old_no_upstream_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "stale-branch");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "stale no-upstream worktree should be removed"
+    );
+    assert_branch_absent(&repo, "stale-branch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("stale-branch") && stderr.contains("stale"),
+        "should report stale removal, got: {stderr}",
+    );
+}
+
+#[test]
+fn stale_preserves_recent_no_upstream_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "fresh-branch");
+    make_old_commit(&wt_path, 5);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "recent no-upstream worktree should not be removed"
+    );
+    assert_branch_present(&repo, "fresh-branch");
+}
+
+#[test]
+fn stale_skips_dirty_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "dirty-stale");
+    make_old_commit(&wt_path, 60);
+    std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "dirty stale worktree should not be removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dirty-stale") && stderr.contains("dirty"),
+        "should report dirty skip reason, got: {stderr}",
+    );
+}
+
+#[test]
+fn stale_skips_cwd_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "cwd-stale");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "stale worktree should not be removed when cwd is inside it"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cwd-stale") && stderr.contains("current directory"),
+        "should report cwd skip reason, got: {stderr}",
+    );
+}
+
+#[test]
+fn stale_dry_run_reports_without_removing() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "dry-stale");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30", "--dry-run"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --dry-run should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(wt_path.exists(), "dry-run should not remove stale worktree");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("would remove") && stderr.contains("stale"),
+        "should report what would be removed, got: {stderr}",
+    );
+    assert_branch_present(&repo, "dry-stale");
+}
+
+#[test]
+fn stale_ignores_branches_with_upstream() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "pushed-old");
+    make_old_commit(&wt_path, 60);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "pushed-old"]);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "pushed branch should not be pruned by --stale even if old"
+    );
+    assert_branch_present(&repo, "pushed-old");
+}
+
+#[test]
+fn stale_works_with_repo_flag() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "repo-stale");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30", "--repo"])
+        .arg(&repo)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --repo should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "stale worktree should be removed with --repo"
+    );
+    assert_branch_absent(&repo, "repo-stale");
+}
+
+#[test]
+fn stale_reports_locked_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "locked-stale");
+    make_old_commit(&wt_path, 60);
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "locked stale worktree should not be removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("locked-stale")
+            && stderr.contains("stale")
+            && stderr.contains("locked")
+            && stderr.contains("d,"),
+        "should report locked stale skip with day count, got: {stderr}",
+    );
+}
+
+#[test]
+fn stale_works_with_base_flag() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "stale-with-base");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30", "--base", "main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "stale worktree should be removed even with --base"
+    );
+    assert_branch_absent(&repo, "stale-with-base");
+}
+
+#[test]
+fn stale_and_merged_reports_compound_reason() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "stale-merged");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30", "--base", "main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wt_path.exists(), "stale+merged worktree should be removed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("merged") && stderr.contains("stale"),
+        "should report both merged and stale reasons, got: {stderr}",
+    );
+}
+
+#[test]
+fn stale_combined_with_gone() {
+    let (home, repo, _origin) = setup_with_origin();
+
+    let stale_wt = wt_new(home.path(), &repo, "stale-local");
+    make_old_commit(&stale_wt, 60);
+
+    let gone_wt = wt_new(home.path(), &repo, "gone-pushed");
+    std::fs::write(gone_wt.join("feature.txt"), "work").unwrap();
+    assert_git_success(&gone_wt, &["add", "feature.txt"]);
+    assert_git_success(&gone_wt, &["commit", "-m", "feature work"]);
+    assert_git_success(&gone_wt, &["push", "-u", "origin", "gone-pushed"]);
+    assert_git_success(&repo, &["push", "origin", "--delete", "gone-pushed"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --gone should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !stale_wt.exists(),
+        "stale no-upstream worktree should be removed"
+    );
+    assert!(
+        !gone_wt.exists(),
+        "upstream-gone worktree should be removed"
+    );
+    assert_branch_absent(&repo, "stale-local");
+    assert_branch_absent(&repo, "gone-pushed");
+}
+
+#[test]
+fn stale_skips_detached_head_worktree() {
+    let (home, repo) = setup();
+    let sha = assert_git_stdout_success(&repo, &["rev-parse", "HEAD"]);
+    let sha = sha.trim();
+
+    let wt_path = wt_checkout(home.path(), &repo, sha);
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "detached HEAD worktree should not be pruned by --stale"
+    );
+}
+
+#[test]
+fn stale_and_merged_with_origin() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "stale-merged-origin");
+    make_old_commit(&wt_path, 60);
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "30"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !wt_path.exists(),
+        "stale+merged no-upstream worktree should be removed with origin present"
+    );
+    assert_branch_absent(&repo, "stale-merged-origin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("merged") && stderr.contains("stale"),
+        "should report both merged and stale, got: {stderr}",
+    );
+}
