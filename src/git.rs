@@ -145,19 +145,24 @@ impl Git {
         if name == "HEAD" {
             return Ok(vec![]);
         }
+        let pattern = format!("refs/remotes/*/{name}");
         let output = self
             .cmd()
-            .args(["remote"])
+            .args(["for-each-ref", "--format=%(refname)", &pattern])
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| format!("cannot run git remote: {e}"))?;
+            .map_err(|e| format!("cannot run git for-each-ref: {e}"))?;
         if !output.status.success() {
             return Err(git_err("cannot list remotes", &output));
         }
+        let suffix = format!("/{name}");
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
-            .filter(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}")))
-            .map(str::to_string)
+            .filter_map(|line| {
+                line.strip_prefix("refs/remotes/")?
+                    .strip_suffix(&suffix)
+                    .map(str::to_string)
+            })
             .collect())
     }
 
@@ -275,7 +280,7 @@ impl Git {
         let branch_ref = format!("refs/heads/{branch}");
 
         if let Some(upstream) = self.upstream_for(&branch_ref)
-            && self.rev_resolves(&upstream)
+            && self.rev_parse(&upstream).is_some()
         {
             return self.is_ancestor(&branch_ref, &upstream);
         }
@@ -306,15 +311,6 @@ impl Git {
         (!sha.is_empty()).then_some(sha)
     }
 
-    pub fn rev_resolves(&self, refname: &str) -> bool {
-        self.cmd()
-            .args(["rev-parse", "--verify", "--quiet", refname])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    }
-
     pub fn worktree_status(worktree_path: &Path) -> (bool, Option<u64>, Option<u64>) {
         let output = Self::cmd_in(worktree_path)
             .args([
@@ -338,7 +334,7 @@ impl Git {
     pub fn is_upstream_gone(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
         self.upstream_for(&branch_ref)
-            .is_some_and(|upstream| !self.rev_resolves(&upstream))
+            .is_some_and(|upstream| self.rev_parse(&upstream).is_none())
     }
 
     pub fn upstream_remote(&self, branch: &str) -> Option<String> {
