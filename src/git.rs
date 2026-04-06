@@ -45,7 +45,10 @@ impl Git {
             cmd.arg("-C").arg(p);
         }
         cmd.args(["rev-parse", "--show-toplevel"]);
-        let output = cmd.output().map_err(|e| format!("cannot run git: {e}"))?;
+        let output = cmd
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
         if !output.status.success() {
             return Err("not a git repository, use --repo or run inside one".into());
         }
@@ -57,6 +60,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["remote", "get-url", remote])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         if !output.status.success() {
@@ -131,6 +135,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+            .stderr(Stdio::null())
             .output()
             .ok();
         match output {
@@ -347,6 +352,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["config", "--get", &format!("branch.{branch}.remote")])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         if !output.status.success() {
@@ -404,6 +410,7 @@ impl Git {
         let output = self
             .cmd()
             .args(["for-each-ref", "--format=%(upstream:short)", refspec])
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
