@@ -1980,28 +1980,13 @@ fn silent_repos_omitted_from_grouped_output() {
     );
 }
 
-fn make_old_commit(dir: &std::path::Path, days_ago: u64) {
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        - days_ago * 86400;
-    let date = format!("{epoch} +0000");
-    assert_git_success_with(dir, |cmd| {
-        cmd.args(["commit", "--allow-empty", "-m", "old commit"])
-            .env("GIT_AUTHOR_DATE", &date)
-            .env("GIT_COMMITTER_DATE", &date);
-    });
-}
-
 #[test]
-fn stale_prunes_old_no_upstream_worktree() {
+fn stale_prunes_no_upstream_worktree() {
     let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "stale-branch");
-    make_old_commit(&wt_path, 60);
+    let wt_path = wt_new(home.path(), &repo, "no-upstream-branch");
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2010,50 +1995,23 @@ fn stale_prunes_old_no_upstream_worktree() {
         "wt prune --stale should succeed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert!(
-        !wt_path.exists(),
-        "stale no-upstream worktree should be removed"
-    );
-    assert_branch_absent(&repo, "stale-branch");
+    assert!(!wt_path.exists(), "no-upstream worktree should be removed");
+    assert_branch_absent(&repo, "no-upstream-branch");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("stale-branch") && stderr.contains("stale"),
-        "should report stale removal, got: {stderr}",
+        stderr.contains("no-upstream-branch") && stderr.contains("no upstream"),
+        "should report no upstream removal, got: {stderr}",
     );
-}
-
-#[test]
-fn stale_preserves_recent_no_upstream_worktree() {
-    let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "fresh-branch");
-    make_old_commit(&wt_path, 5);
-
-    let output = wt_bin()
-        .args(["prune", "--stale", "30"])
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt prune --stale should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(
-        wt_path.exists(),
-        "recent no-upstream worktree should not be removed"
-    );
-    assert_branch_present(&repo, "fresh-branch");
 }
 
 #[test]
 fn stale_skips_dirty_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "dirty-stale");
-    make_old_commit(&wt_path, 60);
     std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2064,7 +2022,7 @@ fn stale_skips_dirty_worktree() {
     );
     assert!(
         wt_path.exists(),
-        "dirty stale worktree should not be removed"
+        "dirty no-upstream worktree should not be removed"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2077,10 +2035,9 @@ fn stale_skips_dirty_worktree() {
 fn stale_skips_cwd_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "cwd-stale");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .current_dir(&wt_path)
         .output()
@@ -2092,7 +2049,7 @@ fn stale_skips_cwd_worktree() {
     );
     assert!(
         wt_path.exists(),
-        "stale worktree should not be removed when cwd is inside it"
+        "no-upstream worktree should not be removed when cwd is inside it"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -2105,10 +2062,9 @@ fn stale_skips_cwd_worktree() {
 fn stale_dry_run_reports_without_removing() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "dry-stale");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30", "--dry-run"])
+        .args(["prune", "--stale", "--dry-run"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2117,10 +2073,13 @@ fn stale_dry_run_reports_without_removing() {
         "wt prune --stale --dry-run should succeed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert!(wt_path.exists(), "dry-run should not remove stale worktree");
+    assert!(
+        wt_path.exists(),
+        "dry-run should not remove no-upstream worktree"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("would remove") && stderr.contains("stale"),
+        stderr.contains("would remove") && stderr.contains("no upstream"),
         "should report what would be removed, got: {stderr}",
     );
     assert_branch_present(&repo, "dry-stale");
@@ -2129,12 +2088,14 @@ fn stale_dry_run_reports_without_removing() {
 #[test]
 fn stale_ignores_branches_with_upstream() {
     let (home, repo, _origin) = setup_with_origin();
-    let wt_path = wt_new(home.path(), &repo, "pushed-old");
-    make_old_commit(&wt_path, 60);
-    assert_git_success(&wt_path, &["push", "-u", "origin", "pushed-old"]);
+    let wt_path = wt_new(home.path(), &repo, "pushed-branch");
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "pushed-branch"]);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2145,19 +2106,18 @@ fn stale_ignores_branches_with_upstream() {
     );
     assert!(
         wt_path.exists(),
-        "pushed branch should not be pruned by --stale even if old"
+        "pushed branch should not be pruned by --stale"
     );
-    assert_branch_present(&repo, "pushed-old");
+    assert_branch_present(&repo, "pushed-branch");
 }
 
 #[test]
 fn stale_works_with_repo_flag() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "repo-stale");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30", "--repo"])
+        .args(["prune", "--stale", "--repo"])
         .arg(&repo)
         .env("HOME", home.path())
         .output()
@@ -2169,7 +2129,7 @@ fn stale_works_with_repo_flag() {
     );
     assert!(
         !wt_path.exists(),
-        "stale worktree should be removed with --repo"
+        "no-upstream worktree should be removed with --repo"
     );
     assert_branch_absent(&repo, "repo-stale");
 }
@@ -2178,14 +2138,13 @@ fn stale_works_with_repo_flag() {
 fn stale_reports_locked_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "locked-stale");
-    make_old_commit(&wt_path, 60);
 
     assert_git_success_with(&repo, |cmd| {
         cmd.args(["worktree", "lock"]).arg(&wt_path);
     });
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2196,15 +2155,14 @@ fn stale_reports_locked_worktree() {
     );
     assert!(
         wt_path.exists(),
-        "locked stale worktree should not be removed"
+        "locked no-upstream worktree should not be removed"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("locked-stale")
-            && stderr.contains("stale")
-            && stderr.contains("locked")
-            && stderr.contains("d,"),
-        "should report locked stale skip with day count, got: {stderr}",
+            && stderr.contains("no upstream")
+            && stderr.contains("locked"),
+        "should report locked no-upstream skip, got: {stderr}",
     );
 }
 
@@ -2212,10 +2170,9 @@ fn stale_reports_locked_worktree() {
 fn stale_works_with_base_flag() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "stale-with-base");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30", "--base", "main"])
+        .args(["prune", "--stale", "--base", "main"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2226,7 +2183,7 @@ fn stale_works_with_base_flag() {
     );
     assert!(
         !wt_path.exists(),
-        "stale worktree should be removed even with --base"
+        "no-upstream worktree should be removed even with --base"
     );
     assert_branch_absent(&repo, "stale-with-base");
 }
@@ -2235,10 +2192,9 @@ fn stale_works_with_base_flag() {
 fn stale_and_merged_reports_compound_reason() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "stale-merged");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30", "--base", "main"])
+        .args(["prune", "--stale", "--base", "main"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2247,11 +2203,14 @@ fn stale_and_merged_reports_compound_reason() {
         "wt prune should succeed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert!(!wt_path.exists(), "stale+merged worktree should be removed");
+    assert!(
+        !wt_path.exists(),
+        "merged no-upstream worktree should be removed"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("merged") && stderr.contains("stale"),
-        "should report both merged and stale reasons, got: {stderr}",
+        stderr.contains("merged") && stderr.contains("no upstream"),
+        "should report both merged and no upstream reasons, got: {stderr}",
     );
 }
 
@@ -2260,7 +2219,6 @@ fn stale_combined_with_gone() {
     let (home, repo, _origin) = setup_with_origin();
 
     let stale_wt = wt_new(home.path(), &repo, "stale-local");
-    make_old_commit(&stale_wt, 60);
 
     let gone_wt = wt_new(home.path(), &repo, "gone-pushed");
     std::fs::write(gone_wt.join("feature.txt"), "work").unwrap();
@@ -2271,7 +2229,7 @@ fn stale_combined_with_gone() {
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30", "--gone"])
+        .args(["prune", "--stale", "--gone"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2280,10 +2238,7 @@ fn stale_combined_with_gone() {
         "wt prune --stale --gone should succeed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert!(
-        !stale_wt.exists(),
-        "stale no-upstream worktree should be removed"
-    );
+    assert!(!stale_wt.exists(), "no-upstream worktree should be removed");
     assert!(
         !gone_wt.exists(),
         "upstream-gone worktree should be removed"
@@ -2299,10 +2254,9 @@ fn stale_skips_detached_head_worktree() {
     let sha = sha.trim();
 
     let wt_path = wt_checkout(home.path(), &repo, sha);
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2321,10 +2275,9 @@ fn stale_skips_detached_head_worktree() {
 fn stale_and_merged_with_origin() {
     let (home, repo, _origin) = setup_with_origin();
     let wt_path = wt_new(home.path(), &repo, "stale-merged-origin");
-    make_old_commit(&wt_path, 60);
 
     let output = wt_bin()
-        .args(["prune", "--stale", "30"])
+        .args(["prune", "--stale"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -2335,12 +2288,12 @@ fn stale_and_merged_with_origin() {
     );
     assert!(
         !wt_path.exists(),
-        "stale+merged no-upstream worktree should be removed with origin present"
+        "merged no-upstream worktree should be removed with origin present"
     );
     assert_branch_absent(&repo, "stale-merged-origin");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("merged") && stderr.contains("stale"),
-        "should report both merged and stale, got: {stderr}",
+        stderr.contains("merged") && stderr.contains("no upstream"),
+        "should report both merged and no upstream, got: {stderr}",
     );
 }
