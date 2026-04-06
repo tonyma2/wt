@@ -61,7 +61,7 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     }
 
     let is_branch = is_local || !remotes.is_empty();
-    if !is_branch && git.rev_resolves(name) {
+    if !is_branch && git.rev_parse(name).is_some() {
         return Err(format!(
             "'{name}' is not a branch, use `wt new {name}` to check out a ref"
         ));
