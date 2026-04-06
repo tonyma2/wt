@@ -63,6 +63,10 @@ Subcommands like `new` and `switch` return paths via stdout, captured by the she
 
 Previous approaches failed: `.first()` returns the bare entry for bare repos. `.find(|wt| !wt.bare)` is non-deterministic because `git worktree list` orders linked worktrees by `readdir()` over the internal `worktrees/` directory, which varies by filesystem. Similarly, `skip(1)` to get "linked" worktrees is wrong for bare repos — filter by path instead.
 
+## Do not add `--quiet` to network git commands
+
+`bare_clone` and `fetch_remote` inherit stderr (`Stdio::inherit()` + `.status()`) so git progress streams to the terminal during long operations. This means `git_err()` cannot extract error details from captured stderr — but git already printed the error in real time, so the sparse context string is sufficient. Local-only commands (`worktree add`, `branch -d`, etc.) continue to capture stderr with `.output()` so `git_err()` can format a clean single-line error. Best-effort network calls like `set_remote_head` keep captured stderr to avoid leaking confusing errors for intentionally silent failures.
+
 ## Do not mock git in tests
 
 Tests run the real binary against real temp repos. Mocks hide the git version differences and filesystem edge cases that matter most for a tool that wraps git. Slower tests are acceptable at this codebase size.
