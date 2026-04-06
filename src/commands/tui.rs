@@ -662,7 +662,7 @@ pub fn run() -> Result<(), String> {
         return Err("cannot launch picker, stdout is not a terminal".into());
     }
 
-    let repo_infos = worktree::load_all()?;
+    let repo_infos = worktree::load_all(&worktree::worktrees_root()?)?;
     let repos = build_repos(repo_infos);
     if repos.is_empty() {
         return Err("no worktrees".into());
