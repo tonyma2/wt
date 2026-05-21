@@ -54,7 +54,7 @@ pub fn run(repo: Option<&Path>, json: bool, all: bool) -> Result<(), String> {
 }
 
 fn run_all(json: bool) -> Result<(), String> {
-    let repos = worktree::load_all()?;
+    let repos = worktree::load_all(&worktree::worktrees_root()?)?;
     if repos.is_empty() {
         if json {
             println!("[]");

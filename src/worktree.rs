@@ -450,12 +450,7 @@ pub(crate) fn enrich_worktrees(
     })
 }
 
-pub fn load_all() -> Result<Vec<RepoInfo>, String> {
-    let wt_root = worktrees_root()?;
-    load_all_from(&wt_root)
-}
-
-pub(crate) fn load_all_from(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
+pub(crate) fn load_all(wt_root: &Path) -> Result<Vec<RepoInfo>, String> {
     let wt_root = canonicalize_or_self(wt_root);
     let admin_repos = discover_repos(&wt_root);
     let cwd = std::env::current_dir()
@@ -910,7 +905,7 @@ prunable gitdir file points to non-existent location
     }
 
     #[test]
-    fn load_all_from_single_repo() {
+    fn load_all_single_repo() {
         use std::process::Command;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -938,7 +933,7 @@ prunable gitdir file points to non-existent location
 
         std::fs::write(wt_dest.join("dirty.txt"), "change").unwrap();
 
-        let repos = load_all_from(&wt_root).expect("should load repos");
+        let repos = load_all(&wt_root).expect("should load repos");
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].name, "myrepo");
         assert!(!repos[0].worktrees.is_empty());
@@ -959,7 +954,7 @@ prunable gitdir file points to non-existent location
     }
 
     #[test]
-    fn load_all_from_multiple_repos() {
+    fn load_all_multiple_repos() {
         use std::process::Command;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -988,16 +983,16 @@ prunable gitdir file points to non-existent location
             );
         }
 
-        let repos = load_all_from(&wt_root).expect("should load repos");
+        let repos = load_all(&wt_root).expect("should load repos");
         assert_eq!(repos.len(), 2);
         assert_eq!(repos[0].name, "alpha");
         assert_eq!(repos[1].name, "beta");
     }
 
     #[test]
-    fn load_all_from_empty_root() {
+    fn load_all_empty_root() {
         let tmp = tempfile::tempdir().unwrap();
-        let repos = load_all_from(tmp.path()).unwrap();
+        let repos = load_all(tmp.path()).unwrap();
         assert!(repos.is_empty());
     }
 
