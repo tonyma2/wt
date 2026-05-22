@@ -372,7 +372,7 @@ impl Git {
             .map_err(|e| format!("cannot run git clone: {e}"))?;
         if !status.success() {
             // detail already visible on inherited stderr
-            return Err("cannot clone repository".to_string());
+            return Err("cannot clone repository".into());
         }
         Ok(())
     }

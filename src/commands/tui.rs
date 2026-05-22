@@ -298,13 +298,11 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.quit = true;
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if !app.filter.is_empty() {
-                let pane = app.active_pane;
-                app.filter.clear();
-                app.refilter();
-                app.active_pane = pane;
-            }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) && !app.filter.is_empty() => {
+            let pane = app.active_pane;
+            app.filter.clear();
+            app.refilter();
+            app.active_pane = pane;
         }
         KeyCode::Esc => {
             if !app.filter.is_empty() {
