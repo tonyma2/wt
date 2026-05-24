@@ -9,6 +9,7 @@ use crate::worktree;
 pub fn run(
     dry_run: bool,
     gone: bool,
+    stale: bool,
     repo: Option<&Path>,
     base: Option<&str>,
 ) -> Result<(), String> {
@@ -26,7 +27,7 @@ pub fn run(
             }
         }
         let mut msgs = Vec::new();
-        let result = prune_merged(&git, dry_run, gone, cwd.as_deref(), base, &mut msgs);
+        let result = prune_merged(&git, dry_run, gone, stale, cwd.as_deref(), base, &mut msgs);
         for msg in &msgs {
             eprintln!("{}", style_msg(msg, &clr));
         }
@@ -69,7 +70,15 @@ pub fn run(
             _ => {}
         }
 
-        if let Err(e) = prune_merged(&git, dry_run, gone, cwd.as_deref(), base, &mut repo_msgs) {
+        if let Err(e) = prune_merged(
+            &git,
+            dry_run,
+            gone,
+            stale,
+            cwd.as_deref(),
+            base,
+            &mut repo_msgs,
+        ) {
             repo_msgs.push(format!("cannot clean up: {e}"));
             errors += 1;
         }
@@ -241,6 +250,7 @@ fn prune_merged(
     git: &Git,
     dry_run: bool,
     gone: bool,
+    stale: bool,
     cwd: Option<&Path>,
     base_override: Option<&str>,
     messages: &mut Vec<String>,
@@ -250,6 +260,7 @@ fn prune_merged(
         path: PathBuf,
         merged: bool,
         remote: Option<String>,
+        no_upstream: bool,
     }
 
     let base = if let Some(b) = base_override {
@@ -271,8 +282,17 @@ fn prune_merged(
         }
     };
     let base_branch = base_override
-        .map(|b| b.strip_prefix("origin/").unwrap_or(b))
-        .or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
+        .map(|b| {
+            if git.has_local_branch(b) {
+                b
+            } else {
+                b.split_once('/').map_or(b, |(_, rest)| rest)
+            }
+        })
+        .or_else(|| {
+            base.as_deref()
+                .and_then(|b| b.split_once('/').map(|(_, rest)| rest))
+        });
 
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
@@ -288,11 +308,13 @@ fn prune_merged(
             let branch_ref = format!("refs/heads/{branch}");
             let upstream = git.upstream_remote(branch);
 
-            if upstream.is_none() && base_override.is_none() {
-                if base
+            let no_upstream = upstream.is_none();
+
+            if no_upstream && base_override.is_none() && !stale {
+                let merged = base
                     .as_ref()
-                    .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref))
-                {
+                    .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
+                if merged {
                     messages.push(format!("skipping {branch} (no upstream)"));
                 }
                 return None;
@@ -307,33 +329,26 @@ fn prune_merged(
                 path: wt.path.clone(),
                 merged,
                 remote: if gone { upstream } else { None },
+                no_upstream: no_upstream && stale,
             })
         })
         .collect();
 
-    if let Some(base_ref) = &base {
-        for wt in worktrees.iter().skip(1) {
-            if !wt.locked {
-                continue;
-            }
-            let Some(branch) = &wt.branch else { continue };
-            if base_branch.is_some_and(|b| b == branch.as_str()) {
-                continue;
-            }
-            let branch_ref = format!("refs/heads/{branch}");
-            if (base_override.is_some() || git.upstream_remote(branch).is_some())
-                && git.is_ancestor(&branch_ref, base_ref)
-            {
-                messages.push(format!("skipping {branch} (merged, locked)"));
-            }
-        }
-    }
-
     let mut gone_remote_status = BTreeMap::new();
 
     if gone && !dry_run {
-        let remotes: BTreeSet<String> =
+        let mut remotes: BTreeSet<String> =
             candidates.iter().filter_map(|c| c.remote.clone()).collect();
+        for wt in worktrees.iter().skip(1) {
+            if !wt.locked || wt.prunable {
+                continue;
+            }
+            if let Some(branch) = &wt.branch
+                && let Some(remote) = git.upstream_remote(branch)
+            {
+                remotes.insert(remote);
+            }
+        }
         for remote in remotes {
             let fetched = if !git.has_remote(&remote) {
                 messages.push(format!(
@@ -341,7 +356,7 @@ fn prune_merged(
                 ));
                 false
             } else {
-                messages.push(format!("fetching from '{remote}'"));
+                terminal::eprintln_dim(&format!("fetching from '{remote}'"));
                 git.fetch_remote(&remote)
                     .inspect_err(|e| {
                         let detail = if e.is_empty() { "fetch failed" } else { e };
@@ -350,6 +365,42 @@ fn prune_merged(
                     .is_ok()
             };
             gone_remote_status.insert(remote, fetched);
+        }
+    }
+
+    for wt in worktrees.iter().skip(1) {
+        if !wt.locked || wt.prunable {
+            continue;
+        }
+        let Some(branch) = &wt.branch else { continue };
+        if base_branch.is_some_and(|b| b == branch.as_str()) {
+            continue;
+        }
+        let branch_ref = format!("refs/heads/{branch}");
+        let upstream = git.upstream_remote(branch);
+        let is_merged = base
+            .as_ref()
+            .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
+
+        let gone_eligible = if !gone {
+            false
+        } else if dry_run {
+            git.is_upstream_gone(branch)
+        } else {
+            upstream.as_ref().is_some_and(|remote| {
+                gone_remote_status
+                    .get(remote.as_str())
+                    .copied()
+                    .unwrap_or(false)
+                    && git.is_upstream_gone(branch)
+            })
+        };
+        let stale_eligible = upstream.is_none() && stale;
+        let merged_eligible =
+            (base_override.is_some() || upstream.is_some() || stale_eligible) && is_merged;
+        if merged_eligible || gone_eligible || stale_eligible {
+            let reason = build_reason(merged_eligible, gone_eligible, stale_eligible);
+            messages.push(format!("skipping {branch} ({reason}, locked)"));
         }
     }
 
@@ -367,17 +418,11 @@ fn prune_merged(
             })
         };
 
-        if !candidate.merged && !upstream_gone {
+        if !candidate.merged && !upstream_gone && !candidate.no_upstream {
             continue;
         }
 
-        let reason = if candidate.merged && upstream_gone {
-            "merged, upstream gone"
-        } else if candidate.merged {
-            "merged"
-        } else {
-            "upstream gone"
-        };
+        let reason = build_reason(candidate.merged, upstream_gone, candidate.no_upstream);
 
         let label = &candidate.branch;
 
@@ -423,6 +468,24 @@ fn prune_merged(
     Ok(())
 }
 
+fn build_reason(merged: bool, upstream_gone: bool, no_upstream: bool) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if merged {
+        parts.push("merged");
+    }
+    if upstream_gone {
+        parts.push("upstream gone");
+    }
+    if no_upstream {
+        parts.push("no upstream");
+    }
+    debug_assert!(
+        !parts.is_empty(),
+        "build_reason called with no active flags"
+    );
+    parts.join(", ")
+}
+
 fn style_msg(msg: &str, clr: &Colors) -> String {
     if let Some(rest) = msg.strip_prefix("removed ") {
         style_action(clr.green, "removed", rest, clr)
@@ -430,7 +493,7 @@ fn style_msg(msg: &str, clr: &Colors) -> String {
         style_action(clr.yellow, "would remove", rest, clr)
     } else if let Some(rest) = msg.strip_prefix("skipping ") {
         style_action(clr.yellow, "skipping", rest, clr)
-    } else if msg.starts_with("fetching ") || msg.starts_with("Removing ") {
+    } else if msg.starts_with("Removing ") {
         format!("{}{msg}{}", clr.dim, clr.reset)
     } else {
         format!("{}{msg}{}", clr.red, clr.reset)
