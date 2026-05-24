@@ -339,10 +339,11 @@ fn prune_merged(
             .as_ref()
             .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
 
-        if (base_override.is_some() || upstream.is_some()) && is_merged {
-            messages.push(format!("skipping {branch} (merged, locked)"));
-        } else if upstream.is_none() && stale {
-            messages.push(format!("skipping {branch} (no upstream, locked)"));
+        let merged_eligible = (base_override.is_some() || upstream.is_some()) && is_merged;
+        let stale_eligible = upstream.is_none() && stale;
+        if merged_eligible || stale_eligible {
+            let reason = build_reason(merged_eligible, false, stale_eligible);
+            messages.push(format!("skipping {branch} ({reason}, locked)"));
         }
     }
 
@@ -445,6 +446,10 @@ fn build_reason(merged: bool, upstream_gone: bool, no_upstream: bool) -> String 
     if no_upstream {
         parts.push("no upstream");
     }
+    debug_assert!(
+        !parts.is_empty(),
+        "build_reason called with no active flags"
+    );
     parts.join(", ")
 }
 

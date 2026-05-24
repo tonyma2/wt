@@ -2167,6 +2167,39 @@ fn stale_reports_locked_worktree() {
 }
 
 #[test]
+fn stale_reports_locked_merged_no_upstream_worktree() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "locked-merged-stale");
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "--base", "main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --base should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        wt_path.exists(),
+        "locked no-upstream worktree should not be removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("locked-merged-stale")
+            && stderr.contains("merged")
+            && stderr.contains("no upstream")
+            && stderr.contains("locked"),
+        "should report both merged and no upstream in locked skip message, got: {stderr}",
+    );
+}
+
+#[test]
 fn stale_works_with_base_flag() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "stale-with-base");
@@ -2273,6 +2306,8 @@ fn stale_skips_detached_head_worktree() {
 
 #[test]
 fn stale_and_merged_with_origin() {
+    // setup_with_origin is required so base_ref() can auto-detect origin/main;
+    // without it there's no base and merged=false, so only "no upstream" fires.
     let (home, repo, _origin) = setup_with_origin();
     let wt_path = wt_new(home.path(), &repo, "stale-merged-origin");
 
