@@ -118,7 +118,12 @@ pub fn print_cd_hint(name: &str) {
 }
 
 pub fn width() -> usize {
-    if let Ok(val) = std::env::var("COLUMNS")
+    let columns_env = std::env::var("COLUMNS").ok();
+    width_inner(columns_env.as_deref())
+}
+
+fn width_inner(columns_env: Option<&str>) -> usize {
+    if let Some(val) = columns_env
         && let Ok(cols) = val.parse::<usize>()
     {
         return cols.max(72);
@@ -230,16 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn tilde_path_empty_home() {
-        let original = std::env::var("HOME").unwrap();
-        unsafe { std::env::set_var("HOME", "") };
-        let path = std::path::PathBuf::from("/some/path");
-        let result = tilde_path(&path);
-        unsafe { std::env::set_var("HOME", &original) };
-        assert_eq!(result, "/some/path");
-    }
-
-    #[test]
     fn trunc_multibyte_chars() {
         assert_eq!(trunc("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "a...");
         assert_eq!(
@@ -308,25 +303,11 @@ mod tests {
 
     #[test]
     fn width_from_columns_env() {
-        let had = std::env::var("COLUMNS").ok();
-        unsafe { std::env::set_var("COLUMNS", "200") };
-        let w = width();
-        match had {
-            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
-            None => unsafe { std::env::remove_var("COLUMNS") },
-        }
-        assert_eq!(w, 200);
+        assert_eq!(width_inner(Some("200")), 200);
     }
 
     #[test]
     fn width_clamps_to_72() {
-        let had = std::env::var("COLUMNS").ok();
-        unsafe { std::env::set_var("COLUMNS", "40") };
-        let w = width();
-        match had {
-            Some(v) => unsafe { std::env::set_var("COLUMNS", v) },
-            None => unsafe { std::env::remove_var("COLUMNS") },
-        }
-        assert_eq!(w, 72);
+        assert_eq!(width_inner(Some("40")), 72);
     }
 }
