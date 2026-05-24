@@ -414,9 +414,9 @@ fn render(frame: &mut Frame, app: &mut App) {
     if app.filtered_repo_indices.is_empty() {
         frame.render_widget(EMPTY_HINT.dim(), pane_area);
     } else {
-        let repos_w = app.repos_w.min(pane_w / 2);
+        let repos_w = app.repos_w.min(pane_w.saturating_sub(10));
         let [repos_area, wt_area] =
-            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(10)])
+            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(8)])
                 .spacing(2)
                 .areas(pane_area);
 
@@ -2104,5 +2104,73 @@ mod tests {
         }];
         let app = App::new(repos);
         assert_eq!(viewport_height(&app), 3);
+    }
+
+    // Regression: short repo names were truncated to 3 chars (e.g. "chunk"→"chu")
+    // when all branches are short ("main") because repos_w was capped at pane_w/2,
+    // causing ratatui to squeeze the repos column below its computed width.
+    #[test]
+    fn render_full_layout_short_branch_no_name_truncation() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![
+            RepoData {
+                name: "chunk".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/chunk/main"),
+                    display_path: "/wt/chunk/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "chunk main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "rust".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/rust/main"),
+                    display_path: "/wt/rust/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "rust main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "wt".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/wt/main"),
+                    display_path: "/wt/wt/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "wt main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        // content_width for these repos is 21; use exactly that width so the
+        // layout is at its tightest while still having enough room.
+        let backend = TestBackend::new(21, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+
+        terminal
+            .draw(|frame| {
+                render(frame, &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = (0..buf.area().height)
+            .flat_map(|y| {
+                let buf = &buf;
+                (0..buf.area().width)
+                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(
+            all_text.contains("chunk"),
+            "repo name 'chunk' should not be truncated, got: {all_text}"
+        );
+        assert!(
+            all_text.contains("rust"),
+            "repo name 'rust' should not be truncated, got: {all_text}"
+        );
     }
 }
