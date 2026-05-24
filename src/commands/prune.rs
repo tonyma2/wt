@@ -282,8 +282,17 @@ fn prune_merged(
         }
     };
     let base_branch = base_override
-        .map(|b| b.strip_prefix("origin/").unwrap_or(b))
-        .or_else(|| base.as_deref().and_then(|b| b.strip_prefix("origin/")));
+        .map(|b| {
+            if git.has_local_branch(b) {
+                b
+            } else {
+                b.split_once('/').map_or(b, |(_, rest)| rest)
+            }
+        })
+        .or_else(|| {
+            base.as_deref()
+                .and_then(|b| b.split_once('/').map(|(_, rest)| rest))
+        });
 
     let output = git.list_worktrees()?;
     let worktrees = worktree::parse_porcelain(&output);
@@ -325,8 +334,42 @@ fn prune_merged(
         })
         .collect();
 
+    let mut gone_remote_status = BTreeMap::new();
+
+    if gone && !dry_run {
+        let mut remotes: BTreeSet<String> =
+            candidates.iter().filter_map(|c| c.remote.clone()).collect();
+        for wt in worktrees.iter().skip(1) {
+            if !wt.locked || wt.prunable {
+                continue;
+            }
+            if let Some(branch) = &wt.branch
+                && let Some(remote) = git.upstream_remote(branch)
+            {
+                remotes.insert(remote);
+            }
+        }
+        for remote in remotes {
+            let fetched = if !git.has_remote(&remote) {
+                messages.push(format!(
+                    "remote '{remote}' not found, skipping upstream-gone pruning"
+                ));
+                false
+            } else {
+                terminal::eprintln_dim(&format!("fetching from '{remote}'"));
+                git.fetch_remote(&remote)
+                    .inspect_err(|e| {
+                        let detail = if e.is_empty() { "fetch failed" } else { e };
+                        messages.push(format!("{detail}, skipping upstream-gone pruning"));
+                    })
+                    .is_ok()
+            };
+            gone_remote_status.insert(remote, fetched);
+        }
+    }
+
     for wt in worktrees.iter().skip(1) {
-        if !wt.locked {
+        if !wt.locked || wt.prunable {
             continue;
         }
         let Some(branch) = &wt.branch else { continue };
@@ -339,35 +382,12 @@ fn prune_merged(
             .as_ref()
             .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
 
+        let gone_eligible = gone && git.is_upstream_gone(branch);
         let merged_eligible = (base_override.is_some() || upstream.is_some()) && is_merged;
         let stale_eligible = upstream.is_none() && stale;
-        if merged_eligible || stale_eligible {
-            let reason = build_reason(merged_eligible, false, stale_eligible);
+        if merged_eligible || gone_eligible || stale_eligible {
+            let reason = build_reason(merged_eligible, gone_eligible, stale_eligible);
             messages.push(format!("skipping {branch} ({reason}, locked)"));
-        }
-    }
-
-    let mut gone_remote_status = BTreeMap::new();
-
-    if gone && !dry_run {
-        let remotes: BTreeSet<String> =
-            candidates.iter().filter_map(|c| c.remote.clone()).collect();
-        for remote in remotes {
-            let fetched = if !git.has_remote(&remote) {
-                messages.push(format!(
-                    "remote '{remote}' not found, skipping upstream-gone pruning"
-                ));
-                false
-            } else {
-                messages.push(format!("fetching from '{remote}'"));
-                git.fetch_remote(&remote)
-                    .inspect_err(|e| {
-                        let detail = if e.is_empty() { "fetch failed" } else { e };
-                        messages.push(format!("{detail}, skipping upstream-gone pruning"));
-                    })
-                    .is_ok()
-            };
-            gone_remote_status.insert(remote, fetched);
         }
     }
 
@@ -460,7 +480,7 @@ fn style_msg(msg: &str, clr: &Colors) -> String {
         style_action(clr.yellow, "would remove", rest, clr)
     } else if let Some(rest) = msg.strip_prefix("skipping ") {
         style_action(clr.yellow, "skipping", rest, clr)
-    } else if msg.starts_with("fetching ") || msg.starts_with("Removing ") {
+    } else if msg.starts_with("Removing ") {
         format!("{}{msg}{}", clr.dim, clr.reset)
     } else {
         format!("{}{msg}{}", clr.red, clr.reset)

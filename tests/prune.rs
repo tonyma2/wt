@@ -1430,6 +1430,55 @@ fn gone_skips_locked_worktree() {
         wt_path.exists(),
         "locked upstream-gone worktree should not be removed"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping locked-gone")
+            && stderr.contains("upstream gone")
+            && stderr.contains("locked"),
+        "should report skipping locked upstream-gone worktree: {stderr}"
+    );
+}
+
+#[test]
+fn gone_skips_locked_worktree_without_prior_fetch() {
+    // Verify that --gone detects a locked worktree's gone upstream by fetching
+    // itself, without requiring the user to have run `git fetch` beforehand.
+    let (home, repo, _origin) = setup_with_origin();
+
+    let wt_path = wt_new(home.path(), &repo, "locked-gone-nofetch");
+    std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
+    assert_git_success(&wt_path, &["add", "feature.txt"]);
+    assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "locked-gone-nofetch"]);
+
+    assert_git_success(
+        &repo,
+        &["push", "origin", "--delete", "locked-gone-nofetch"],
+    );
+    // Intentionally NOT fetching — wt prune --gone must detect this itself.
+
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
+
+    let output = wt_bin()
+        .args(["prune", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --gone should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(wt_path.exists(), "locked worktree should not be removed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("locked-gone-nofetch")
+            && stderr.contains("upstream gone")
+            && stderr.contains("locked"),
+        "should report skipping locked upstream-gone worktree even without prior fetch: {stderr}",
+    );
 }
 
 #[test]
@@ -1685,6 +1734,50 @@ fn base_flag_does_not_prune_base_branch_worktree() {
     assert!(
         develop_wt.exists(),
         "base branch worktree must not be pruned"
+    );
+}
+
+#[test]
+fn base_flag_non_origin_remote_does_not_prune_base_branch_worktree() {
+    let (home, repo) = setup();
+
+    let upstream_remote = home.path().join("upstream.git");
+    init_bare_repo(&upstream_remote);
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["remote", "add", "upstream"])
+            .arg(&upstream_remote);
+    });
+    assert_git_success(&repo, &["push", "upstream", "main"]);
+    assert_git_success(&repo, &["fetch", "--prune", "upstream"]);
+
+    // Move repo HEAD off main so we can create a linked worktree for it
+    assert_git_success(&repo, &["checkout", "-b", "holder"]);
+
+    // Worktree for main with no upstream tracking — would be stale-eligible
+    let main_wt = wt_checkout(home.path(), &repo, "main");
+
+    // Another no-upstream branch that should be pruned
+    let feat_wt = wt_new(home.path(), &repo, "feat-stale");
+
+    let output = wt_bin()
+        .args(["prune", "--stale", "--repo"])
+        .arg(&repo)
+        .args(["--base", "upstream/main"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt prune --stale --base upstream/main should succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        main_wt.exists(),
+        "base branch worktree (main) must not be pruned when --base uses non-origin remote"
+    );
+    assert!(
+        !feat_wt.exists(),
+        "no-upstream feature worktree should be pruned by --stale"
     );
 }
 
