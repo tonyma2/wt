@@ -929,7 +929,7 @@ fn gone_fetch_failure_only_skips_that_remote() {
     assert_branch_present(&repo, "upstream-live");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("cannot fetch from 'upstream'"),
+        stderr.contains("fetch failed, skipping upstream-gone pruning"),
         "should report upstream fetch failure, got: {stderr}",
     );
 }

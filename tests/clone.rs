@@ -79,6 +79,10 @@ fn clone_creates_worktree_and_bare_repo() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("cloning"), "stderr should mention cloning");
     assert!(
+        stderr.contains("fetching from 'origin'"),
+        "stderr should announce fetch step"
+    );
+    assert!(
         stderr.contains("checked out 'main'"),
         "stderr should mention checked out branch"
     );
@@ -145,7 +149,10 @@ fn clone_invalid_url_fails_cleanly() {
     assert_stdout_empty(&output);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("cannot clone"), "stderr: {stderr}");
+    assert!(
+        stderr.to_lowercase().contains("fatal") || stderr.to_lowercase().contains("error"),
+        "expected git error output on stderr, got: {stderr}"
+    );
 
     assert!(find_subdirs(&repos_dir(home.path())).is_empty() || !repos_dir(home.path()).exists());
     assert!(

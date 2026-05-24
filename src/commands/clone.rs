@@ -24,6 +24,7 @@ fn clone_into(bare_dest: &std::path::Path, url: &str, repo_name: &str) -> Result
     let git = Git::new(bare_dest);
 
     git.set_config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")?;
+    terminal::eprintln_dim("fetching from 'origin'");
     git.fetch_remote("origin")?;
 
     // best-effort: base_ref() has fallbacks if this fails

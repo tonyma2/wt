@@ -60,7 +60,9 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("{e}");
+        if !e.is_empty() {
+            eprintln!("{e}");
+        }
         process::exit(1);
     }
 }
