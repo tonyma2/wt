@@ -105,6 +105,11 @@ pub fn trunc_tail(s: &str, max: usize) -> String {
     format!("...{}", &s[start..])
 }
 
+pub fn eprintln_dim(msg: &str) {
+    let clr = stderr_colors();
+    eprintln!("{}{msg}{}", clr.dim, clr.reset);
+}
+
 pub fn print_cd_hint(name: &str) {
     if is_stdout_tty() {
         let escaped = name.replace("'", r"'\''");

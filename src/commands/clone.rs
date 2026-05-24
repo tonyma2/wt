@@ -19,13 +19,13 @@ pub fn run(url: &str) -> Result<(), String> {
 
 fn clone_into(bare_dest: &std::path::Path, url: &str, repo_name: &str) -> Result<(), String> {
     eprintln!("cloning {url}");
-    Git::bare_clone(url, bare_dest)?;
+    Git::bare_clone(url, bare_dest).map_err(|_| String::new())?;
 
     let git = Git::new(bare_dest);
 
     git.set_config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")?;
-    eprintln!("fetching from 'origin'");
-    git.fetch_remote("origin")?;
+    terminal::eprintln_dim("fetching from 'origin'");
+    git.fetch_remote("origin").map_err(|_| String::new())?;
 
     // best-effort: base_ref() has fallbacks if this fails
     let _ = git.set_remote_head("origin");
