@@ -382,9 +382,22 @@ fn prune_merged(
             .as_ref()
             .is_some_and(|base_ref| git.is_ancestor(&branch_ref, base_ref));
 
-        let gone_eligible = gone && git.is_upstream_gone(branch);
-        let merged_eligible = (base_override.is_some() || upstream.is_some()) && is_merged;
+        let gone_eligible = if !gone {
+            false
+        } else if dry_run {
+            git.is_upstream_gone(branch)
+        } else {
+            upstream.as_ref().is_some_and(|remote| {
+                gone_remote_status
+                    .get(remote.as_str())
+                    .copied()
+                    .unwrap_or(false)
+                    && git.is_upstream_gone(branch)
+            })
+        };
         let stale_eligible = upstream.is_none() && stale;
+        let merged_eligible =
+            (base_override.is_some() || upstream.is_some() || stale_eligible) && is_merged;
         if merged_eligible || gone_eligible || stale_eligible {
             let reason = build_reason(merged_eligible, gone_eligible, stale_eligible);
             messages.push(format!("skipping {branch} ({reason}, locked)"));
