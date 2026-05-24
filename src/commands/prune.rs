@@ -341,8 +341,7 @@ fn prune_merged(
                 ));
                 false
             } else {
-                let clr = terminal::stderr_colors();
-                eprintln!("{}", style_msg(&format!("fetching from '{remote}'"), &clr));
+                messages.push(format!("fetching from '{remote}'"));
                 git.fetch_remote(&remote)
                     .inspect_err(|e| messages.push(format!("{e}, skipping upstream-gone pruning")))
                     .is_ok()
