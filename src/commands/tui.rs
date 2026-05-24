@@ -414,10 +414,14 @@ fn render(frame: &mut Frame, app: &mut App) {
     if app.filtered_repo_indices.is_empty() {
         frame.render_widget(EMPTY_HINT.dim(), pane_area);
     } else {
-        let repos_w = app.repos_w.min(pane_w.saturating_sub(10));
+        let wt_min: u16 = 8;
+        let spacing: u16 = 2;
+        let repos_w = app.repos_w
+            .min(pane_w.saturating_sub(wt_min + spacing))
+            .max(1);
         let [repos_area, wt_area] =
-            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(8)])
-                .spacing(2)
+            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
+                .spacing(spacing)
                 .areas(pane_area);
 
         render_repos(frame, app, repos_area);
@@ -2171,6 +2175,10 @@ mod tests {
         assert!(
             all_text.contains("rust"),
             "repo name 'rust' should not be truncated, got: {all_text}"
+        );
+        assert!(
+            all_text.contains("main"),
+            "branch name 'main' should be visible at minimum layout width, got: {all_text}"
         );
     }
 }
