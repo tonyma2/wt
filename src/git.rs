@@ -83,8 +83,7 @@ impl Git {
             .status()
             .map_err(|e| format!("cannot run git fetch: {e}"))?;
         if !status.success() {
-            // detail already visible on inherited stderr
-            return Err(format!("cannot fetch from '{remote}'"));
+            return Err(String::new()); // detail already visible on inherited stderr
         }
         Ok(())
     }
@@ -371,8 +370,7 @@ impl Git {
             .status()
             .map_err(|e| format!("cannot run git clone: {e}"))?;
         if !status.success() {
-            // detail already visible on inherited stderr
-            return Err("cannot clone repository".into());
+            return Err(String::new()); // detail already visible on inherited stderr
         }
         Ok(())
     }

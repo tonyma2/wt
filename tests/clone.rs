@@ -79,6 +79,10 @@ fn clone_creates_worktree_and_bare_repo() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("cloning"), "stderr should mention cloning");
     assert!(
+        stderr.contains("fetching from 'origin'"),
+        "stderr should announce fetch step"
+    );
+    assert!(
         stderr.contains("checked out 'main'"),
         "stderr should mention checked out branch"
     );
