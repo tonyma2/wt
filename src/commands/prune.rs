@@ -343,7 +343,10 @@ fn prune_merged(
             } else {
                 messages.push(format!("fetching from '{remote}'"));
                 git.fetch_remote(&remote)
-                    .inspect_err(|e| messages.push(format!("{e}, skipping upstream-gone pruning")))
+                    .inspect_err(|e| {
+                        let detail = if e.is_empty() { "fetch failed" } else { e };
+                        messages.push(format!("{detail}, skipping upstream-gone pruning"));
+                    })
                     .is_ok()
             };
             gone_remote_status.insert(remote, fetched);
