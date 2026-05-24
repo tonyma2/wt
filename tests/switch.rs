@@ -115,7 +115,8 @@ fn switch_checks_out_remote_branch_nested_slash() {
     assert_git_success(&repo, &["branch", "-D", "feat/scope/topic"]);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "feat/scope/topic", "--repo"]).arg(&repo);
+        cmd.args(["switch", "feat/scope/topic", "--repo"])
+            .arg(&repo);
     });
 
     assert!(output.status.success());
