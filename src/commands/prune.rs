@@ -253,7 +253,7 @@ fn prune_merged(
     }
 
     let base = if let Some(b) = base_override {
-        if !git.rev_resolves(b) {
+        if git.rev_parse(b).is_none() {
             messages.push(format!(
                 "base branch '{b}' not found, skipping merged worktree pruning"
             ));

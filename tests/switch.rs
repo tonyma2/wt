@@ -107,6 +107,29 @@ fn switch_checks_out_remote_branch() {
 }
 
 #[test]
+fn switch_checks_out_remote_branch_nested_slash() {
+    let (home, repo, _origin) = setup_with_origin();
+
+    assert_git_success(&repo, &["branch", "feat/scope/topic"]);
+    assert_git_success(&repo, &["push", "origin", "feat/scope/topic"]);
+    assert_git_success(&repo, &["branch", "-D", "feat/scope/topic"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/scope/topic", "--repo"]).arg(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "checking out 'feat/scope/topic'\n");
+
+    let path = parse_wt_new_path(&output);
+    assert!(
+        path.exists(),
+        "worktree path should exist: {}",
+        path.display()
+    );
+}
+
+#[test]
 fn switch_is_idempotent() {
     let (home, repo) = setup();
     let first_path = wt_switch(home.path(), &repo, "feat/idem");
