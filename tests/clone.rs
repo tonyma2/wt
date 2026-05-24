@@ -146,8 +146,8 @@ fn clone_invalid_url_fails_cleanly() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.trim().is_empty(),
-        "expected error output on stderr, got none"
+        stderr.to_lowercase().contains("fatal") || stderr.to_lowercase().contains("error"),
+        "expected git error output on stderr, got: {stderr}"
     );
 
     assert!(find_subdirs(&repos_dir(home.path())).is_empty() || !repos_dir(home.path()).exists());
