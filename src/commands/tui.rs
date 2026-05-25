@@ -416,16 +416,17 @@ fn render(frame: &mut Frame, app: &mut App) {
     } else {
         let wt_min: u16 = 8;
         let spacing: u16 = 2;
-        let repos_w = app.repos_w
-            .min(pane_w.saturating_sub(wt_min + spacing))
-            .max(1);
-        let [repos_area, wt_area] =
-            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
-                .spacing(spacing)
-                .areas(pane_area);
-
-        render_repos(frame, app, repos_area);
-        render_worktrees(frame, app, wt_area);
+        if pane_w < wt_min + spacing + 1 {
+            render_repos(frame, app, pane_area);
+        } else {
+            let repos_w = app.repos_w.min(pane_w.saturating_sub(wt_min + spacing));
+            let [repos_area, wt_area] =
+                Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
+                    .spacing(spacing)
+                    .areas(pane_area);
+            render_repos(frame, app, repos_area);
+            render_worktrees(frame, app, wt_area);
+        }
     }
     render_detail(frame, app, detail_area);
     render_footer(frame, app, footer_area, content_area.height);
