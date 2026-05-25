@@ -2123,8 +2123,8 @@ mod tests {
                 worktrees: vec![WorktreeData {
                     path: PathBuf::from("/wt/chunk/main"),
                     display_path: "/wt/chunk/main".into(),
-                    branch: Some("main".into()),
-                    filter_candidate: "chunk main".into(),
+                    branch: Some("dev".into()),
+                    filter_candidate: "chunk dev".into(),
                     ..Default::default()
                 }],
             },
@@ -2178,8 +2178,8 @@ mod tests {
             "repo name 'rust' should not be truncated, got: {all_text}"
         );
         assert!(
-            all_text.contains("main"),
-            "branch name 'main' should be visible at minimum layout width, got: {all_text}"
+            all_text.contains("dev"),
+            "branch name 'dev' should be visible in the worktrees column at minimum layout width, got: {all_text}"
         );
     }
 }
