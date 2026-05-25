@@ -246,6 +246,21 @@ impl App {
         self.repo_state
             .select((!self.filtered_repo_indices.is_empty()).then_some(0));
 
+        let max_name = self
+            .filtered_repo_indices
+            .iter()
+            .map(|&i| self.repos[i].name.chars().count())
+            .max()
+            .unwrap_or(4);
+        let max_count = self
+            .filtered_repo_wt_counts
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        let count_suffix = format!(" ({max_count})").chars().count();
+        self.repos_w = (max_name + 2 + count_suffix).max(8) as u16;
+
         if self.filtered_repo_indices.len() == 1 {
             self.active_pane = Pane::Worktrees;
         } else if self.filtered_repo_indices.len() > 1 {
@@ -417,6 +432,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         let wt_min: u16 = 8;
         let spacing: u16 = 2;
         if pane_w < wt_min + spacing + app.repos_w {
+            app.active_pane = Pane::Repos;
             render_repos(frame, app, pane_area);
         } else {
             let repos_w = app.repos_w.min(pane_w.saturating_sub(wt_min + spacing));
@@ -2121,8 +2137,8 @@ mod tests {
             RepoData {
                 name: "chunk".into(),
                 worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/dev"),
-                    display_path: "/wt/chunk/dev".into(),
+                    path: PathBuf::from("/wt/chunk/main"),
+                    display_path: "/wt/chunk/main".into(),
                     branch: Some("dev".into()),
                     filter_candidate: "chunk dev".into(),
                     ..Default::default()
@@ -2241,6 +2257,92 @@ mod tests {
         assert!(
             !all_text.contains("topic"),
             "branch 'topic' should not appear when worktrees column is collapsed, got: {all_text}"
+        );
+    }
+
+    // Collapsed layout must reset active_pane to Repos so that Enter cannot
+    // silently select and return an invisible worktree.
+    #[test]
+    fn collapsed_layout_resets_active_pane_to_repos() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![
+            RepoData {
+                name: "chunk".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/chunk/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "chunk main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "rust".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/rust/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "rust main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        // repos_w = 11; threshold = 21; width 20 → collapsed layout.
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+
+        // Force active_pane to Worktrees (as would happen after Tab or a narrow resize).
+        app.active_pane = Pane::Worktrees;
+
+        // Render at narrow width: collapsed branch must reset active_pane.
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        assert_eq!(
+            app.active_pane,
+            Pane::Repos,
+            "render must reset active_pane to Repos in collapsed layout"
+        );
+        assert!(!app.quit, "app must not quit");
+        assert!(app.selected_path.is_none(), "no path should be selected");
+    }
+
+    // After filtering down to repos with short names, repos_w must shrink so
+    // the two-column threshold does not collapse a layout that has enough room.
+    #[test]
+    fn refilter_updates_repos_w() {
+        let repos = vec![
+            RepoData {
+                name: "a-very-long-repository-name".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/long/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "a-very-long-repository-name main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "ab".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/ab/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "ab main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        let mut app = App::new(repos);
+        // Initial repos_w is wide (based on the long name).
+        let initial_repos_w = app.repos_w;
+
+        // Filter to the short-named repo only.
+        app.filter = "ab".into();
+        app.refilter();
+
+        assert_eq!(app.filtered_repo_indices.len(), 1);
+        assert!(
+            app.repos_w < initial_repos_w,
+            "repos_w ({}) should shrink after filtering to a short repo name (was {})",
+            app.repos_w,
+            initial_repos_w
         );
     }
 }
