@@ -259,7 +259,8 @@ impl App {
             .max()
             .unwrap_or(0);
         let count_suffix = format!(" ({max_count})").chars().count();
-        self.repos_w = (max_name + 2 + count_suffix).max(8) as u16;
+        let symbol_w: usize = 2; // "› " / "  " highlight prefix consumed by render_repos
+        self.repos_w = (max_name + symbol_w + count_suffix).max(8) as u16;
 
         if self.filtered_repo_indices.len() == 1 {
             self.active_pane = Pane::Worktrees;
@@ -432,10 +433,13 @@ fn render(frame: &mut Frame, app: &mut App) {
         let wt_min: u16 = 8;
         let spacing: u16 = 2;
         if pane_w < wt_min + spacing + app.repos_w {
+            // Too narrow for two columns: reset active_pane so Enter cannot
+            // select a hidden worktree; detail line is skipped for the same reason.
             app.active_pane = Pane::Repos;
             render_repos(frame, app, pane_area);
         } else {
-            let repos_w = app.repos_w.min(pane_w.saturating_sub(wt_min + spacing));
+            // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
+            let repos_w = app.repos_w;
             let [repos_area, wt_area] =
                 Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
                     .spacing(spacing)
