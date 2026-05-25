@@ -416,7 +416,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     } else {
         let wt_min: u16 = 8;
         let spacing: u16 = 2;
-        if pane_w < wt_min + spacing + 1 {
+        if pane_w < wt_min + spacing + app.repos_w {
             render_repos(frame, app, pane_area);
         } else {
             let repos_w = app.repos_w.min(pane_w.saturating_sub(wt_min + spacing));
@@ -426,9 +426,9 @@ fn render(frame: &mut Frame, app: &mut App) {
                     .areas(pane_area);
             render_repos(frame, app, repos_area);
             render_worktrees(frame, app, wt_area);
+            render_detail(frame, app, detail_area);
         }
     }
-    render_detail(frame, app, detail_area);
     render_footer(frame, app, footer_area, content_area.height);
 }
 
@@ -2121,8 +2121,8 @@ mod tests {
             RepoData {
                 name: "chunk".into(),
                 worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/main"),
-                    display_path: "/wt/chunk/main".into(),
+                    path: PathBuf::from("/wt/chunk/dev"),
+                    display_path: "/wt/chunk/dev".into(),
                     branch: Some("dev".into()),
                     filter_candidate: "chunk dev".into(),
                     ..Default::default()
@@ -2180,6 +2180,67 @@ mod tests {
         assert!(
             all_text.contains("dev"),
             "branch name 'dev' should be visible in the worktrees column at minimum layout width, got: {all_text}"
+        );
+    }
+
+    // At widths below the two-column threshold, the layout collapses to repos-only.
+    // Repo names must still render; the worktrees column (and detail row) must not appear.
+    #[test]
+    fn render_full_layout_collapses_below_threshold() {
+        use ratatui::backend::TestBackend;
+        let repos = vec![
+            RepoData {
+                name: "chunk".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/chunk/topic"),
+                    display_path: "/wt/chunk/topic".into(),
+                    branch: Some("topic".into()),
+                    filter_candidate: "chunk topic".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "rust".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/rust/main"),
+                    display_path: "/wt/rust/main".into(),
+                    branch: Some("main".into()),
+                    filter_candidate: "rust main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        // repos_w = 11; threshold = wt_min(8) + spacing(2) + repos_w(11) = 21.
+        // Width 20 is one below threshold → single-column (repos only, no wt column).
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app = App::new(repos);
+
+        terminal
+            .draw(|frame| {
+                render(frame, &mut app);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = (0..buf.area().height)
+            .flat_map(|y| {
+                let buf = &buf;
+                (0..buf.area().width)
+                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(
+            all_text.contains("chunk"),
+            "repo name 'chunk' should be visible in collapsed single-column layout, got: {all_text}"
+        );
+        assert!(
+            all_text.contains("rust"),
+            "repo name 'rust' should be visible in collapsed single-column layout, got: {all_text}"
+        );
+        assert!(
+            !all_text.contains("topic"),
+            "branch 'topic' should not appear when worktrees column is collapsed, got: {all_text}"
         );
     }
 }
