@@ -269,7 +269,7 @@ impl App {
         let symbol_w: usize = 2; // "› " / "  " highlight prefix consumed by render_repos
         self.repos_w = (max_name + symbol_w + count_suffix).max(8) as u16;
 
-        if self.filtered_repo_indices.len() == 1 {
+        if self.filtered_repo_indices.len() == 1 && !self.collapsed {
             self.active_pane = Pane::Worktrees;
         } else if self.filtered_repo_indices.len() > 1 {
             self.active_pane = Pane::Repos;
@@ -334,7 +334,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             if !app.filter.is_empty() {
                 app.filter.clear();
                 app.refilter();
-            } else if app.active_pane == Pane::Worktrees {
+            } else if app.active_pane == Pane::Worktrees && !app.collapsed {
                 app.active_pane = Pane::Repos;
             } else {
                 app.quit = true;
@@ -499,7 +499,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let list = styled_list(items, app.active_pane == Pane::Repos, app);
+    let list = styled_list(items, app.collapsed || app.active_pane == Pane::Repos, app);
     frame.render_stateful_widget(list, area, &mut app.repo_state);
 }
 
@@ -599,7 +599,12 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         return Line::from(vec![prefix.dim(), Span::raw(display)]);
     }
 
-    let (enter_action, esc_action) = match app.active_pane {
+    let effective_pane = if app.collapsed {
+        Pane::Repos
+    } else {
+        app.active_pane
+    };
+    let (enter_action, esc_action) = match effective_pane {
         Pane::Repos => (" open", " quit"),
         Pane::Worktrees => (" select", " back"),
     };
@@ -615,7 +620,7 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
     let tab_tier: Vec<Span> = vec![sep.dim(), Span::raw("tab"), " switch".dim()];
     let filter_tier: Vec<Span> = vec![sep.dim(), "type to filter".dim()];
 
-    let (selected, len) = match app.active_pane {
+    let (selected, len) = match effective_pane {
         Pane::Repos => (app.repo_state.selected(), app.filtered_repo_indices.len()),
         Pane::Worktrees => (app.wt_state.selected(), app.filtered_wt_indices.len()),
     };
@@ -2368,9 +2373,10 @@ mod tests {
         handle_key(&mut app, enter);
 
         assert!(app.quit, "Enter in collapsed Repos must quit");
-        assert!(
-            app.selected_path.is_some(),
-            "Enter in collapsed Repos must select the highlighted worktree"
+        assert_eq!(
+            app.selected_path,
+            Some(PathBuf::from("/wt/chunk/main")),
+            "Enter in collapsed Repos must select the first repo's worktree path"
         );
     }
 
@@ -2412,6 +2418,52 @@ mod tests {
             "repos_w ({}) should shrink after filtering to a short repo name (was {})",
             app.repos_w,
             initial_repos_w
+        );
+    }
+
+    // When collapsed, refilter() narrowing to a single result must NOT auto-switch
+    // active_pane to Worktrees — the worktrees column is hidden, so doing so would
+    // cause render_repos to dim the only visible column and the footer to show wrong labels.
+    #[test]
+    fn refilter_in_collapsed_mode_keeps_active_pane_repos() {
+        let repos = vec![
+            RepoData {
+                name: "unique-repo".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/unique-repo/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "unique-repo main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "other".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/other/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "other main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        let mut app = App::new(repos);
+        app.collapsed = true;
+        app.active_pane = Pane::Repos;
+
+        // Filter to exactly one result — this is the path that previously triggered
+        // an unconditional active_pane=Worktrees switch inside refilter().
+        app.filter = "unique".into();
+        app.refilter();
+
+        assert_eq!(
+            app.filtered_repo_indices.len(),
+            1,
+            "filter should yield one result"
+        );
+        assert_eq!(
+            app.active_pane,
+            Pane::Repos,
+            "refilter must not switch active_pane to Worktrees when collapsed"
         );
     }
 }
