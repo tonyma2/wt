@@ -102,6 +102,7 @@ struct App {
     selected_path: Option<PathBuf>,
     color: bool,
     repos_w: u16,
+    collapsed: bool,
     content_width: u16,
     match_count: usize,
 }
@@ -155,6 +156,7 @@ impl App {
             selected_path: None,
             color,
             repos_w,
+            collapsed: false,
             content_width,
             match_count,
         }
@@ -188,7 +190,12 @@ impl App {
     }
 
     fn cursor_move(&mut self, delta: isize) {
-        let (selected, len) = match self.active_pane {
+        let pane = if self.collapsed {
+            Pane::Repos
+        } else {
+            self.active_pane
+        };
+        let (selected, len) = match pane {
             Pane::Repos => (self.repo_state.selected(), self.filtered_repo_indices.len()),
             Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
         };
@@ -197,7 +204,7 @@ impl App {
             return;
         }
         let next = (i as isize + delta).rem_euclid(len as isize) as usize;
-        match self.active_pane {
+        match pane {
             Pane::Repos => {
                 self.repo_state.select(Some(next));
                 self.refresh_wt_filter();
@@ -337,6 +344,11 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             Pane::Repos => {
                 if app.filtered_repo_indices.is_empty() {
                     app.quit = true;
+                } else if app.collapsed {
+                    // Worktrees column hidden: select the highlighted worktree directly.
+                    let path = app.selected_worktree_path().map(Path::to_path_buf);
+                    app.selected_path = path;
+                    app.quit = true;
                 } else {
                     app.active_pane = Pane::Worktrees;
                 }
@@ -347,9 +359,9 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                 app.quit = true;
             }
         },
-        KeyCode::Tab | KeyCode::BackTab => app.next_pane(),
+        KeyCode::Tab | KeyCode::BackTab if !app.collapsed => app.next_pane(),
         KeyCode::Left => app.active_pane = Pane::Repos,
-        KeyCode::Right => app.active_pane = Pane::Worktrees,
+        KeyCode::Right if !app.collapsed => app.active_pane = Pane::Worktrees,
         KeyCode::Up => app.cursor_move(-1),
         KeyCode::Down => app.cursor_move(1),
         KeyCode::Backspace => {
@@ -433,11 +445,12 @@ fn render(frame: &mut Frame, app: &mut App) {
         let wt_min: u16 = 8;
         let spacing: u16 = 2;
         if pane_w < wt_min + spacing + app.repos_w {
-            // Too narrow for two columns: reset active_pane so Enter cannot
-            // select a hidden worktree; detail line is skipped for the same reason.
-            app.active_pane = Pane::Repos;
+            // Too narrow for two columns: set collapsed so handle_key guards
+            // Tab/Right/Enter transitions to the hidden worktrees pane.
+            app.collapsed = true;
             render_repos(frame, app, pane_area);
         } else {
+            app.collapsed = false;
             // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
             let repos_w = app.repos_w;
             let [repos_area, wt_area] =
@@ -2264,10 +2277,11 @@ mod tests {
         );
     }
 
-    // Collapsed layout must reset active_pane to Repos so that Enter cannot
-    // silently select and return an invisible worktree.
+    // Collapsed layout must set the collapsed flag so handle_key can guard pane
+    // transitions; render must NOT override active_pane (that caused Tab/Enter
+    // to be silently swallowed on every frame).
     #[test]
-    fn collapsed_layout_resets_active_pane_to_repos() {
+    fn collapsed_layout_sets_collapsed_flag() {
         use ratatui::backend::TestBackend;
         let repos = vec![
             RepoData {
@@ -2297,16 +2311,67 @@ mod tests {
         // Force active_pane to Worktrees (as would happen after Tab or a narrow resize).
         app.active_pane = Pane::Worktrees;
 
-        // Render at narrow width: collapsed branch must reset active_pane.
+        // Render at narrow width: must set collapsed flag, must NOT touch active_pane.
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
 
+        assert!(
+            app.collapsed,
+            "render must set collapsed flag in narrow layout"
+        );
         assert_eq!(
             app.active_pane,
-            Pane::Repos,
-            "render must reset active_pane to Repos in collapsed layout"
+            Pane::Worktrees,
+            "render must not override active_pane in collapsed layout"
         );
         assert!(!app.quit, "app must not quit");
         assert!(app.selected_path.is_none(), "no path should be selected");
+    }
+
+    // Enter in collapsed Repos mode must select the highlighted worktree directly
+    // (worktrees column hidden but selection is deterministic).
+    #[test]
+    fn collapsed_enter_selects_worktree_directly() {
+        use ratatui::crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
+        };
+        let repos = vec![
+            RepoData {
+                name: "chunk".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/chunk/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "chunk main".into(),
+                    ..Default::default()
+                }],
+            },
+            RepoData {
+                name: "rust".into(),
+                worktrees: vec![WorktreeData {
+                    path: PathBuf::from("/wt/rust/main"),
+                    branch: Some("main".into()),
+                    filter_candidate: "rust main".into(),
+                    ..Default::default()
+                }],
+            },
+        ];
+        let mut app = App::new(repos);
+        // Simulate what render sets when the terminal is collapsed.
+        app.collapsed = true;
+        app.active_pane = Pane::Repos;
+
+        let enter = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key(&mut app, enter);
+
+        assert!(app.quit, "Enter in collapsed Repos must quit");
+        assert!(
+            app.selected_path.is_some(),
+            "Enter in collapsed Repos must select the highlighted worktree"
+        );
     }
 
     // After filtering down to repos with short names, repos_w must shrink so
