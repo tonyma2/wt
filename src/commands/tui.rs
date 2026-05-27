@@ -324,10 +324,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('u')
             if key.modifiers.contains(KeyModifiers::CONTROL) && !app.filter.is_empty() =>
         {
-            let pane = app.active_pane;
             app.filter.clear();
             app.refilter();
-            app.active_pane = pane;
         }
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {}
         KeyCode::Esc => {
@@ -450,6 +448,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(EMPTY_HINT.dim(), pane_area);
     } else if app.collapsed {
         render_repos(frame, app, pane_area);
+        render_detail(frame, app, detail_area);
     } else {
         // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
         let repos_w = app.repos_w;
@@ -636,12 +635,13 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
     let filter_w = span_w(&filter_tier);
     let pos_w = pos_tier.as_ref().map_or(0, |t| span_w(t));
 
+    let effective_tab_w = if app.collapsed { 0 } else { tab_w };
     let mut spans = base;
-    if w >= base_w + tab_w {
+    if w >= base_w + effective_tab_w {
         if !app.collapsed {
             spans.extend(tab_tier);
         }
-        if w >= base_w + tab_w + filter_w + pos_w {
+        if w >= span_w(&spans) + filter_w + pos_w {
             spans.extend(filter_tier);
         }
         if let Some(pos) = pos_tier
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_u_clears_filter_preserving_pane() {
+    fn ctrl_u_clears_filter_restores_pane_by_result_count() {
         let mut app = App::new(test_repos());
         app.active_pane = Pane::Worktrees;
         app.filter = "ot".into();
@@ -978,7 +978,8 @@ mod tests {
         assert!(!app.quit);
         assert!(app.filter.is_empty());
         assert_eq!(app.filtered_repo_indices.len(), 2);
-        assert_eq!(app.active_pane, Pane::Worktrees);
+        // Clearing to >1 result: refilter auto-switches to Repos (not Worktrees).
+        assert_eq!(app.active_pane, Pane::Repos);
     }
 
     #[test]
@@ -2262,24 +2263,39 @@ mod tests {
             .unwrap();
 
         let buf = terminal.backend().buffer().clone();
-        let all_text: String = (0..buf.area().height)
+        let h = buf.area().height as usize;
+        // Layout: content rows 0..h-2, detail row h-2, footer row h-1.
+        let content_text: String = (0..h.saturating_sub(2))
             .flat_map(|y| {
                 let buf = &buf;
                 (0..buf.area().width)
-                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .map(move |x| buf[(x, y as u16)].symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        let detail_text: String = (0..buf.area().width)
+            .map(|x| {
+                buf[(x, (h - 2) as u16)]
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
             })
             .collect();
         assert!(
-            all_text.contains("chunk"),
-            "repo name 'chunk' should be visible in collapsed single-column layout, got: {all_text}"
+            content_text.contains("chunk"),
+            "repo name 'chunk' should be visible in collapsed layout, got: {content_text}"
         );
         assert!(
-            all_text.contains("rust"),
-            "repo name 'rust' should be visible in collapsed single-column layout, got: {all_text}"
+            content_text.contains("rust"),
+            "repo name 'rust' should be visible in collapsed layout, got: {content_text}"
         );
         assert!(
-            !all_text.contains("topic"),
-            "branch 'topic' should not appear when worktrees column is collapsed, got: {all_text}"
+            !content_text.contains("topic"),
+            "branch 'topic' should not appear in the repos column when collapsed, got: {content_text}"
+        );
+        assert!(
+            detail_text.contains("topic"),
+            "detail row should show the selected worktree path even when collapsed, got: {detail_text}"
         );
     }
 
