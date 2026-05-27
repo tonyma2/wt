@@ -439,28 +439,27 @@ fn render(frame: &mut Frame, app: &mut App) {
     let pane_w = app.content_width.min(area.width);
     let pane_area = Rect::new(content_area.x, content_area.y, pane_w, content_area.height);
 
+    let wt_min: u16 = 8;
+    let spacing: u16 = 2;
+    // Always update collapsed so refilter() and handle_key() see a current value
+    // even when filtered_repo_indices is empty (the empty branch renders nothing
+    // that would otherwise set this flag).
+    app.collapsed = pane_w < wt_min + spacing + app.repos_w;
+
     if app.filtered_repo_indices.is_empty() {
         frame.render_widget(EMPTY_HINT.dim(), pane_area);
+    } else if app.collapsed {
+        render_repos(frame, app, pane_area);
     } else {
-        let wt_min: u16 = 8;
-        let spacing: u16 = 2;
-        if pane_w < wt_min + spacing + app.repos_w {
-            // Too narrow for two columns: set collapsed so handle_key guards
-            // Tab/Right/Enter transitions to the hidden worktrees pane.
-            app.collapsed = true;
-            render_repos(frame, app, pane_area);
-        } else {
-            app.collapsed = false;
-            // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
-            let repos_w = app.repos_w;
-            let [repos_area, wt_area] =
-                Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
-                    .spacing(spacing)
-                    .areas(pane_area);
-            render_repos(frame, app, repos_area);
-            render_worktrees(frame, app, wt_area);
-            render_detail(frame, app, detail_area);
-        }
+        // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
+        let repos_w = app.repos_w;
+        let [repos_area, wt_area] =
+            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
+                .spacing(spacing)
+                .areas(pane_area);
+        render_repos(frame, app, repos_area);
+        render_worktrees(frame, app, wt_area);
+        render_detail(frame, app, detail_area);
     }
     render_footer(frame, app, footer_area, content_area.height);
 }
@@ -639,7 +638,9 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
 
     let mut spans = base;
     if w >= base_w + tab_w {
-        spans.extend(tab_tier);
+        if !app.collapsed {
+            spans.extend(tab_tier);
+        }
         if w >= base_w + tab_w + filter_w + pos_w {
             spans.extend(filter_tier);
         }
