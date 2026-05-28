@@ -190,11 +190,7 @@ impl App {
     }
 
     fn cursor_move(&mut self, delta: isize) {
-        let pane = if self.collapsed {
-            Pane::Repos
-        } else {
-            self.active_pane
-        };
+        let pane = self.effective_pane();
         let (selected, len) = match pane {
             Pane::Repos => (self.repo_state.selected(), self.filtered_repo_indices.len()),
             Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
@@ -218,6 +214,14 @@ impl App {
             Pane::Repos => Pane::Worktrees,
             Pane::Worktrees => Pane::Repos,
         };
+    }
+
+    fn effective_pane(&self) -> Pane {
+        if self.collapsed {
+            Pane::Repos
+        } else {
+            self.active_pane
+        }
     }
 
     fn refilter(&mut self) {
@@ -265,9 +269,7 @@ impl App {
             .copied()
             .max()
             .unwrap_or(0);
-        let count_suffix = format!(" ({max_count})").chars().count();
-        let symbol_w: usize = 2; // "› " / "  " highlight prefix consumed by render_repos
-        self.repos_w = (max_name + symbol_w + count_suffix).max(8) as u16;
+        self.repos_w = repos_col_w(max_name, max_count);
 
         if self.filtered_repo_indices.len() == 1 && !self.collapsed {
             self.active_pane = Pane::Worktrees;
@@ -388,18 +390,25 @@ fn worktree_column_widths<'a>(
     (branch_w, status_w, max_badge)
 }
 
-fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
-    let repos_w = {
-        let max_name = repos
-            .iter()
-            .map(|r| r.name.chars().count())
-            .max()
-            .unwrap_or(4);
-        let highlight = 2; // "› "
-        let max_count = repos.iter().map(|r| r.worktrees.len()).max().unwrap_or(0);
-        let count_suffix = format!(" ({max_count})").chars().count();
-        (max_name + highlight + count_suffix).max(8) as u16
+fn repos_col_w(max_name: usize, max_count: usize) -> u16 {
+    let symbol_w = 2; // "› " prefix
+    let digit_w = if max_count == 0 {
+        1
+    } else {
+        max_count.ilog10() as usize + 1
     };
+    let count_suffix_w = 3 + digit_w; // " (" + digits + ")"
+    (max_name + symbol_w + count_suffix_w).max(8) as u16
+}
+
+fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
+    let max_name = repos
+        .iter()
+        .map(|r| r.name.chars().count())
+        .max()
+        .unwrap_or(4);
+    let max_count = repos.iter().map(|r| r.worktrees.len()).max().unwrap_or(0);
+    let repos_w = repos_col_w(max_name, max_count);
 
     let mut max_wt_w = 0u16;
 
@@ -597,11 +606,7 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         return Line::from(vec![prefix.dim(), Span::raw(display)]);
     }
 
-    let effective_pane = if app.collapsed {
-        Pane::Repos
-    } else {
-        app.active_pane
-    };
+    let effective_pane = app.effective_pane();
     let (enter_action, esc_action) = match effective_pane {
         Pane::Repos => (" open", " quit"),
         Pane::Worktrees => (" select", " back"),
