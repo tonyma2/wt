@@ -457,7 +457,6 @@ fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(EMPTY_HINT.dim(), pane_area);
     } else if app.collapsed {
         render_repos(frame, app, pane_area);
-        render_detail(frame, app, detail_area);
     } else {
         // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
         let repos_w = app.repos_w;
@@ -467,8 +466,8 @@ fn render(frame: &mut Frame, app: &mut App) {
                 .areas(pane_area);
         render_repos(frame, app, repos_area);
         render_worktrees(frame, app, wt_area);
-        render_detail(frame, app, detail_area);
     }
+    render_detail(frame, app, detail_area);
     render_footer(frame, app, footer_area, content_area.height);
 }
 
@@ -506,7 +505,7 @@ fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let list = styled_list(items, app.collapsed || app.active_pane == Pane::Repos, app);
+    let list = styled_list(items, app.effective_pane() == Pane::Repos, app);
     frame.render_stateful_widget(list, area, &mut app.repo_state);
 }
 
