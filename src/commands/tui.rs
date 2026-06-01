@@ -257,20 +257,6 @@ impl App {
         self.repo_state
             .select((!self.filtered_repo_indices.is_empty()).then_some(0));
 
-        let max_name = self
-            .filtered_repo_indices
-            .iter()
-            .map(|&i| self.repos[i].name.chars().count())
-            .max()
-            .unwrap_or(4);
-        let max_count = self
-            .filtered_repo_wt_counts
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(0);
-        self.repos_w = repos_col_w(max_name, max_count);
-
         if self.filtered_repo_indices.len() == 1 && !self.collapsed {
             self.active_pane = Pane::Worktrees;
         } else if self.filtered_repo_indices.len() > 1 {
@@ -392,12 +378,7 @@ fn worktree_column_widths<'a>(
 
 fn repos_col_w(max_name: usize, max_count: usize) -> u16 {
     let symbol_w = 2; // "› " prefix
-    let digit_w = if max_count == 0 {
-        1
-    } else {
-        max_count.ilog10() as usize + 1
-    };
-    let count_suffix_w = 3 + digit_w; // " (" + digits + ")"
+    let count_suffix_w = format!(" ({max_count})").chars().count();
     (max_name + symbol_w + count_suffix_w).max(8) as u16
 }
 
@@ -570,7 +551,7 @@ fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let list = styled_list(items, app.active_pane == Pane::Worktrees, app);
+    let list = styled_list(items, app.effective_pane() == Pane::Worktrees, app);
     frame.render_stateful_widget(list, area, &mut app.wt_state);
 }
 
@@ -607,6 +588,7 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
 
     let effective_pane = app.effective_pane();
     let (enter_action, esc_action) = match effective_pane {
+        Pane::Repos if app.collapsed => (" select", " quit"),
         Pane::Repos => (" open", " quit"),
         Pane::Worktrees => (" select", " back"),
     };
@@ -2401,10 +2383,10 @@ mod tests {
         );
     }
 
-    // After filtering down to repos with short names, repos_w must shrink so
-    // the two-column threshold does not collapse a layout that has enough room.
+    // repos_w must stay fixed during filtering so the worktrees column does not
+    // shift as the visible repo set changes.
     #[test]
-    fn refilter_updates_repos_w() {
+    fn refilter_keeps_repos_w_stable() {
         let repos = vec![
             RepoData {
                 name: "a-very-long-repository-name".into(),
@@ -2426,20 +2408,26 @@ mod tests {
             },
         ];
         let mut app = App::new(repos);
-        // Initial repos_w is wide (based on the long name).
         let initial_repos_w = app.repos_w;
 
-        // Filter to the short-named repo only.
         app.filter = "ab".into();
         app.refilter();
 
         assert_eq!(app.filtered_repo_indices.len(), 1);
-        assert!(
-            app.repos_w < initial_repos_w,
-            "repos_w ({}) should shrink after filtering to a short repo name (was {})",
-            app.repos_w,
-            initial_repos_w
+        assert_eq!(
+            app.repos_w, initial_repos_w,
+            "repos_w must not change during filtering to avoid shifting the worktrees column"
         );
+    }
+
+    #[test]
+    fn footer_collapsed_shows_select_not_open() {
+        let mut app = App::new(test_repos());
+        app.collapsed = true;
+        app.active_pane = Pane::Repos;
+        let text = line_text(&footer_line(&app, 80, 10));
+        assert!(text.contains("select"), "collapsed mode should show 'select'");
+        assert!(!text.contains("open"), "collapsed mode must not show 'open'");
     }
 
     // When collapsed, refilter() narrowing to a single result must NOT auto-switch
