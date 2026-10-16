@@ -28,15 +28,6 @@ fn wt_unlink_all(home: &Path, repo: &Path) -> std::process::Output {
     })
 }
 
-fn unlink_force(home: &Path, repo: &Path, files: &[&str]) -> std::process::Output {
-    run_wt(home, |cmd| {
-        cmd.arg("unlink");
-        cmd.arg("--force");
-        cmd.args(files);
-        cmd.args(["--repo"]).arg(repo);
-    })
-}
-
 fn create_symlink(source: &Path, dest: &Path) {
     #[cfg(unix)]
     {
@@ -85,11 +76,13 @@ fn unlinks_symlinked_file() {
 }
 
 #[test]
-fn skips_non_symlink_without_force() {
+fn skips_non_symlink() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let wt_path = wt_new(home.path(), &repo, "feat-unlink-skip");
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
+    std::fs::remove_file(wt_path.join(".env")).unwrap();
     std::fs::write(wt_path.join(".env"), "LOCAL=xyz").unwrap();
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
@@ -107,12 +100,14 @@ fn skips_non_symlink_without_force() {
 }
 
 #[test]
-fn skips_wrong_symlink_without_force() {
+fn skips_wrong_symlink() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     std::fs::write(repo.join(".other"), "OTHER").unwrap();
     let wt_path = wt_new(home.path(), &repo, "feat-unlink-wrong");
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
+    std::fs::remove_file(wt_path.join(".env")).unwrap();
     create_symlink(&repo.join(".other"), &wt_path.join(".env"));
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
@@ -135,82 +130,12 @@ fn skips_wrong_symlink_without_force() {
 }
 
 #[test]
-fn force_removes_non_symlink() {
-    let (home, repo) = setup();
-    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-    let wt_path = wt_new(home.path(), &repo, "feat-unlink-force");
-
-    std::fs::write(wt_path.join(".env"), "LOCAL=xyz").unwrap();
-
-    let output = unlink_force(home.path(), &repo, &[".env"]);
-    assert!(
-        output.status.success(),
-        "wt unlink --force failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unlinked .env"),
-        "expected 'unlinked' message, got: {stderr}",
-    );
-    assert!(
-        !wt_path.join(".env").exists(),
-        "file should be removed with --force",
-    );
-}
-
-#[test]
-fn force_removes_wrong_symlink() {
-    let (home, repo) = setup();
-    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-    std::fs::write(repo.join(".other"), "OTHER").unwrap();
-    let wt_path = wt_new(home.path(), &repo, "feat-unlink-fwrong");
-
-    create_symlink(&repo.join(".other"), &wt_path.join(".env"));
-
-    let output = unlink_force(home.path(), &repo, &[".env"]);
-    assert!(output.status.success());
-
-    assert!(
-        wt_path.join(".env").symlink_metadata().is_err(),
-        "wrong symlink should be removed with --force",
-    );
-}
-
-#[test]
-fn force_refuses_directory() {
-    let (home, repo) = setup();
-    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-    let wt_path = wt_new(home.path(), &repo, "feat-unlink-forcedir");
-
-    let dest_dir = wt_path.join(".env");
-    std::fs::create_dir(&dest_dir).unwrap();
-    std::fs::write(dest_dir.join("old.txt"), "old").unwrap();
-
-    let output = unlink_force(home.path(), &repo, &[".env"]);
-    assert!(
-        !output.status.success(),
-        "wt unlink --force should fail on directory: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("cannot remove .env"),
-        "expected 'cannot remove' error, got: {stderr}",
-    );
-    assert!(
-        stderr.contains("destination is a directory"),
-        "expected 'destination is a directory', got: {stderr}",
-    );
-    assert!(dest_dir.is_dir(), "directory should not have been deleted");
-}
-
-#[test]
 fn skips_missing_file() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-    let _wt_path = wt_new(home.path(), &repo, "feat-unlink-miss");
+    let wt_path = wt_new(home.path(), &repo, "feat-unlink-miss");
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+    std::fs::remove_file(wt_path.join(".env")).unwrap();
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
@@ -242,6 +167,7 @@ fn unlinks_from_multiple_worktrees() {
 fn no_linked_worktrees() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
@@ -437,4 +363,104 @@ fn all_unlinks_from_multiple_worktrees() {
 
     assert!(!wt1.join(".env").exists(), "symlink removed from wt1");
     assert!(!wt2.join(".env").exists(), "symlink removed from wt2");
+}
+
+#[test]
+fn removes_config_entry_without_linked_worktrees() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET").unwrap();
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+
+    let output = wt_unlink(home.path(), &repo, &["./.env"]);
+    assert!(output.status.success());
+
+    let list = run_wt(home.path(), |cmd| {
+        cmd.args(["link", "--list", "--repo"]).arg(&repo);
+    });
+    assert_stdout_empty(&list);
+}
+
+#[test]
+fn removes_config_entry_saved_before_paths_were_normalized() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET").unwrap();
+    let feat = wt_new(home.path(), &repo, "feat");
+    std::os::unix::fs::symlink(repo.join(".env"), feat.join(".env")).unwrap();
+    std::fs::write(
+        home.path().join(".wt/config"),
+        format!(
+            "[links]\n\"{}\" = [\"./.env\"]\n",
+            canonical(&repo).display()
+        ),
+    )
+    .unwrap();
+
+    let output = wt_unlink(home.path(), &repo, &[".env"]);
+    assert!(output.status.success());
+    let list = run_wt(home.path(), |cmd| {
+        cmd.args(["link", "--list", "--repo"]).arg(&repo);
+    });
+    assert_eq!(String::from_utf8_lossy(&list.stdout), "");
+}
+
+#[test]
+fn rejects_file_that_was_never_linked() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-never-linked");
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+
+    let output = wt_unlink(home.path(), &repo, &[".env", ".evn"]);
+    assert_error(&output, 1, "cannot unlink .evn: not linked\n");
+    assert!(
+        wt_path.join(".env").symlink_metadata().is_ok(),
+        "nothing should be unlinked when an argument is invalid"
+    );
+}
+
+#[test]
+fn removes_directories_created_for_nested_links() {
+    let (home, repo) = setup();
+    std::fs::create_dir_all(repo.join("config/local")).unwrap();
+    std::fs::write(repo.join("config/local/app.toml"), "k = 1").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-nested");
+    assert!(
+        wt_link(home.path(), &repo, &["config/local/app.toml"])
+            .status
+            .success()
+    );
+    assert!(wt_path.join("config/local/app.toml").is_symlink());
+
+    let output = wt_unlink(home.path(), &repo, &["config/local/app.toml"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "unlinked config/local/app.toml in 'feat-nested'\n"
+    );
+    assert!(
+        !wt_path.join("config").exists(),
+        "empty parents should be removed"
+    );
+    assert!(wt_path.exists());
+}
+
+#[test]
+fn keeps_parent_directories_that_hold_other_files() {
+    let (home, repo) = setup();
+    std::fs::create_dir_all(repo.join("config")).unwrap();
+    std::fs::write(repo.join("config/app.toml"), "k = 1").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-nested-keep");
+    assert!(
+        wt_link(home.path(), &repo, &["config/app.toml"])
+            .status
+            .success()
+    );
+    std::fs::write(wt_path.join("config/other.toml"), "mine").unwrap();
+
+    assert!(
+        wt_unlink(home.path(), &repo, &["config/app.toml"])
+            .status
+            .success()
+    );
+    assert!(wt_path.join("config/other.toml").exists());
 }

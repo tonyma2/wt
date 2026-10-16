@@ -79,13 +79,41 @@ fn clone_creates_worktree_and_bare_repo() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("cloning"), "stderr should mention cloning");
     assert!(
-        stderr.contains("fetching from 'origin'"),
-        "stderr should announce fetch step"
-    );
-    assert!(
         stderr.contains("checked out 'main'"),
         "stderr should mention checked out branch"
     );
+}
+
+#[test]
+fn clone_tracks_default_branch_without_stale_local_copies() {
+    let (home, origin) = setup_origin();
+    assert_git_success(&origin, &["branch", "other"]);
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    assert!(output.status.success());
+    let wt_path = parse_wt_new_path(&output);
+
+    let upstream =
+        assert_git_stdout_success(&wt_path, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    assert_eq!(upstream.trim(), "origin/main");
+    let local = assert_git_stdout_success(
+        &wt_path,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+    );
+    assert_eq!(
+        local.trim(),
+        "main",
+        "only the default branch should exist locally"
+    );
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "other", "--repo"]).arg(&wt_path);
+    });
+    assert!(output.status.success());
+    let other = parse_wt_new_path(&output);
+    let upstream = assert_git_stdout_success(&other, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    assert_eq!(upstream.trim(), "origin/other");
 }
 
 #[test]
@@ -153,6 +181,10 @@ fn clone_invalid_url_fails_cleanly() {
         stderr.to_lowercase().contains("fatal") || stderr.to_lowercase().contains("error"),
         "expected git error output on stderr, got: {stderr}"
     );
+    assert!(
+        stderr.ends_with("cannot clone /nonexistent/path/to/repo.git\n"),
+        "expected wt to name the failed step, got: {stderr}"
+    );
 
     assert!(find_subdirs(&repos_dir(home.path())).is_empty() || !repos_dir(home.path()).exists());
     assert!(
@@ -186,11 +218,12 @@ fn wt_new_works_from_cloned_worktree() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["new", "-c", "feature", "--repo"]).arg(&wt_path);
+        cmd.args(["switch", "-c", "feature", "--repo"])
+            .arg(&wt_path);
     });
     assert!(
         output.status.success(),
-        "wt new from cloned worktree failed: {}",
+        "wt switch from cloned worktree failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     let feature_path = parse_wt_new_path(&output);
@@ -244,7 +277,7 @@ fn prune_discovers_bare_repo_worktrees() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["new", "-c", "stale-branch", "--repo"])
+        cmd.args(["switch", "-c", "stale-branch", "--repo"])
             .arg(&wt_path);
     });
     assert!(output.status.success());
@@ -271,7 +304,8 @@ fn rm_works_from_cloned_worktree() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["new", "-c", "to-remove", "--repo"]).arg(&wt_path);
+        cmd.args(["switch", "-c", "to-remove", "--repo"])
+            .arg(&wt_path);
     });
     assert!(output.status.success());
 
@@ -297,7 +331,7 @@ fn link_skips_bare_entry_as_primary() {
     std::fs::write(primary_wt.join(".env"), "SECRET=1").unwrap();
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["new", "-c", "feature", "--repo"])
+        cmd.args(["switch", "-c", "feature", "--repo"])
             .arg(&primary_wt);
     });
     assert!(output.status.success());
@@ -327,7 +361,7 @@ fn no_cd_hint_when_stdout_not_tty() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("cd \"$(wt path"),
+        !stderr.contains("cd '"),
         "should not print cd hint when stdout piped"
     );
 }
@@ -388,11 +422,13 @@ fn clone_empty_repo_fails_and_cleans_up() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("cannot determine default branch"),
+        stderr.ends_with(&format!(
+            "cannot clone {}: repository is empty\n",
+            origin.display()
+        )),
         "stderr: {stderr}"
     );
 
-    // bare repo should be cleaned up after failure
     assert!(
         find_subdirs(&repos_dir(home.path())).is_empty() || !repos_dir(home.path()).exists(),
         "bare repo should be cleaned up"

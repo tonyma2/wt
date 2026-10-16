@@ -96,7 +96,10 @@ fn switch_checks_out_remote_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "checking out 'feat/remote-only'\n");
+    assert_stderr_exact(
+        &output,
+        "creating branch 'feat/remote-only' tracking 'origin/feat/remote-only'\n",
+    );
 
     let path = parse_wt_new_path(&output);
     assert!(
@@ -120,9 +123,14 @@ fn switch_checks_out_remote_branch_nested_slash() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "checking out 'feat/scope/topic'\n");
+    assert_stderr_exact(
+        &output,
+        "creating branch 'feat/scope/topic' tracking 'origin/feat/scope/topic'\n",
+    );
 
     let path = parse_wt_new_path(&output);
+    let upstream = assert_git_stdout_success(&path, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    assert_eq!(upstream.trim(), "origin/feat/scope/topic");
     assert!(
         path.exists(),
         "worktree path should exist: {}",
@@ -230,7 +238,7 @@ fn switch_skips_prunable_worktree() {
 }
 
 #[test]
-fn switch_prunes_stale_metadata_when_live_match_exists() {
+fn switch_returns_live_match_when_stale_duplicate_exists() {
     let (home, repo) = setup();
 
     // Create two worktrees for the same branch (--force bypasses the guard)
@@ -246,26 +254,15 @@ fn switch_prunes_stale_metadata_when_live_match_exists() {
     // Delete the second one to make it prunable
     std::fs::remove_dir_all(&stale_dir).unwrap();
 
-    // switch should return the live worktree and prune the stale entry
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["switch", "feat/mixed", "--repo"]).arg(&repo);
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "pruning stale worktree metadata\n");
+    assert_stderr_empty(&output);
 
     let switch_path = parse_wt_new_path(&output);
     assert_eq!(canonical(&switch_path), canonical(&live_path));
-
-    // After pruning, `wt path` should not see ambiguity
-    let path_output = run_wt(home.path(), |cmd| {
-        cmd.args(["path", "feat/mixed", "--repo"]).arg(&repo);
-    });
-    assert!(
-        path_output.status.success(),
-        "wt path should succeed after prune, got: {}",
-        String::from_utf8_lossy(&path_output.stderr),
-    );
 }
 
 #[test]
@@ -280,7 +277,7 @@ fn switch_rejects_tag() {
     assert_error(
         &output,
         1,
-        "'v1.0' is not a branch, use `wt new v1.0` to check out a ref\n",
+        "'v1.0' is not a branch, use `wt switch <branch> v1.0` to start a branch from it\n",
     );
 }
 
@@ -298,7 +295,9 @@ fn switch_rejects_sha() {
     assert_stdout_empty(&output);
     assert_stderr_exact(
         &output,
-        &format!("'{sha}' is not a branch, use `wt new {sha}` to check out a ref\n"),
+        &format!(
+            "'{sha}' is not a branch, use `wt switch <branch> {sha}` to start a branch from it\n"
+        ),
     );
 }
 
@@ -313,7 +312,7 @@ fn switch_rejects_head() {
     assert_error(
         &output,
         1,
-        "'HEAD' is not a branch, use `wt new HEAD` to check out a ref\n",
+        "'HEAD' is not a branch, use `wt switch <branch> HEAD` to start a branch from it\n",
     );
 }
 
@@ -469,7 +468,7 @@ fn no_cd_hint_when_stdout_not_tty() {
     assert_stderr_exact(&output, "creating branch 'feat/hint-test'\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("cd \"$(wt path"),
+        !stderr.contains("cd '"),
         "cd hint should not appear when stdout is not a TTY, got: {stderr}",
     );
 }
@@ -500,4 +499,308 @@ fn switch_no_fuzzy_check_for_existing_branch() {
 
     assert!(output.status.success());
     assert_stderr_exact(&output, "checking out 'feat/logni'\n");
+}
+
+#[test]
+fn suggests_remote_only_branch_for_typo() {
+    let (home, repo, _origin) = setup_with_origin();
+    assert_git_success(&repo, &["branch", "feature-login"]);
+    assert_git_success(&repo, &["push", "origin", "feature-login"]);
+    assert_git_success(&repo, &["branch", "-D", "feature-login"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feature-logn", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 1);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("did you mean 'feature-login'?"));
+}
+
+#[test]
+fn remote_branch_wins_over_same_named_tag() {
+    let (home, repo, _origin) = setup_with_origin();
+    assert_git_success(&repo, &["branch", "rel"]);
+    assert_git_success(&repo, &["push", "origin", "rel"]);
+    assert_git_success(&repo, &["branch", "-D", "rel"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "later"]);
+    assert_git_success(&repo, &["tag", "rel"]);
+
+    let switch = || {
+        run_wt(home.path(), |cmd| {
+            cmd.args(["switch", "rel", "--repo"]).arg(&repo);
+        })
+    };
+    let first = parse_wt_new_path(&switch());
+    let branch = assert_git_stdout_success(&first, &["branch", "--show-current"]);
+    assert_eq!(branch.trim(), "rel");
+    assert_eq!(
+        parse_wt_new_path(&switch()),
+        first,
+        "second switch should reuse the worktree"
+    );
+}
+
+#[test]
+fn multiple_remotes_hint_creates_tracking_branch() {
+    let (home, repo, _origin) = setup_with_origin();
+    let upstream = home.path().join("upstream.git");
+    init_bare_repo(&upstream);
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["remote", "add", "upstream"]).arg(&upstream);
+    });
+    assert_git_success(&repo, &["branch", "both"]);
+    assert_git_success(&repo, &["push", "origin", "both"]);
+    assert_git_success(&repo, &["push", "upstream", "both"]);
+    assert_git_success(&repo, &["branch", "-D", "both"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "both", "--repo"]).arg(&repo);
+    });
+    assert!(String::from_utf8_lossy(&output.stderr).contains("use `wt switch both <remote>/both`"));
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "both", "upstream/both", "--repo"])
+            .arg(&repo);
+    });
+    let wt = parse_wt_new_path(&output);
+    let upstream = assert_git_stdout_success(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    assert_eq!(upstream.trim(), "upstream/both");
+}
+
+#[test]
+fn creates_branch_from_head_not_remote_default() {
+    let (home, repo, _origin) = setup_with_origin();
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "local-only"]);
+    let head = assert_git_stdout_success(&repo, &["rev-parse", "HEAD"]);
+
+    let wt_path = wt_new(home.path(), &repo, "feat/from-head");
+    assert_eq!(
+        assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"]),
+        head
+    );
+}
+
+#[test]
+fn base_sets_start_point() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["checkout", "-b", "develop"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "develop commit"]);
+    let develop = assert_git_stdout_success(&repo, &["rev-parse", "develop"]);
+    assert_git_success(&repo, &["checkout", "main"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/x", "develop", "--repo"])
+            .arg(&repo);
+    });
+    assert_stderr_exact(&output, "creating branch 'feat/x'\n");
+    let wt_path = parse_wt_new_path(&output);
+    assert_eq!(
+        assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"]),
+        develop
+    );
+}
+
+#[test]
+fn base_accepts_tag() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["tag", "v1.0"]);
+    assert_git_success(&repo, &["commit", "--allow-empty", "-m", "after tag"]);
+    let tagged = assert_git_stdout_success(&repo, &["rev-parse", "v1.0"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "hotfix", "v1.0", "--repo"]).arg(&repo);
+    });
+    let wt_path = parse_wt_new_path(&output);
+    assert_eq!(
+        assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
+        "hotfix"
+    );
+    assert_eq!(
+        assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"]),
+        tagged
+    );
+}
+
+#[test]
+fn base_rejects_existing_branch() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["branch", "existing"]);
+    let wt_root = home.path().join(".wt").join("worktrees");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "existing", "main", "--repo"])
+            .arg(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot create branch 'existing': already exists, use `wt switch existing` to go there\n",
+    );
+    assert_eq!(dir_entry_count(&wt_root), 0);
+}
+
+#[test]
+fn base_rejects_unresolvable_start_point() {
+    let (home, repo) = setup();
+    let wt_root = home.path().join(".wt").join("worktrees");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/x", "nonexistent", "--repo"])
+            .arg(&repo);
+    });
+    assert_exit_code(&output, 1);
+    assert_stdout_empty(&output);
+    assert_eq!(dir_entry_count(&wt_root), 0);
+    assert_branch_absent(&repo, "feat/x");
+}
+
+#[test]
+fn base_creates_fresh_branch_when_only_remote_branch_exists() {
+    let (home, repo, _origin) = setup_with_origin();
+    assert_git_success(&repo, &["branch", "remote-only"]);
+    assert_git_success(&repo, &["push", "origin", "remote-only"]);
+    assert_git_success(&repo, &["branch", "-D", "remote-only"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "remote-only", "main", "--repo"])
+            .arg(&repo);
+    });
+    assert_stderr_exact(&output, "creating branch 'remote-only'\n");
+    parse_wt_new_path(&output);
+}
+
+#[test]
+fn branch_from_remote_base_does_not_track_it() {
+    let (home, repo, _origin) = setup_with_origin();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat", "origin/main", "--repo"])
+            .arg(&repo);
+    });
+    let wt = parse_wt_new_path(&output);
+    let upstream = git(&wt)
+        .args(["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .output()
+        .unwrap();
+    assert!(
+        !upstream.status.success(),
+        "feat must not track origin/main"
+    );
+}
+
+#[test]
+fn checks_out_local_branch_with_remote_prefix() {
+    let (home, repo, _origin) = setup_with_origin();
+    assert_git_success(&repo, &["branch", "origin/main"]);
+
+    let wt_path = wt_checkout(home.path(), &repo, "origin/main");
+    assert_eq!(
+        assert_git_stdout_success(&wt_path, &["branch", "--show-current"]).trim(),
+        "origin/main"
+    );
+}
+
+#[test]
+fn rejects_invalid_branch_name() {
+    let (home, repo) = setup();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "bad..name", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 1);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("bad..name"));
+}
+
+#[test]
+fn rejects_names_that_look_like_options() {
+    let (home, repo) = setup();
+    for name_args in [&["--", "--detach"][..], &["-c", "--", "-f"][..]] {
+        let output = run_wt(home.path(), |cmd| {
+            cmd.args(["switch", "--repo"]).arg(&repo).args(name_args);
+        });
+        assert_exit_code(&output, 1);
+    }
+}
+
+#[test]
+fn fails_when_repo_path_is_not_a_git_repository() {
+    let (home, _repo) = setup();
+    let not_repo = home.path().join("not-repo");
+    std::fs::create_dir(&not_repo).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feature", "--repo"]).arg(&not_repo);
+    });
+    assert_error(
+        &output,
+        1,
+        &format!("not a git repository: {}\n", not_repo.display()),
+    );
+}
+
+#[test]
+fn succeeds_with_unreachable_origin() {
+    let (home, repo) = setup();
+    assert_git_success(
+        &repo,
+        &["remote", "add", "origin", "https://0.0.0.0/nonexistent.git"],
+    );
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "offline-branch", "--repo"]).arg(&repo);
+    });
+    assert_stderr_exact(&output, "creating branch 'offline-branch'\n");
+    parse_wt_new_path(&output);
+}
+
+#[test]
+fn names_worktree_dir_after_remote_repo() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("local-name");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    assert_git_success(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://0.0.0.0/org/remote-name.git",
+        ],
+    );
+
+    let wt_path = wt_new(home.path(), &repo, "feat/remote-test");
+    assert!(wt_path.ends_with("remote-name"), "{}", wt_path.display());
+}
+
+#[test]
+fn names_worktree_dir_after_local_dir_without_remote() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("my-project");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+
+    let wt_path = wt_new(home.path(), &repo, "feat/no-remote");
+    assert!(wt_path.ends_with("my-project"), "{}", wt_path.display());
+}
+
+#[test]
+fn branch_slashes_do_not_affect_worktree_dir_name() {
+    let (home, repo) = setup();
+
+    let wt_path = wt_new(home.path(), &repo, "feat/foo");
+    assert!(wt_path.ends_with("repo"), "{}", wt_path.display());
+}
+
+#[test]
+fn accepts_bare_repo_as_repo_flag() {
+    let (home, _repo, origin) = setup_with_origin();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "-c", "from-bare", "--repo"])
+            .arg(&origin);
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(parse_wt_new_path(&output).file_name().unwrap(), "origin");
 }

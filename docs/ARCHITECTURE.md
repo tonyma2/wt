@@ -10,31 +10,31 @@ main.rs                 Entry point: parse CLI, dispatch to command, handle erro
 ├── commands.rs         Declares all subcommand modules (pub mod)
 ├── commands/
 │   ├── clone.rs        Bare-clone a repo + create first worktree + fix fetch refspec
-│   ├── new.rs          Create worktree (checkout existing ref or create branch)
-│   ├── list.rs         Tabular worktree listing with terminal-aware column sizing
+│   ├── list.rs         Tabular worktree listing; columns size to content, shrinking to the terminal width
 │   ├── rm.rs           Remove worktrees + branches, with multi-target and path resolution
-│   ├── prune.rs        Global prune: stale metadata, merged branches, orphaned directories
-│   ├── path.rs         Print worktree path by branch name or ref
-│   ├── switch.rs       Get-or-create worktree with fuzzy typo detection
-│   ├── link.rs         Symlink files from primary worktree into all linked worktrees
+│   ├── prune.rs        Global prune: repair moved worktrees, stale metadata, merged/gone/stale branches, orphaned directories
+│   ├── path.rs         Print worktree path by branch name
+│   ├── switch.rs       Get-or-create worktree: existing worktree, existing branch, or new branch (from HEAD or [base]) with fuzzy typo detection
+│   ├── link.rs         Symlink files from primary worktree into all linked worktrees; find_primary() + auto_link()
 │   ├── unlink.rs       Remove symlinks created by link from all linked worktrees
 │   ├── init.rs         Shell integration: completions + auto-cd wrapper (zsh gets dynamic branch completion)
-│   └── tui.rs          Interactive picker — two-pane repo/worktree browser with fuzzy filter
+│   └── tui.rs          Interactive picker — one list of worktrees grouped by repo, with fuzzy filter
 ├── tui.rs              Ratatui terminal setup/teardown (inline viewport, raw mode, panic hook)
-├── config.rs           Read/write ~/.wt/config TOML (auto-link persistence)
+├── config.rs           Config type: ~/.wt/config TOML (link lists keyed by primary worktree path); writes go through Config::update, which holds ~/.wt/config.lock across load → change → save
 ├── fuzzy.rs            Levenshtein distance + close-match detection + subsequence scoring for TUI filter
 ├── git.rs              Git abstraction — all subprocess calls go through Git struct
-├── worktree.rs         Worktree type + porcelain parser + query helpers + shared parallel loader (load_all)
-└── terminal.rs         TTY/color detection, stderr color support, terminal width (COLUMNS env, ioctl fallback, then 132)
+├── layout.rs           ~/.wt filesystem layout: roots, path/cwd helpers, destination reserve/cleanup, managed worktree discovery
+├── worktree.rs         Worktree/Status types + porcelain parsers + query helpers + shared parallel loader (load_all)
+└── terminal.rs         TTY/color detection, stderr color support, terminal width (COLUMNS env, crossterm window size, then 132), display-width text helpers (display_width/pad/trunc/trunc_tail) — measure user text with these, not chars().count() or {:<w$}
 ```
 
 ## Key Types
 
-**`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` and returns `Result<T, String>` or `bool`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the admin repo. Exceptions: `is_dirty()` and `worktree_status()` run against the worktree path, not the admin repo (see [decisions.md](decisions.md)).
+**`Git`** (`git.rs`) — Wraps a repo path. Every method spawns `git -C <repo> ...` through three helpers: `run` (captured stderr → `git_err` message), `query` (trimmed stdout as `Option`), and `succeeds` (exit status as `bool`); network commands use `run_streaming`. `Git::find_repo(path: Option<&Path>)` is the static entry point used by every command to locate the repo: the worktree toplevel, or the git dir itself for a bare repo. `Git::worktree_status()` and `Git::repair_worktree()` are associated functions that run against a worktree path, not the admin repo (see [decisions.md](decisions.md)).
 
-**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `head`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `resolve_worktree()`, `find_by_path()`, `branch_checked_out_elsewhere()`, `find_current_worktree()`, `find_primary()`.
+**`Worktree`** (`worktree.rs`) — Parsed from `git worktree list --porcelain`. Fields: `path`, `branch` (Option), `bare`, `detached`, `locked`, `prunable`. Bool fields have no `is_` prefix. Query helpers on `&[Worktree]`: `resolve_worktree()` (returns `Ok(None)` when not found, `Err` when ambiguous), `find_by_path()`, `branch_checked_out_elsewhere()`. `not_found_error()` builds the shared "did you mean" error (or explains a deleted worktree directory). `display_order()` is the one ordering for human-facing views (`list` table, `tui`): `main`/`master` first, then branches by name, then detached. `label()` names a worktree in messages: its quoted branch, or its `~` path when detached.
 
-**`RepoInfo` / `WorktreeInfo`** (`worktree.rs`) — Returned by `load_all()`. `WorktreeInfo` mirrors `Worktree` fields and adds computed status: `dirty`, `ahead`, `behind`, `current`. `RepoInfo` groups worktrees by repo name. This is the canonical data model for multi-repo views — both `list --all` and `tui` consume it.
+**`RepoInfo` / `WorktreeInfo` / `Status`** (`worktree.rs`) — `Status::of()` is the single dirty/ahead/behind check (also used by `rm` and `prune`). `WorktreeInfo` wraps a `Worktree` with its `Status` (`dirty`, `ahead`, `behind`; `summary()` renders `* ↑1 ↓2`) and a `current` flag set by `mark_current()`. `RepoInfo` groups worktrees by repo name. `load_all()` returns `Vec<RepoInfo>` — the canonical data model for multi-repo views consumed by `list --all` and `tui`.
 
 **`Cli` / `Command`** (`cli.rs`) — Clap derive types. `Command` is a flat enum with one variant per subcommand. `///` doc comments become `--help` text via clap — this is the only file that uses doc comments.
 
@@ -48,25 +48,29 @@ commands/                    Formatting, display, user interaction
   │
 worktree.rs                  Data loading, parsing, queries
   │  load_all()              parallel loader for list --all, tui (one thread per repo, nested per-worktree threads)
-  │  discover_repos()        filesystem walk — used by load_all and prune independently
   │  parse_porcelain()       git porcelain → Vec<Worktree>
-  │  enrich_worktrees()      parallel dirty + ahead/behind (one thread per worktree)
+  │  enrich_worktrees()      parallel Status per worktree (one thread per worktree)
+  │  mark_current()          flags the deepest worktree containing cwd (single repo or across repos)
+  │
+layout.rs                    Where things live on disk
+  │  managed_worktrees()     filesystem walk → (worktree dir, gitdir or None if unparseable); admin_repos() maps them to admin repos
+  │  create_*_dest()         reserve a fresh ~/.wt/<root>/<id>/<repo>/ directory
   │
 git.rs                       Subprocess execution, no business logic
-     list_worktrees()  worktree_status()  is_dirty()  find_repo()
+     list_worktrees()  worktree_status()  find_repo()  (raw output; parsing lives in worktree.rs)
 ```
 
 Most commands follow the single-repo path: `find_repo → list_worktrees → parse_porcelain → query → act`. Multi-repo commands (`list --all`, `tui`) share `load_all()`. If a new command needs all-repo status data, it should consume `load_all()`, not reimplement the pipeline.
 
 ### Exceptions and non-obvious behaviors
 
-- **clone** — never calls `find_repo()`; creates its own bare repo, fixes the fetch refspec (`+refs/heads/*:refs/remotes/origin/*`), fetches, then creates the first worktree. Bare repo stored under `~/.wt/repos/`
-- **new** — never lists worktrees; builds a destination path directly and calls `add_worktree()` or `checkout_worktree()`
-- **rm** — `resolve_target()` has a three-stage fallback: branch → ref-to-SHA → filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
-- **prune** — global mode (no `--repo`) uses `discover_repos()` directly, not `load_all()`, because it needs `Git` handles for prune operations rather than precomputed status
-- **switch** — auto-prunes stale worktree metadata when it encounters a prunable match before creating
-- **tui** — consumes `load_all()`, maps `WorktreeInfo` → display structs, filters bare and prunable. Default command when no subcommand is given. Coupling is one-way: `commands/tui.rs` depends on `worktree`, `fuzzy`, `terminal`, and `tui` — none of those modules reference the TUI. Shared logic belongs in the dependency, not the consumer
-- **init** — patches clap_complete's generated script via string replacement to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base`/`files` args in `cli.rs` — each must be unique per subcommand. Guarded by the `zsh_completion_is_dynamic` and `zsh_link_unlink_completions_are_dynamic` unit tests (see [decisions.md](decisions.md))
+- **clone** — never calls `find_repo()`; `git init --bare` under `~/.wt/repos/`, adds `origin`, fetches once, creates only the default branch (tracking `origin`), then the first worktree (see [decisions.md](decisions.md))
+- **switch** — a branch that exists only on one remote becomes a local branch tracking it (`Start::NewBranch(refs/remotes/<remote>/<name>)`) rather than relying on git's checkout guessing, so it reports the upstream. A `[base]` always creates a new branch and skips the typo check. Every path that creates ends in `create_worktree()`: prune stale metadata if a prunable entry holds the branch (it would block `git worktree add`), reserve a destination, `add_worktree()` or `checkout_worktree()`, clean up on failure, auto-link, print the path. It lists worktrees first so auto-link can find the primary
+- **link / unlink / auto-link** — the primary (link source) is resolved by `link::find_primary()`: the worktree that already owns this repo's link config, else the worktree you're operating from (see [decisions.md](decisions.md))
+- **rm** — `resolve_target()` falls back from branch name to filesystem path. Also works without a repo context if given a path directly (resolves the admin repo from the worktree's `.git` file)
+- **prune** — global mode (no `--repo`) walks `managed_worktrees()` directly, not `load_all()`, because it needs `Git` handles for prune operations rather than precomputed status. Per repo it repairs renamed worktree directories, prunes metadata, then branches; afterwards it handles orphans under `~/.wt/worktrees/` (only with `--orphans`), then removes any top-level directory there that holds nothing but empty directories, then unused bare clones under `~/.wt/repos/`. `--gone` fetches each tracked remote before classifying, also under `--dry-run`, so a dry run reports exactly what a real run would remove. `--repo` runs git through the main worktree (or bare repo) so it can remove the worktree it was pointed at. Safety rules are in [decisions.md](decisions.md). Output streams per repo group
+- **tui** — consumes `load_all()`, maps `WorktreeInfo` → display structs (sorted by `display_order()`), filters bare and prunable, and flattens every repo into one list grouped by repo. Rows compare repos by index, so same-named repos stay separate groups. Typing ranks repos by their best match and keeps rows grouped; Enter always picks the highlighted row. The picker owns its scroll offset: jumps (opening, ←/→, clearing the filter) put the cursor's repo at the top, arrow moves scroll minimally, and the repo label sticks to the top visible row. `columns()` gives way in a fixed order as the terminal narrows (see [decisions.md](decisions.md)). Default command when no subcommand is given. The selection is written to `$__WT_CD` when the shell wrapper set it, otherwise printed to stdout. Coupling is one-way: `commands/tui.rs` depends on `worktree`, `layout`, `fuzzy`, `terminal`, and `tui` — none of those modules reference the TUI. Shared logic belongs in the dependency, not the consumer
+- **init** — patches clap_complete's generated script via string replacement (the `COMPLETERS` table) to inject custom zsh completion functions. Fragile: replacement targets are `///` doc comments on `name`/`names`/`base`/`files` args in `cli.rs` — each must be unique per subcommand. Unlink completion shells out to `wt link --list` rather than parsing the config. `render()` fails if any target is missing; the `zsh_wires_each_completer_into_its_subcommands` unit test also catches targets that collide. Completion behavior is covered by the `zsh_*` tests in `tests/init.rs`, which skip when zsh is not installed (see [decisions.md](decisions.md))
 
 ## Filesystem Layout
 

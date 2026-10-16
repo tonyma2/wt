@@ -1,4 +1,9 @@
+use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::Path;
+
+use ratatui::crossterm::terminal;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn is_stdout_tty() -> bool {
     std::io::stdout().is_terminal()
@@ -19,7 +24,15 @@ pub struct Colors {
 }
 
 pub fn color_enabled(is_tty: bool) -> bool {
-    is_tty && std::env::var("NO_COLOR").is_err() && std::env::var("TERM").as_deref() != Ok("dumb")
+    colors_allowed(
+        is_tty,
+        std::env::var_os("NO_COLOR"),
+        std::env::var_os("TERM"),
+    )
+}
+
+fn colors_allowed(is_tty: bool, no_color: Option<OsString>, term: Option<OsString>) -> bool {
+    is_tty && no_color.is_none_or(|v| v.is_empty()) && term.is_none_or(|t| t != "dumb")
 }
 
 fn make_colors(enabled: bool) -> Colors {
@@ -54,111 +67,91 @@ pub fn stderr_colors() -> Colors {
     make_colors(color_enabled(is_stderr_tty()))
 }
 
-pub fn tilde_path(path: &std::path::Path) -> String {
-    let path_str = path.to_string_lossy();
-    let Ok(home) = std::env::var("HOME") else {
-        return path_str.into_owned();
-    };
-    if home.is_empty() {
-        return path_str.into_owned();
+pub fn tilde_path(path: &Path) -> String {
+    let rest = std::env::home_dir()
+        .filter(|home| !home.as_os_str().is_empty())
+        .and_then(|home| {
+            path.strip_prefix(&home).ok().or_else(|| {
+                let canonical = home.canonicalize().ok()?;
+                path.strip_prefix(canonical).ok()
+            })
+        });
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
     }
-    if let Some(rest) = path_str.strip_prefix(&home)
-        && (rest.is_empty() || rest.starts_with('/'))
-    {
-        return format!("~{rest}");
-    }
-    // Also match the canonical form of HOME (e.g. /private/var vs /var on macOS)
-    if let Ok(canon) = std::path::Path::new(&home).canonicalize()
-        && let Some(rest) = path_str.strip_prefix(canon.to_string_lossy().as_ref())
-        && (rest.is_empty() || rest.starts_with('/'))
-    {
-        return format!("~{rest}");
-    }
-    path_str.into_owned()
+}
+
+pub fn display_width(s: &str) -> usize {
+    s.width()
+}
+
+pub fn pad(s: &str, width: usize) -> String {
+    format!("{s}{}", " ".repeat(width.saturating_sub(display_width(s))))
 }
 
 pub fn trunc(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
+    if display_width(s) <= max {
         return s.to_string();
     }
-    if max <= 3 {
-        return s.chars().take(max).collect();
+    if max <= 1 {
+        return take_width(s.chars(), max).collect();
     }
-    let end = s.char_indices().nth(max - 3).map_or(s.len(), |(i, _)| i);
-    format!("{}...", &s[..end])
+    let head: String = take_width(s.chars(), max - 1).collect();
+    format!("{head}…")
 }
 
 pub fn trunc_tail(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
+    if display_width(s) <= max {
         return s.to_string();
     }
-    if max == 0 {
-        return String::new();
+    if max <= 1 {
+        return take_width(s.chars().rev(), max).collect();
     }
-    if max <= 3 {
-        let start = s.char_indices().nth(count - max).map_or(0, |(i, _)| i);
-        return s[start..].to_string();
-    }
-    let start = s.char_indices().nth(count - max + 3).map_or(0, |(i, _)| i);
-    format!("...{}", &s[start..])
+    let mut tail: Vec<char> = take_width(s.chars().rev(), max - 1).collect();
+    tail.reverse();
+    let tail: String = tail.into_iter().collect();
+    format!("…{tail}")
 }
 
-pub fn eprintln_dim(msg: &str) {
-    let clr = stderr_colors();
-    eprintln!("{}{msg}{}", clr.dim, clr.reset);
+fn take_width(chars: impl Iterator<Item = char>, max: usize) -> impl Iterator<Item = char> {
+    let mut used = 0;
+    chars.take_while(move |c| {
+        used += c.width().unwrap_or(0);
+        used <= max
+    })
 }
 
-pub fn print_cd_hint(name: &str) {
+pub fn print_cd_hint(path: &Path) {
     if is_stdout_tty() {
-        let escaped = name.replace("'", r"'\''");
-        eprintln!("cd \"$(wt path '{escaped}')\"");
+        eprintln!("{}", cd_hint(path));
     }
+}
+
+fn cd_hint(path: &Path) -> String {
+    let escaped = path.to_string_lossy().replace('\'', r"'\''");
+    format!("cd '{escaped}'")
 }
 
 pub fn width() -> usize {
-    let columns_env = std::env::var("COLUMNS").ok();
-    width_inner(columns_env.as_deref())
+    let columns = std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok());
+    width_from(columns.or_else(|| {
+        terminal::window_size()
+            .ok()
+            .map(|ws| ws.columns)
+            .filter(|&cols| cols > 0)
+    }))
 }
 
-fn width_inner(columns_env: Option<&str>) -> usize {
-    if let Some(val) = columns_env
-        && let Ok(cols) = val.parse::<usize>()
-    {
-        return cols.max(72);
-    }
-
-    if let Some(cols) = tiocgwinsz() {
-        return cols.max(72);
-    }
-
-    132
-}
-
-#[cfg(unix)]
-fn tiocgwinsz() -> Option<usize> {
-    use libc::{STDIN_FILENO, STDOUT_FILENO, TIOCGWINSZ, ioctl, winsize};
-    use std::mem::zeroed;
-
-    for fd in [STDOUT_FILENO, STDIN_FILENO] {
-        unsafe {
-            let mut ws: winsize = zeroed();
-            if ioctl(fd, TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
-                return Some(ws.ws_col as usize);
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(unix))]
-fn tiocgwinsz() -> Option<usize> {
-    None
+fn width_from(columns: Option<u16>) -> usize {
+    columns.map_or(132, |cols| usize::from(cols).max(72))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
@@ -169,8 +162,8 @@ mod tests {
 
     #[test]
     fn trunc_long_string_adds_ellipsis() {
-        assert_eq!(trunc("feat/very-long-branch-name", 10), "feat/ve...");
-        assert_eq!(trunc("abcdef", 3), "abc");
+        assert_eq!(trunc("feat/very-long-branch-name", 10), "feat/very…");
+        assert_eq!(trunc("abcdef", 3), "ab…");
     }
 
     #[test]
@@ -193,7 +186,7 @@ mod tests {
     fn trunc_tail_long_string_keeps_tail() {
         assert_eq!(
             trunc_tail("~/.wt/worktrees/abc123/my-repo", 15),
-            "...c123/my-repo"
+            "…abc123/my-repo"
         );
     }
 
@@ -210,104 +203,133 @@ mod tests {
     #[test]
     fn tilde_path_substitutes_home() {
         let home = std::env::var("HOME").unwrap();
-        let path = std::path::PathBuf::from(&home).join("projects/repo");
+        let path = PathBuf::from(&home).join("projects/repo");
         assert_eq!(tilde_path(&path), "~/projects/repo");
     }
 
     #[test]
     fn tilde_path_home_alone() {
         let home = std::env::var("HOME").unwrap();
-        let path = std::path::PathBuf::from(&home);
+        let path = PathBuf::from(&home);
         assert_eq!(tilde_path(&path), "~");
     }
 
     #[test]
     fn tilde_path_no_match() {
-        let path = std::path::PathBuf::from("/other/path");
+        let path = PathBuf::from("/other/path");
         assert_eq!(tilde_path(&path), "/other/path");
     }
 
     #[test]
     fn tilde_path_no_false_prefix_match() {
         let home = std::env::var("HOME").unwrap();
-        let fake = std::path::PathBuf::from(format!("{home}extra/dir"));
+        let fake = PathBuf::from(format!("{home}extra/dir"));
         assert_eq!(tilde_path(&fake), fake.to_string_lossy().as_ref());
     }
 
     #[test]
     fn trunc_multibyte_chars() {
-        assert_eq!(trunc("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "a...");
+        assert_eq!(trunc("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "a\u{00e9}b…");
         assert_eq!(
             trunc("\u{00e9}\u{00e9}\u{00e9}", 3),
             "\u{00e9}\u{00e9}\u{00e9}"
         );
         assert_eq!(
             trunc("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 3),
-            "\u{00e9}\u{00e9}\u{00e9}"
+            "\u{00e9}\u{00e9}…"
         );
     }
 
     #[test]
     fn trunc_tail_multibyte_chars() {
-        assert_eq!(trunc_tail("a\u{00e9}b\u{00e9}c\u{00e9}", 4), "...\u{00e9}");
+        assert_eq!(
+            trunc_tail("a\u{00e9}b\u{00e9}c\u{00e9}", 4),
+            "…\u{00e9}c\u{00e9}"
+        );
         assert_eq!(
             trunc_tail("\u{00e9}\u{00e9}\u{00e9}", 3),
             "\u{00e9}\u{00e9}\u{00e9}"
         );
         assert_eq!(
             trunc_tail("\u{00e9}\u{00e9}\u{00e9}\u{00e9}", 2),
-            "\u{00e9}\u{00e9}"
+            "…\u{00e9}"
         );
+    }
+
+    #[test]
+    fn widths_count_display_columns() {
+        assert_eq!(display_width("日本語"), 6);
+        assert_eq!(pad("日本", 6), "日本  ");
+        assert_eq!(pad("too-long", 3), "too-long");
+    }
+
+    #[test]
+    fn trunc_wide_chars_fit_display_budget() {
+        assert_eq!(trunc("feat/日本語ブランチ", 11), "feat/日本…");
+        assert_eq!(trunc("日本語", 4), "日…");
+        assert_eq!(trunc("日本語", 3), "日…");
+        assert_eq!(trunc("日本語", 6), "日本語");
+    }
+
+    #[test]
+    fn trunc_tail_wide_chars_fit_display_budget() {
+        assert_eq!(trunc_tail("~/wt/日本語", 8), "…/日本語");
+        assert_eq!(trunc_tail("日本語", 3), "…語");
+        assert_eq!(trunc_tail("日本語", 6), "日本語");
     }
 
     #[test]
     fn trunc_exact_boundary() {
         assert_eq!(trunc("abcde", 5), "abcde");
-        assert_eq!(trunc("abcde", 4), "a...");
+        assert_eq!(trunc("abcde", 4), "abc…");
     }
 
     #[test]
     fn trunc_tail_exact_boundary() {
         assert_eq!(trunc_tail("abcde", 5), "abcde");
-        assert_eq!(trunc_tail("abcde", 4), "...e");
+        assert_eq!(trunc_tail("abcde", 4), "…cde");
     }
 
     #[test]
-    fn color_enabled_respects_tty() {
-        assert!(!color_enabled(false));
+    fn colors_disabled_without_tty() {
+        assert!(!colors_allowed(false, None, None));
+        assert!(colors_allowed(true, None, Some("xterm".into())));
     }
 
     #[test]
-    fn color_enabled_respects_no_color() {
-        let had = std::env::var("NO_COLOR").ok();
-        unsafe { std::env::set_var("NO_COLOR", "1") };
-        let result = color_enabled(true);
-        match had {
-            Some(v) => unsafe { std::env::set_var("NO_COLOR", v) },
-            None => unsafe { std::env::remove_var("NO_COLOR") },
-        }
-        assert!(!result);
+    fn colors_respect_no_color() {
+        assert!(!colors_allowed(true, Some("1".into()), None));
+        assert!(
+            colors_allowed(true, Some("".into()), None),
+            "empty NO_COLOR must not disable color"
+        );
     }
 
     #[test]
-    fn color_enabled_respects_term_dumb() {
-        let had = std::env::var("TERM").ok();
-        unsafe { std::env::set_var("TERM", "dumb") };
-        let result = color_enabled(true);
-        match had {
-            Some(v) => unsafe { std::env::set_var("TERM", v) },
-            None => unsafe { std::env::remove_var("TERM") },
-        }
-        assert!(!result);
+    fn colors_disabled_for_dumb_term() {
+        assert!(!colors_allowed(true, None, Some("dumb".into())));
     }
 
     #[test]
-    fn width_from_columns_env() {
-        assert_eq!(width_inner(Some("200")), 200);
+    fn cd_hint_quotes_path() {
+        assert_eq!(
+            cd_hint(Path::new("/wt/it's here")),
+            r"cd '/wt/it'\''s here'"
+        );
+    }
+
+    #[test]
+    fn width_uses_columns() {
+        assert_eq!(width_from(Some(200)), 200);
     }
 
     #[test]
     fn width_clamps_to_72() {
-        assert_eq!(width_inner(Some("40")), 72);
+        assert_eq!(width_from(Some(40)), 72);
+    }
+
+    #[test]
+    fn width_defaults_without_terminal() {
+        assert_eq!(width_from(None), 132);
     }
 }

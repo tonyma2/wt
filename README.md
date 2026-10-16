@@ -5,8 +5,8 @@ Git worktree manager. Work on multiple branches simultaneously — each in its o
 ```sh
 wt                          # pick a worktree (interactive fuzzy picker)
 wt clone <url>              # clone a repo and create the first worktree
-wt new -c my-feature        # create a branch and cd into its worktree
-wt switch my-feature        # jump to an existing worktree, or create one
+wt switch my-feature        # cd into the branch's worktree, creating branch and worktree if needed
+wt switch hotfix v1.0       # start a new branch from a branch, tag, or commit
 wt prune                    # clean up worktrees for merged branches
 ```
 
@@ -37,9 +37,8 @@ wt init fish | source
 |---------|-------|--------------|
 | `wt` | | Interactive picker with fuzzy filtering |
 | `wt clone <url>` | `cl` | Clone repo, create first worktree |
-| `wt new <branch>` | `n` | Check out a branch or ref into a new worktree |
-| `wt switch <branch>` | `s` | Find or create a worktree for a branch |
-| `wt list [--json]` | `ls` | List worktrees (JSON for scripts) |
+| `wt switch <branch> [base]` | `s` | Find or create a worktree for a branch |
+| `wt list [--all]` | `ls` | List worktrees (across all repos with `--all`) |
 | `wt remove <branch>` | `rm` | Remove worktree and delete branch |
 | `wt path <branch>` | `p` | Print worktree path |
 | `wt prune [--gone]` | | Remove merged (and upstream-gone) worktrees |
@@ -51,4 +50,4 @@ wt init fish | source
 - **Interactive picker** — run bare `wt` to browse all repos and worktrees with fuzzy search, status indicators, and keyboard navigation
 - **Typo detection** — misspell a branch name and `wt` suggests the closest match before creating anything
 - **Shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
-- **Script-friendly** — stdout is always data (paths, JSON); messages go to stderr
+- **Script-friendly** — stdout is always data (paths); messages go to stderr

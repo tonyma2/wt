@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use serde_json::Value;
 use tempfile::TempDir;
 
 pub mod common;
@@ -26,169 +25,60 @@ fn find_row<'a>(output: &'a str, needle: &str) -> &'a str {
         .unwrap_or_else(|| panic!("could not find row containing '{needle}' in:\n{output}"))
 }
 
-fn run_list_json(home: &Path, repo: &Path, cwd: Option<&Path>) -> Vec<Value> {
-    let output = run_wt(home, |cmd| {
-        cmd.args(["list", "--json", "--repo"]).arg(repo);
-        if let Some(dir) = cwd {
-            cmd.current_dir(dir);
-        }
-    });
-    assert!(
-        output.status.success(),
-        "wt list --json failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str::<Vec<Value>>(&stdout)
-        .unwrap_or_else(|e| panic!("invalid json: {e}\n{stdout}"))
-}
-
-fn find_json_entry<'a>(entries: &'a [Value], branch: &str) -> &'a Value {
-    entries
-        .iter()
-        .find(|e| e["branch"].as_str() == Some(branch))
-        .unwrap_or_else(|| panic!("no entry with branch '{branch}'"))
-}
-
-#[test]
-fn json_output_includes_all_fields() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "feat-json");
-
-    let entries = run_list_json(home.path(), &repo, None);
-    assert_eq!(entries.len(), 2);
-
-    let entry = find_json_entry(&entries, "feat-json");
-    assert_eq!(entry["name"].as_str(), Some("feat-json"));
-    assert!(entry["path"].is_string());
-    assert_eq!(entry["branch"].as_str(), Some("feat-json"));
-    assert!(entry["head"].is_string());
-    assert_eq!(entry["bare"].as_bool(), Some(false));
-    assert_eq!(entry["detached"].as_bool(), Some(false));
-    assert_eq!(entry["locked"].as_bool(), Some(false));
-    assert_eq!(entry["prunable"].as_bool(), Some(false));
-    assert_eq!(entry["dirty"].as_bool(), Some(false));
-    assert_eq!(entry["current"].as_bool(), Some(false));
-    assert!(entry.get("ahead").is_some());
-    assert!(entry.get("behind").is_some());
-}
-
-#[test]
-fn json_shows_dirty_and_current() {
-    let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "json-dirty");
-    std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
-
-    let entries = run_list_json(home.path(), &repo, Some(&wt_path));
-    let entry = find_json_entry(&entries, "json-dirty");
-    assert_eq!(entry["dirty"].as_bool(), Some(true));
-    assert_eq!(entry["current"].as_bool(), Some(true));
-}
-
-#[test]
-fn json_ahead_behind_for_diverged_branch() {
-    let (home, repo, origin) = setup_with_origin();
-    let wt_path = wt_new(home.path(), &repo, "json-diverge");
-    assert_git_success(&wt_path, &["push", "-u", "origin", "json-diverge"]);
-    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "local-ahead"]);
-
-    let other = home.path().join("other");
-    assert_git_success_with(&repo, |cmd| {
-        cmd.args(["clone"]).arg(&origin).arg(&other);
-    });
-    assert_git_success(&other, &["config", "user.name", "Test"]);
-    assert_git_success(&other, &["config", "user.email", "t@t"]);
-    assert_git_success(&other, &["checkout", "json-diverge"]);
-    assert_git_success(&other, &["commit", "--allow-empty", "-m", "remote-ahead"]);
-    assert_git_success(&other, &["push", "origin", "json-diverge"]);
-    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
-
-    let entries = run_list_json(home.path(), &repo, Some(home.path()));
-    let entry = find_json_entry(&entries, "json-diverge");
-    assert_eq!(entry["ahead"].as_u64(), Some(1));
-    assert_eq!(entry["behind"].as_u64(), Some(1));
-}
-
-#[test]
-fn json_null_branch_for_detached() {
-    let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "json-detach");
-    assert_git_success(&wt_path, &["checkout", "--detach"]);
-
-    let entries = run_list_json(home.path(), &repo, Some(home.path()));
-    let detached = entries
-        .iter()
-        .find(|e| e["detached"].as_bool() == Some(true))
-        .expect("expected a detached entry");
-    assert!(detached["branch"].is_null());
-    assert_eq!(detached["name"].as_str(), detached["path"].as_str());
-}
-
-#[test]
-fn json_null_ahead_behind_without_upstream() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "json-no-upstream");
-
-    let entries = run_list_json(home.path(), &repo, Some(home.path()));
-    let entry = find_json_entry(&entries, "json-no-upstream");
-    assert!(entry["ahead"].is_null());
-    assert!(entry["behind"].is_null());
-}
-
-#[test]
-fn json_locked_and_prunable() {
-    let (home, repo) = setup();
-    let wt_locked = wt_new(home.path(), &repo, "json-locked");
-    let wt_prunable = wt_new(home.path(), &repo, "json-prunable");
-
-    assert_git_success_with(&repo, |cmd| {
-        cmd.args(["worktree", "lock"]).arg(&wt_locked);
-    });
-    std::fs::remove_dir_all(&wt_prunable).unwrap();
-
-    let entries = run_list_json(home.path(), &repo, Some(home.path()));
-
-    let locked = find_json_entry(&entries, "json-locked");
-    assert_eq!(locked["locked"].as_bool(), Some(true));
-
-    let prunable = entries
-        .iter()
-        .find(|e| e["prunable"].as_bool() == Some(true))
-        .expect("expected a prunable entry");
-    assert_eq!(prunable["dirty"].as_bool(), Some(false));
-    assert!(prunable["ahead"].is_null());
-    assert!(prunable["behind"].is_null());
-}
-
 #[test]
 fn list_human_output_matches_golden() {
     let (home, repo) = setup();
-    wt_new(home.path(), &repo, "feat-list");
+    let zeta = wt_new(home.path(), &repo, "zeta");
+    let alpha = wt_new(home.path(), &repo, "alpha");
 
-    let output = run_list(home.path(), &repo, "200", None);
+    let output = run_list(home.path(), &repo, "200", Some(home.path()));
     assert!(
         output.status.success(),
         "wt list failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
 
+    let expected = format!(
+        "  BRANCH   STATUS   PATH\n  \
+         main     -        ~/repo\n  \
+         alpha    -        {}\n  \
+         zeta     -        {}\n",
+        tilde(home.path(), &alpha),
+        tilde(home.path(), &zeta),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
+fn aligns_columns_for_wide_branch_names() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "feat/日本語");
+
+    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    assert!(output.status.success());
+
+    let expected = format!(
+        "  BRANCH        STATUS   PATH\n  \
+         main          -        ~/repo\n  \
+         feat/日本語   -        {}\n",
+        tilde(home.path(), &wt_path),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
+fn hides_bare_repo_entry() {
+    let (home, _repo, origin) = setup_with_origin();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "-c", "from-bare", "--repo"])
+            .arg(&origin);
+    });
+    assert!(output.status.success());
+
+    let output = run_list(home.path(), &origin, "200", Some(home.path()));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "expected 3 lines, got: {stdout}");
-
-    let header = format!("{:<1} {:<24}   {:<10}   PATH", "", "BRANCH", "STATUS");
-    assert_eq!(lines[0], header);
-
-    assert!(
-        lines[1].contains("main") && lines[1].contains("~/repo"),
-        "expected main row with tilde path, got: {}",
-        lines[1]
-    );
-    assert!(
-        lines[2].contains("feat-list") && lines[2].contains("~/.wt/"),
-        "expected feat-list row with tilde worktree path, got: {}",
-        lines[2]
-    );
+    assert!(!stdout.contains("(bare)"), "{stdout}");
+    assert!(stdout.contains("from-bare"), "{stdout}");
 }
 
 #[test]
@@ -360,7 +250,6 @@ fn paths_use_tilde_for_home_directory() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let home_str = home.path().to_string_lossy();
-    // The home path itself should not appear in the output (it should be ~-substituted)
     let data_lines: Vec<&str> = stdout.lines().skip(1).collect();
     for line in &data_lines {
         assert!(
@@ -368,7 +257,6 @@ fn paths_use_tilde_for_home_directory() {
             "path should use ~ instead of raw home, got: {line}",
         );
     }
-    // The linked worktree path should start with ~/
     let row = find_row(&stdout, "tilde-check");
     assert!(
         row.contains("~/.wt/"),
@@ -420,53 +308,10 @@ fn list_all_discovers_multiple_repos() {
         stdout.contains("feat-b"),
         "should contain feat-b branch, got:\n{stdout}",
     );
-    // Each repo group should have its own BRANCH header
     assert_eq!(
         stdout.matches("BRANCH").count(),
         2,
         "each repo group should have a header row, got:\n{stdout}",
-    );
-}
-
-#[test]
-fn list_all_json_includes_repo_field() {
-    let (home, repo_a, repo_b) = setup_two_repos();
-    wt_new(home.path(), &repo_a, "feat-a");
-    wt_new(home.path(), &repo_b, "feat-b");
-
-    let output = run_wt(home.path(), |cmd| {
-        cmd.args(["list", "--all", "--json"]);
-    });
-    assert!(
-        output.status.success(),
-        "wt list --all --json failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let entries: Vec<Value> =
-        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid json: {e}\n{stdout}"));
-
-    // Should have entries from both repos (2 per repo: main + feature branch)
-    assert!(
-        entries.len() >= 4,
-        "expected at least 4 entries, got {}:\n{stdout}",
-        entries.len(),
-    );
-
-    // Every entry must have a "repo" field
-    for entry in &entries {
-        assert!(
-            entry["repo"].is_string(),
-            "every entry should have a repo field, got: {entry}",
-        );
-    }
-
-    let repos: std::collections::BTreeSet<&str> =
-        entries.iter().filter_map(|e| e["repo"].as_str()).collect();
-    assert!(
-        repos.contains("repo-a") && repos.contains("repo-b"),
-        "should have entries from both repos, got: {repos:?}",
     );
 }
 
@@ -525,36 +370,10 @@ fn list_all_empty_when_no_managed_worktrees() {
 }
 
 #[test]
-fn list_all_json_empty_when_no_managed_worktrees() {
-    let home = TempDir::new().unwrap();
-
-    let output = run_wt(home.path(), |cmd| {
-        cmd.args(["list", "--all", "--json"]);
-    });
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "[]");
-}
-
-#[test]
-fn list_single_repo_json_has_no_repo_field() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "no-repo-field");
-
-    let entries = run_list_json(home.path(), &repo, None);
-    for entry in &entries {
-        assert!(
-            entry.get("repo").is_none(),
-            "single-repo JSON should not have repo field, got: {entry}",
-        );
-    }
-}
-
-#[test]
 fn truncates_branch_and_path_in_narrow_terminal() {
     let (home, repo) = setup();
     let long_branch = "feature/very-long-branch-name-for-list-truncation";
-    wt_new(home.path(), &repo, long_branch);
+    let wt_path = wt_new(home.path(), &repo, long_branch);
 
     let output = run_list(home.path(), &repo, "72", Some(home.path()));
     assert!(
@@ -564,14 +383,58 @@ fn truncates_branch_and_path_in_narrow_terminal() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // At 72 cols: avail=54, branch_w=16, so 50-char branch truncates to 13 chars + "..."
-    let truncated = "feature/very-...";
-    assert!(
-        stdout.contains(truncated),
-        "branch should be truncated to '{truncated}', got: {stdout}",
+    let row = find_row(&stdout, "feature/");
+    assert_eq!(
+        row.chars().count(),
+        72,
+        "row should fill the width: {row:?}"
     );
     assert!(
-        !stdout.contains(long_branch),
-        "full long branch name should not appear in narrow mode, got: {stdout}",
+        !row.contains(long_branch),
+        "branch should be truncated: {row}"
+    );
+    assert!(
+        row.contains("feature/very-long-branch-name-for-lis…"),
+        "{row}"
+    );
+    let id_dir = wt_path.parent().unwrap().file_name().unwrap();
+    assert!(
+        row.ends_with(&format!("…rktrees/{}/repo", id_dir.to_string_lossy())),
+        "path should keep its tail: {row}"
+    );
+}
+
+#[test]
+fn columns_fit_content_instead_of_truncating() {
+    let (home, repo) = setup();
+    let branch = "fix/session-timeout-in-login-flow";
+    wt_new(home.path(), &repo, branch);
+
+    let output = run_list(home.path(), &repo, "80", Some(home.path()));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = find_row(&stdout, "fix/");
+    assert!(
+        row.contains(branch),
+        "branch should fit at 80 columns: {row}"
+    );
+    assert!(row.trim_end().ends_with("/repo"), "{row}");
+}
+
+#[test]
+fn list_all_lists_repo_once_with_relative_worktree_paths() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["config", "worktree.useRelativePaths", "true"]);
+    wt_new(home.path(), &repo, "a");
+    wt_new(home.path(), &repo, "b");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["ls", "--all"]);
+    });
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.lines().filter(|l| *l == "repo:").count(),
+        1,
+        "{stdout}"
     );
 }

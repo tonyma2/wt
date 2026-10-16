@@ -73,7 +73,7 @@ pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if len == 0 {
         return None;
     }
-    let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
+    let threshold = (len * 3).div_ceil(10).max(2).min(len / 2);
     candidates
         .iter()
         .filter(|c| **c != name)

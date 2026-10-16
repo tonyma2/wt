@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::fuzzy;
 use crate::git::Git;
+use crate::layout;
 use crate::terminal;
-use crate::worktree::{self, Resolved, Worktree};
+use crate::worktree::{self, Status, Worktree};
 
 pub fn run(
     names: &[String],
@@ -11,8 +11,8 @@ pub fn run(
     force: bool,
     keep_branch: bool,
 ) -> Result<(), String> {
-    if names.len() == 1 {
-        return remove_one(&names[0], repo, force, keep_branch);
+    if let [name] = names {
+        return remove_one(name, repo, force, keep_branch);
     }
     let mut errors = 0usize;
     for name in names {
@@ -22,13 +22,18 @@ pub fn run(
         }
     }
     if errors > 0 {
-        Err(format!(
+        return Err(format!(
             "cannot remove {errors} {}",
             if errors == 1 { "worktree" } else { "worktrees" }
-        ))
-    } else {
-        Ok(())
+        ));
     }
+    Ok(())
+}
+
+struct Target {
+    path: PathBuf,
+    admin: PathBuf,
+    worktrees: Vec<Worktree>,
 }
 
 fn remove_one(
@@ -37,160 +42,129 @@ fn remove_one(
     force: bool,
     keep_branch: bool,
 ) -> Result<(), String> {
-    let (target, admin_repo, worktrees) = resolve_target(name_or_path, repo)?;
-
-    let git = Git::new(&admin_repo);
+    let Target {
+        path: target,
+        admin,
+        worktrees,
+    } = resolve_target(name_or_path, repo)?;
+    let git = Git::new(&admin);
 
     let wt = worktree::find_by_path(&worktrees, &target)
         .ok_or_else(|| format!("not a registered worktree: {}", target.display()))?;
 
-    if let Some(main_wt) = worktrees.first() {
-        let main_path = worktree::canonicalize_or_self(&main_wt.path);
-        if main_path == target {
-            return Err(format!(
-                "cannot remove the primary worktree: {}",
-                target.display()
-            ));
-        }
-    }
-
-    let branch = wt.branch.clone();
-    let branch_exists = branch.as_ref().is_some_and(|b| git.has_local_branch(b));
-
-    if let Some(branch) = &branch
-        && branch_exists
-        && worktree::branch_checked_out_elsewhere(&worktrees, branch, &target)
+    let canonical_target = layout::canonicalize_or_self(&target);
+    if worktrees
+        .first()
+        .is_some_and(|main| layout::canonicalize_or_self(&main.path) == canonical_target)
     {
         return Err(format!(
-            "branch '{branch}' is checked out in another worktree, remove that worktree first"
+            "cannot remove the primary worktree: {}",
+            terminal::tilde_path(&target)
         ));
     }
 
-    let cwd = std::env::current_dir().and_then(|p| p.canonicalize()).ok();
-
-    if worktree::is_cwd_inside(&target, cwd.as_deref()) {
+    let label = wt.label();
+    let cwd = layout::current_dir();
+    if layout::is_cwd_inside(&target, cwd.as_deref()) {
         return Err(format!(
-            "cannot remove {}: current directory is inside the worktree",
-            target.display()
+            "cannot remove {label}: current directory is inside the worktree"
         ));
     }
+
+    if wt.locked && !force {
+        return Err(format!(
+            "cannot remove {label}: worktree is locked, use --force to remove"
+        ));
+    }
+
+    let branch = wt
+        .branch
+        .as_deref()
+        .filter(|b| !keep_branch && git.has_local_branch(b));
+    let in_use = branch.filter(|b| worktree::branch_checked_out_elsewhere(&worktrees, b, &target));
+    let delete_branch = branch.filter(|_| in_use.is_none());
 
     if !force {
-        if git.is_dirty(&target) {
-            return Err("worktree has local changes, use --force to remove".into());
+        if Status::of(wt).dirty {
+            return Err(format!(
+                "cannot remove {label}: worktree has local changes, use --force to remove"
+            ));
         }
-        if let Some(branch) = &branch
-            && branch_exists
-            && !keep_branch
+        if let Some(branch) = delete_branch
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
-                "branch '{branch}' is not fully merged, use --force to remove"
+                "cannot remove {label}: branch is not fully merged, \
+                 use --keep-branch to keep it or --force to delete it"
             ));
         }
     }
 
     git.remove_worktree(&target, force)?;
-
-    worktree::cleanup_empty_parent(&target, cwd.as_deref());
+    layout::cleanup_empty_parent(&target, cwd.as_deref());
 
     let path_display = terminal::tilde_path(&target);
-    if let Some(branch) = &branch
-        && branch_exists
-        && !keep_branch
-    {
+    if let Some(branch) = delete_branch {
         git.delete_branch(branch, force)?;
+        eprintln!("removed worktree and branch '{branch}' ({path_display})");
+    } else if let Some(branch) = in_use {
         eprintln!(
-            "removed worktree and branch '{}' ({})",
-            branch, path_display
+            "removed worktree ({path_display}), kept branch '{branch}' (checked out in another worktree)"
         );
     } else {
-        eprintln!("removed worktree ({})", path_display);
+        eprintln!("removed worktree ({path_display})");
     }
     Ok(())
 }
 
-fn resolve_target(
-    name_or_path: &str,
-    repo: Option<&Path>,
-) -> Result<(PathBuf, PathBuf, Vec<Worktree>), String> {
-    let repo_root = Git::find_repo(repo).ok();
-    let has_repo = repo_root.is_some();
-
-    if let Some(repo_root) = repo_root {
-        let git = Git::new(&repo_root);
-        let output = git.list_worktrees()?;
-        let worktrees = worktree::parse_porcelain(&output);
-
-        match worktree::resolve_worktree(&worktrees, name_or_path, &git) {
-            Resolved::Found(wt) => return Ok((wt.path.clone(), repo_root, worktrees)),
-            Resolved::Ambiguous { matches, kind } => {
-                eprintln!("ambiguous {kind} '{name_or_path}'; matches:");
-                for m in &matches {
-                    eprintln!("  - {}", m.path.display());
-                }
-                return Err("multiple worktrees match, specify a path instead".into());
-            }
-            Resolved::NotFound => {}
-        }
-
-        let input = Path::new(name_or_path);
-        if input.exists()
-            && let Ok(target) = std::fs::canonicalize(input)
-            && worktree::find_by_path(&worktrees, &target).is_some()
-        {
-            return Ok((target, repo_root, worktrees));
-        }
-
-        let branches: Vec<&str> = worktrees
-            .iter()
-            .filter_map(|wt| wt.branch.as_deref())
-            .collect();
-        if let Some(suggestion) = fuzzy::close_match(name_or_path, &branches) {
-            return Err(format!(
-                "no worktree found for: {name_or_path}, did you mean '{suggestion}'?"
-            ));
-        }
-    }
-
+fn resolve_target(name_or_path: &str, repo: Option<&Path>) -> Result<Target, String> {
     let input = Path::new(name_or_path);
+    let repo_root = match Git::find_repo(repo) {
+        Ok(root) => root,
+        Err(_) if input.exists() => return resolve_path(input),
+        Err(e) => return Err(e),
+    };
+
+    let git = Git::new(&repo_root);
+    let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
+
+    let found = worktree::resolve_worktree(&worktrees, name_or_path)?.or_else(|| {
+        worktrees
+            .iter()
+            .find(|wt| wt.prunable && wt.branch.as_deref() == Some(name_or_path))
+    });
+    if let Some(wt) = found {
+        return Ok(Target {
+            path: wt.path.clone(),
+            admin: repo_root,
+            worktrees,
+        });
+    }
+
     if input.exists() {
-        let target = resolve_path(input)?;
-        let (admin, worktrees) = load_worktrees(&target)?;
-        return Ok((target, admin, worktrees));
+        return resolve_path(input);
     }
-
-    if has_repo {
-        Err(format!("no worktree found for: {name_or_path}"))
-    } else {
-        Err("not a git repository, use --repo or run inside one".into())
-    }
+    Err(worktree::not_found_error(name_or_path, &worktrees))
 }
 
-fn resolve_path(input: &Path) -> Result<PathBuf, String> {
-    let abs = std::fs::canonicalize(input)
-        .map_err(|_| format!("not a worktree root: {}", input.display()))?;
+fn resolve_path(input: &Path) -> Result<Target, String> {
+    let not_root = || format!("not a worktree root: {}", input.display());
 
-    let toplevel = Git::find_repo(Some(&abs))
-        .map_err(|_| format!("not a worktree root: {}", input.display()))?;
-
-    let toplevel_canon = worktree::canonicalize_or_self(&toplevel);
-
-    if abs != toplevel_canon {
-        return Err(format!("not a worktree root: {}", input.display()));
+    let path = input.canonicalize().map_err(|_| not_root())?;
+    let toplevel = Git::find_repo(Some(&path)).map_err(|_| not_root())?;
+    if layout::canonicalize_or_self(&toplevel) != path {
+        return Err(not_root());
     }
 
-    Ok(abs)
-}
-
-fn load_worktrees(target: &Path) -> Result<(PathBuf, Vec<Worktree>), String> {
-    let git = Git::new(target);
-    let output = git.list_worktrees()?;
-    let worktrees = worktree::parse_porcelain(&output);
-
-    let primary = worktrees
+    let worktrees = worktree::parse_porcelain(&Git::new(&path).list_worktrees()?);
+    let admin = worktrees
         .first()
-        .ok_or_else(|| format!("cannot resolve repository for: {}", target.display()))?;
+        .map(|main| main.path.clone())
+        .ok_or_else(|| format!("cannot resolve repository for: {}", path.display()))?;
 
-    Ok((primary.path.clone(), worktrees))
+    Ok(Target {
+        path,
+        admin,
+        worktrees,
+    })
 }

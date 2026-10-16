@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -20,6 +22,62 @@ fn git_err(context: impl AsRef<str>, output: &Output) -> String {
     }
 }
 
+fn spawn_err(e: std::io::Error) -> String {
+    format!("cannot run git: {e}")
+}
+
+fn git_in<I, S>(dir: &Path, args: I) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(dir).args(args);
+    cmd
+}
+
+fn run(mut cmd: Command, context: impl AsRef<str>) -> Result<Output, String> {
+    let output = cmd.output().map_err(spawn_err)?;
+    if !output.status.success() {
+        return Err(git_err(context, &output));
+    }
+    Ok(output)
+}
+
+fn query(mut cmd: Command) -> Option<String> {
+    let output = cmd.stderr(Stdio::null()).output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (output.status.success() && !stdout.is_empty()).then_some(stdout)
+}
+
+fn succeeds(mut cmd: Command) -> bool {
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+fn run_streaming(mut cmd: Command, context: impl Into<String>) -> Result<(), String> {
+    let status = cmd
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(spawn_err)?;
+    if !status.success() {
+        return Err(context.into());
+    }
+    Ok(())
+}
+
+pub fn branch_name(full_ref: &str) -> Option<&str> {
+    full_ref.strip_prefix("refs/heads/").or_else(|| {
+        full_ref
+            .strip_prefix("refs/remotes/")?
+            .split_once('/')
+            .map(|(_, branch)| branch)
+    })
+}
+
 pub struct Git {
     repo: PathBuf,
 }
@@ -29,122 +87,116 @@ impl Git {
         Self { repo: repo.into() }
     }
 
-    fn cmd_in(path: &Path) -> Command {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(path);
-        cmd
-    }
-
-    fn cmd(&self) -> Command {
-        Self::cmd_in(&self.repo)
+    fn cmd<I, S>(&self, args: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        git_in(&self.repo, args)
     }
 
     pub fn find_repo(path: Option<&Path>) -> Result<PathBuf, String> {
-        let mut cmd = Command::new("git");
-        if let Some(p) = path {
-            cmd.arg("-C").arg(p);
-        }
-        cmd.args(["rev-parse", "--show-toplevel"]);
-        let output = cmd
+        let git = |args: &[&str]| {
+            let mut cmd = Command::new("git");
+            if let Some(p) = path {
+                cmd.arg("-C").arg(p);
+            }
+            cmd.args(args);
+            cmd
+        };
+        let output = git(&["rev-parse", "--show-toplevel"])
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-        if !output.status.success() {
-            return Err("not a git repository, use --repo or run inside one".into());
+            .map_err(spawn_err)?;
+        if output.status.success() {
+            let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            return Ok(PathBuf::from(toplevel));
         }
-        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(PathBuf::from(s))
+        if let Some(out) = query(git(&[
+            "rev-parse",
+            "--is-bare-repository",
+            "--absolute-git-dir",
+        ])) && let Some(git_dir) = out.strip_prefix("true\n")
+        {
+            return Ok(PathBuf::from(git_dir));
+        }
+        Err(match path {
+            Some(p) => format!("not a git repository: {}", p.display()),
+            None => "not a git repository, use --repo or run inside one".into(),
+        })
+    }
+
+    pub fn init_bare(dest: &Path) -> Result<(), String> {
+        let mut cmd = Command::new("git");
+        cmd.args(["init", "--bare", "--quiet"]).arg(dest);
+        run(cmd, format!("cannot create repository {}", dest.display())).map(drop)
+    }
+
+    pub fn add_remote(&self, name: &str, url: &str) -> Result<(), String> {
+        run(
+            self.cmd(["remote", "add", "--", name, url]),
+            format!("cannot add remote '{name}'"),
+        )
+        .map(drop)
+    }
+
+    pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
+        run_streaming(
+            self.cmd(["fetch", "--prune", remote]),
+            format!("cannot fetch from '{remote}'"),
+        )
     }
 
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        let output = self
-            .cmd()
-            .args(["remote", "get-url", remote])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!s.is_empty()).then_some(s)
+        query(self.cmd(["remote", "get-url", remote]))
     }
 
     pub fn has_remote(&self, remote: &str) -> bool {
         self.remote_url(remote).is_some()
     }
 
-    pub fn fetch_remote(&self, remote: &str) -> Result<(), String> {
-        let status = self
-            .cmd()
-            .args(["fetch", "--prune", remote])
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .status()
-            .map_err(|e| format!("cannot run git fetch: {e}"))?;
-        if !status.success() {
-            return Err(String::new()); // detail already visible on inherited stderr
-        }
-        Ok(())
-    }
-
     pub fn base_ref(&self) -> Result<String, String> {
-        let output = self
-            .cmd()
-            .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-
-        if output.status.success() {
-            let head_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if let Some(branch) = head_ref.strip_prefix("refs/remotes/origin/")
-                && self.ref_exists(&format!("refs/remotes/origin/{branch}"))
-            {
-                return Ok(format!("origin/{branch}"));
-            }
+        if let Some(head_ref) =
+            query(self.cmd(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]))
+            && let Some(branch) = head_ref.strip_prefix("refs/remotes/origin/")
+            && self.ref_exists(&head_ref)
+        {
+            return Ok(format!("origin/{branch}"));
         }
 
-        for name in ["main", "master"] {
-            if self.ref_exists(&format!("refs/remotes/origin/{name}")) {
-                return Ok(format!("origin/{name}"));
-            }
-        }
-
-        Err(
-            "cannot determine default branch (tried origin/HEAD, origin/main, origin/master)"
-                .into(),
-        )
+        ["main", "master"]
+            .into_iter()
+            .find(|name| self.ref_exists(&format!("refs/remotes/origin/{name}")))
+            .map(|name| format!("origin/{name}"))
+            .ok_or_else(|| {
+                "cannot determine default branch (tried origin/HEAD, origin/main, origin/master)"
+                    .into()
+            })
     }
 
     pub fn ref_exists(&self, refname: &str) -> bool {
-        self.cmd()
-            .args(["show-ref", "--verify", "--quiet", refname])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        succeeds(self.cmd(["show-ref", "--verify", "--quiet", refname]))
     }
 
     pub fn has_local_branch(&self, name: &str) -> bool {
         self.ref_exists(&format!("refs/heads/{name}"))
     }
 
-    pub fn local_branches(&self) -> Vec<String> {
-        let output = self
-            .cmd()
-            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
-            .stderr(Stdio::null())
-            .output()
-            .ok();
-        match output {
-            Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(str::to_string)
-                .collect(),
-            // Best-effort: fuzzy matching is advisory, so silently degrade on failure
-            _ => vec![],
-        }
+    pub fn branch_names(&self) -> BTreeSet<String> {
+        query(self.cmd([
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads/",
+            "refs/remotes/",
+        ]))
+        .map(|out| {
+            out.lines()
+                .filter_map(branch_name)
+                .filter(|name| *name != "HEAD")
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     pub fn remotes_with_branch(&self, name: &str) -> Result<Vec<String>, String> {
@@ -152,22 +204,17 @@ impl Git {
             return Ok(vec![]);
         }
         let pattern = format!("refs/remotes/*/{name}");
-        let output = self
-            .cmd()
-            .args(["for-each-ref", "--format=%(refname)", &pattern])
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git for-each-ref: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot list remotes", &output));
-        }
+        let output = run(
+            self.cmd(["for-each-ref", "--format=%(refname)", &pattern]),
+            "cannot list remotes",
+        )?;
         let suffix = format!("/{name}");
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(|line| {
                 line.strip_prefix("refs/remotes/")?
                     .strip_suffix(&suffix)
-                    .map(str::to_string)
+                    .map(str::to_owned)
             })
             .collect())
     }
@@ -176,116 +223,100 @@ impl Git {
         &self,
         branch: &str,
         dest: &Path,
-        base_ref: Option<&str>,
+        start: Option<&str>,
+        track: bool,
     ) -> Result<(), String> {
-        let mut cmd = self.cmd();
-        cmd.args(["worktree", "add", "--quiet", "-b", branch])
-            .arg(dest);
-        if let Some(base) = base_ref {
-            cmd.arg(base);
-        }
-        let output = cmd
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git worktree add: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot create worktree", &output));
-        }
-        Ok(())
+        let track = if track { "--track" } else { "--no-track" };
+        let mut cmd = self.cmd(["worktree", "add", "--quiet", track, "-b", branch, "--"]);
+        cmd.arg(dest).args(start);
+        run(cmd, "cannot create worktree").map(drop)
     }
 
-    pub fn checkout_worktree(&self, branch: &str, dest: &Path) -> Result<(), String> {
-        let output = self
-            .cmd()
-            .args(["worktree", "add", "--quiet"])
-            .arg(dest)
-            .arg(branch)
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git worktree add: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot create worktree", &output));
-        }
-        Ok(())
+    pub fn checkout_worktree(&self, name: &str, dest: &Path) -> Result<(), String> {
+        let mut cmd = self.cmd(["worktree", "add", "--quiet", "--"]);
+        cmd.arg(dest).arg(name);
+        run(cmd, "cannot create worktree").map(drop)
+    }
+
+    pub fn track_branch(&self, branch: &str, upstream: &str) -> Result<(), String> {
+        run(
+            self.cmd(["branch", "--quiet", "--track", branch, upstream]),
+            format!("cannot create branch '{branch}'"),
+        )
+        .map(drop)
+    }
+
+    pub fn set_head(&self, branch: &str) -> Result<(), String> {
+        run(
+            self.cmd(["symbolic-ref", "HEAD", &format!("refs/heads/{branch}")]),
+            "cannot set HEAD",
+        )
+        .map(drop)
+    }
+
+    pub fn head_ref(&self) -> Option<String> {
+        query(self.cmd(["symbolic-ref", "--quiet", "HEAD"]))
     }
 
     pub fn list_worktrees(&self) -> Result<String, String> {
-        let output = self
-            .cmd()
-            .args(["worktree", "list", "--porcelain"])
-            .output()
-            .map_err(|e| format!("cannot run git worktree list: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot list worktrees", &output));
-        }
+        let output = run(
+            self.cmd(["worktree", "list", "--porcelain"]),
+            "cannot list worktrees",
+        )?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     pub fn remove_worktree(&self, path: &Path, force: bool) -> Result<(), String> {
-        let mut cmd = self.cmd();
-        cmd.args(["worktree", "remove"]);
+        let mut cmd = self.cmd(["worktree", "remove"]);
         if force {
-            cmd.arg("--force");
+            cmd.args(["--force", "--force"]);
         }
         cmd.arg(path);
-        cmd.stdout(Stdio::null());
-        let output = cmd
-            .output()
-            .map_err(|e| format!("cannot run git worktree remove: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err(
-                format!("cannot remove worktree: {}", path.display()),
-                &output,
-            ));
-        }
-        Ok(())
+        run(cmd, format!("cannot remove worktree: {}", path.display())).map(drop)
     }
 
     pub fn delete_branch(&self, branch: &str, force: bool) -> Result<(), String> {
         let flag = if force { "-D" } else { "-d" };
-        let output = self
-            .cmd()
-            .args(["branch", flag, "--quiet", branch])
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git branch: {e}"))?;
-        if !output.status.success() {
-            let action = if force { "force-delete" } else { "delete" };
-            return Err(git_err(
-                format!("worktree removed but cannot {action} branch '{branch}'"),
-                &output,
-            ));
-        }
-        Ok(())
+        let action = if force { "force-delete" } else { "delete" };
+        run(
+            self.cmd(["branch", flag, "--quiet", branch]),
+            format!("worktree removed but cannot {action} branch '{branch}'"),
+        )
+        .map(drop)
     }
 
     pub fn prune_worktrees(&self, dry_run: bool) -> Result<String, String> {
-        let mut cmd = self.cmd();
-        cmd.args(["worktree", "prune", "--verbose"]);
+        let mut cmd = self.cmd(["worktree", "prune", "--verbose"]);
         if dry_run {
             cmd.arg("--dry-run");
         }
-        let output = cmd
-            .output()
-            .map_err(|e| format!("cannot run git worktree prune: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err("cannot prune worktree metadata", &output));
-        }
-        Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        let output = run(cmd, "cannot prune worktree metadata")?;
+        Ok(String::from_utf8_lossy(&output.stderr).trim().to_owned())
     }
 
-    pub fn is_dirty(&self, worktree_path: &Path) -> bool {
-        Self::cmd_in(worktree_path)
-            .args(["status", "--porcelain", "--untracked-files=normal"])
-            .stderr(Stdio::null())
-            .output()
-            .map_or(true, |o| !o.stdout.is_empty())
+    pub fn worktree_status(worktree_path: &Path) -> Option<String> {
+        let output = git_in(
+            worktree_path,
+            [
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=normal",
+            ],
+        )
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     pub fn is_branch_merged(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
 
-        if let Some(upstream) = self.upstream_for(&branch_ref)
+        if let Some(upstream) = self.upstream(branch)
             && self.rev_parse(&upstream).is_some()
         {
             return self.is_ancestor(&branch_ref, &upstream);
@@ -295,149 +326,81 @@ impl Git {
     }
 
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
-        self.cmd()
-            .args(["merge-base", "--is-ancestor", ancestor, descendant])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        succeeds(self.cmd(["merge-base", "--is-ancestor", ancestor, descendant]))
     }
 
     pub fn rev_parse(&self, refname: &str) -> Option<String> {
-        let output = self
-            .cmd()
-            .args(["rev-parse", "--verify", "--quiet", refname])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!sha.is_empty()).then_some(sha)
+        query(self.cmd([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            refname,
+        ]))
     }
 
-    pub fn worktree_status(worktree_path: &Path) -> (bool, Option<u64>, Option<u64>) {
-        let output = Self::cmd_in(worktree_path)
-            .args([
-                "status",
-                "--porcelain=v2",
-                "--branch",
-                "--untracked-files=normal",
-            ])
-            .stderr(Stdio::null())
-            .output();
-        let Ok(output) = output else {
-            return (true, None, None);
-        };
-        if !output.status.success() {
-            return (true, None, None);
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        parse_porcelain_status(&text)
+    pub fn is_squash_merged(&self, branch_ref: &str, base: &str) -> bool {
+        let merged_tree = query(self.cmd(["merge-tree", "--write-tree", base, branch_ref]));
+        merged_tree.is_some_and(|tree| self.rev_parse(&format!("{base}^{{tree}}")) == Some(tree))
     }
 
-    pub fn is_upstream_gone(&self, branch: &str) -> bool {
-        let branch_ref = format!("refs/heads/{branch}");
-        self.upstream_for(&branch_ref)
-            .is_some_and(|upstream| self.rev_parse(&upstream).is_none())
+    pub fn has_unpushed_commits(&self) -> bool {
+        query(self.cmd(["rev-list", "--count", "--all", "--not", "--remotes"]))
+            .is_none_or(|count| count != "0")
+    }
+
+    pub fn upstream(&self, branch: &str) -> Option<String> {
+        query(self.cmd([
+            "for-each-ref",
+            "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ]))
+    }
+
+    pub fn full_ref(&self, name: &str) -> Option<String> {
+        query(self.cmd([
+            "rev-parse",
+            "--symbolic-full-name",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            name,
+        ]))
+    }
+
+    pub fn has_refs(&self, prefix: &str) -> bool {
+        query(self.cmd(["for-each-ref", "--count=1", prefix])).is_some()
+    }
+
+    pub fn common_dir(&self) -> Option<PathBuf> {
+        query(self.cmd(["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+            .map(PathBuf::from)
+    }
+
+    pub fn repair_worktree(worktree_path: &Path) -> Result<(), String> {
+        run(
+            git_in(worktree_path, ["worktree", "repair"]),
+            format!("cannot repair worktree: {}", worktree_path.display()),
+        )
+        .map(drop)
     }
 
     pub fn upstream_remote(&self, branch: &str) -> Option<String> {
-        let output = self
-            .cmd()
-            .args(["config", "--get", &format!("branch.{branch}.remote")])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!remote.is_empty()).then_some(remote)
-    }
-
-    pub fn bare_clone(url: &str, dest: &Path) -> Result<(), String> {
-        let status = Command::new("git")
-            .args(["clone", "--bare", url])
-            .arg(dest)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .status()
-            .map_err(|e| format!("cannot run git clone: {e}"))?;
-        if !status.success() {
-            return Err(String::new()); // detail already visible on inherited stderr
-        }
-        Ok(())
-    }
-
-    pub fn set_config(&self, key: &str, value: &str) -> Result<(), String> {
-        let output = self
-            .cmd()
-            .args(["config", key, value])
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git config: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err(format!("cannot set config '{key}'"), &output));
-        }
-        Ok(())
+        query(self.cmd(["config", "--get", &format!("branch.{branch}.remote")]))
     }
 
     pub fn set_remote_head(&self, remote: &str) -> Result<(), String> {
-        let output = self
-            .cmd()
-            .args(["remote", "set-head", remote, "--auto"])
-            .stdout(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run git remote: {e}"))?;
-        if !output.status.success() {
-            return Err(git_err(
-                format!("cannot detect default branch from '{remote}'"),
-                &output,
-            ));
-        }
-        Ok(())
+        run(
+            self.cmd(["remote", "set-head", remote, "--auto"]),
+            format!("cannot detect default branch from '{remote}'"),
+        )
+        .map(drop)
     }
-
-    fn upstream_for(&self, refspec: &str) -> Option<String> {
-        let output = self
-            .cmd()
-            .args(["for-each-ref", "--format=%(upstream:short)", refspec])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!upstream.is_empty()).then_some(upstream)
-    }
-}
-
-fn parse_porcelain_status(text: &str) -> (bool, Option<u64>, Option<u64>) {
-    let mut dirty = false;
-    let mut ahead = None;
-    let mut behind = None;
-    for line in text.lines() {
-        if let Some(ab) = line.strip_prefix("# branch.ab ") {
-            let mut parts = ab.split_whitespace();
-            ahead = parts
-                .next()
-                .and_then(|s| s.strip_prefix('+'))
-                .and_then(|s| s.parse().ok());
-            behind = parts
-                .next()
-                .and_then(|s| s.strip_prefix('-'))
-                .and_then(|s| s.parse().ok());
-        } else if !line.starts_with('#') {
-            dirty = true;
-        }
-    }
-    (dirty, ahead, behind)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Output;
 
     fn fake_output(stderr: &str) -> Output {
         Output {
@@ -490,46 +453,5 @@ mod tests {
             git_err("cannot create worktree", &out),
             "cannot create worktree: bad object: abc"
         );
-    }
-
-    #[test]
-    fn parse_status_clean_with_upstream() {
-        let text = "# branch.oid abc123\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n";
-        assert_eq!(parse_porcelain_status(text), (false, Some(0), Some(0)));
-    }
-
-    #[test]
-    fn parse_status_ahead_behind() {
-        let text = "# branch.oid abc123\n# branch.head feat\n# branch.ab +3 -1\n";
-        assert_eq!(parse_porcelain_status(text), (false, Some(3), Some(1)));
-    }
-
-    #[test]
-    fn parse_status_dirty_with_changes() {
-        let text = "# branch.oid abc123\n# branch.head main\n# branch.ab +0 -0\n1 .M N... 100644 100644 100644 abc def src/main.rs\n";
-        assert_eq!(parse_porcelain_status(text), (true, Some(0), Some(0)));
-    }
-
-    #[test]
-    fn parse_status_dirty_untracked() {
-        let text = "# branch.oid abc123\n# branch.head main\n? newfile.txt\n";
-        assert_eq!(parse_porcelain_status(text), (true, None, None));
-    }
-
-    #[test]
-    fn parse_status_no_upstream() {
-        let text = "# branch.oid abc123\n# branch.head main\n";
-        assert_eq!(parse_porcelain_status(text), (false, None, None));
-    }
-
-    #[test]
-    fn parse_status_detached_head() {
-        let text = "# branch.oid abc123\n# branch.head (detached)\n";
-        assert_eq!(parse_porcelain_status(text), (false, None, None));
-    }
-
-    #[test]
-    fn parse_status_empty_output() {
-        assert_eq!(parse_porcelain_status(""), (false, None, None));
     }
 }

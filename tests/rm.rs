@@ -83,7 +83,7 @@ fn refuses_dirty_without_force() {
     assert_error(
         &output,
         1,
-        "worktree has local changes, use --force to remove\n",
+        "cannot remove 'dirty-branch': worktree has local changes, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -124,7 +124,8 @@ fn refuses_unmerged_branch_without_remote() {
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged' is not fully merged, use --force to remove\n",
+        "cannot remove 'local-unmerged': branch is not fully merged, \
+         use --keep-branch to keep it or --force to delete it\n",
     );
     assert!(wt_path.exists());
 }
@@ -154,7 +155,8 @@ fn refuses_unmerged_branch_even_if_other_local_branch_contains_it() {
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged-contained' is not fully merged, use --force to remove\n",
+        "cannot remove 'local-unmerged-contained': branch is not fully merged, \
+         use --keep-branch to keep it or --force to delete it\n",
     );
     assert!(wt_path.exists());
 }
@@ -228,9 +230,6 @@ fn rejects_ambiguous_branch_name() {
         cmd.args(["rm", "shared", "--force", "--repo"]).arg(&repo);
     });
 
-    let repo_canon = canonical(&repo);
-    let wt_canon = canonical(&wt_path);
-
     assert_exit_code(&output, 1);
     assert_stdout_empty(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -239,11 +238,11 @@ fn rejects_ambiguous_branch_name() {
         "expected ambiguity header, got: {stderr}",
     );
     assert!(
-        stderr.contains(&format!("  - {}\n", repo_canon.display())),
+        stderr.contains(&format!("  - {}\n", tilde(home.path(), &repo))),
         "expected primary worktree path, got: {stderr}",
     );
     assert!(
-        stderr.contains(&format!("  - {}\n", wt_canon.display())),
+        stderr.contains(&format!("  - {}\n", tilde(home.path(), &wt_path))),
         "expected linked worktree path, got: {stderr}",
     );
     assert!(
@@ -648,7 +647,7 @@ fn removes_detached_head_worktree() {
 }
 
 #[test]
-fn refuses_branch_checked_out_in_another_worktree() {
+fn keeps_branch_checked_out_in_another_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "shared-branch");
 
@@ -657,68 +656,51 @@ fn refuses_branch_checked_out_in_another_worktree() {
     let output = wt_bin()
         .arg("rm")
         .arg(&wt_path)
-        .arg("--force")
         .arg("--repo")
         .arg(&repo)
         .output()
         .unwrap();
     assert!(
-        !output.status.success(),
-        "wt rm should refuse when branch is checked out elsewhere"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("checked out in another worktree"),
-        "expected checked-out-elsewhere error, got: {stderr}",
+        stderr.contains("kept branch 'shared-branch' (checked out in another worktree)"),
+        "got: {stderr}",
     );
-    assert!(wt_path.exists());
+    assert!(!wt_path.exists());
+    assert_branch_present(&repo, "shared-branch");
 }
 
 #[test]
-fn removes_detached_head_worktree_by_tag() {
+fn locked_worktree_requires_force() {
     let (home, repo) = setup();
-    assert_git_success(&repo, &["tag", "v1.0"]);
+    let wt_path = wt_new(home.path(), &repo, "locked-branch");
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
 
-    let wt_path = wt_checkout(home.path(), &repo, "v1.0");
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "locked-branch", "--repo"]).arg(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot remove 'locked-branch': worktree is locked, use --force to remove\n",
+    );
 
-    let output = wt_bin()
-        .args(["rm", "v1.0", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "locked-branch", "--force", "--repo"])
+            .arg(&repo);
+    });
     assert!(
         output.status.success(),
-        "wt rm v1.0 should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!wt_path.exists(), "worktree directory should be removed");
-}
-
-#[test]
-fn errors_when_ref_matches_multiple_detached_worktrees() {
-    let (home, repo) = setup();
-    assert_git_success(&repo, &["tag", "v1.0"]);
-    assert_git_success(&repo, &["tag", "v1.0-alias"]);
-
-    let wt1 = wt_checkout(home.path(), &repo, "v1.0");
-    let wt2 = wt_checkout(home.path(), &repo, "v1.0-alias");
-
-    let output = wt_bin()
-        .args(["rm", "v1.0", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("ambiguous ref 'v1.0'"),
-        "expected ambiguous ref error, got: {stderr}",
-    );
-    assert!(wt1.exists(), "worktree should not be removed on ambiguity");
-    assert!(wt2.exists(), "worktree should not be removed on ambiguity");
+    assert!(!wt_path.exists());
 }
 
 #[test]
@@ -986,4 +968,27 @@ fn multi_target_unmerged_blocks_one() {
     assert_branch_absent(&repo, "merged-wt");
     assert!(unmerged_path.exists(), "unmerged worktree should remain");
     assert_branch_present(&repo, "unmerged-wt");
+}
+
+#[test]
+fn removes_worktree_whose_directory_was_deleted() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "deleted-dir");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "deleted-dir", "--repo"]).arg(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_branch_absent(&repo, "deleted-dir");
+    let listing = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!listing.contains("deleted-dir"), "{listing}");
+    assert!(
+        !wt_path.parent().unwrap().exists(),
+        "empty id dir should be removed"
+    );
 }

@@ -1,8 +1,22 @@
+use std::path::{Path, PathBuf};
+
 use tempfile::TempDir;
 
 pub mod common;
 
 use common::*;
+
+fn commit_file(dir: &Path, name: &str) {
+    std::fs::write(dir.join(name), name).unwrap();
+    assert_git_success(dir, &["add", name]);
+    assert_git_success(dir, &["commit", "-m", name]);
+}
+
+fn squash_merge(repo: &Path, branch: &str) {
+    assert_git_success(repo, &["merge", "--squash", branch]);
+    assert_git_success(repo, &["commit", "-m", &format!("squash {branch}")]);
+    assert_git_success(repo, &["push", "origin", "HEAD:main"]);
+}
 
 #[test]
 fn prunes_stale_metadata_across_repos() {
@@ -72,19 +86,15 @@ fn repo_flag_scopes_to_single_repo() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // repo_a was pruned, so re-adding branch-a should work
-    let _wt_a2 = wt_checkout(home.path(), &repo_a, "branch-a");
-
-    // repo_b was NOT pruned, so its stale metadata blocks re-adding
-    let output = wt_bin()
-        .args(["new", "branch-b", "--repo"])
-        .arg(&repo_b)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
+    let listing =
+        |repo: &Path| assert_git_stdout_success(repo, &["worktree", "list", "--porcelain"]);
     assert!(
-        !output.status.success(),
-        "branch-b should still be blocked by stale metadata in repo-b"
+        !listing(&repo_a).contains("prunable"),
+        "repo_a should be pruned"
+    );
+    assert!(
+        listing(&repo_b).contains("prunable"),
+        "repo_b should be untouched"
     );
 }
 
@@ -112,17 +122,10 @@ fn dry_run_does_not_remove() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // Stale metadata should still exist since we only did dry-run
-    // Trying to re-add should fail
-    let output = wt_bin()
-        .args(["new", "branch-dry", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
+    let listing = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
     assert!(
-        !output.status.success(),
-        "branch-dry should still be blocked by stale metadata after dry-run"
+        listing.contains("prunable"),
+        "stale metadata should survive a dry run"
     );
 }
 
@@ -142,7 +145,7 @@ fn removes_orphaned_worktree_directories() {
     assert!(wt_path.exists(), "worktree dir should exist before prune");
 
     let output = wt_bin()
-        .args(["prune"])
+        .args(["prune", "--orphans"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -156,10 +159,48 @@ fn removes_orphaned_worktree_directories() {
         !wt_path.exists(),
         "orphaned worktree directory should be removed"
     );
+    let id_dir = wt_path.parent().unwrap();
+    assert!(!id_dir.exists(), "emptied id directory should be removed");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!(
+            "removed {}/repo (orphan)\n",
+            id_dir.file_name().unwrap().to_string_lossy()
+        ),
+        "the orphan's id directory should not be reported separately"
+    );
+}
+
+#[test]
+fn continues_after_orphan_removal_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new().unwrap();
+    let repo = home.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    let stuck = wt_new(home.path(), &repo, "stuck");
+    let freed = wt_new(home.path(), &repo, "freed");
+    std::fs::remove_dir_all(&repo).unwrap();
+
+    let locked_dir = stuck.join("locked");
+    std::fs::create_dir(&locked_dir).unwrap();
+    std::fs::write(locked_dir.join("file"), "x").unwrap();
+    std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = wt_bin()
+        .args(["prune", "--orphans"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_exit_code(&output, 1);
+    assert!(!freed.exists(), "other orphans should still be removed");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("removed"),
-        "should report removal, got: {stderr}",
+        stderr.ends_with("cannot remove 1 directory\n"),
+        "got: {stderr}"
     );
 }
 
@@ -180,7 +221,7 @@ fn preserves_parent_dir_when_cwd_is_inside_orphan_parent() {
     assert!(parent_dir.exists(), "parent dir should exist before prune");
 
     let output = wt_bin()
-        .args(["prune"])
+        .args(["prune", "--orphans"])
         .env("HOME", home.path())
         .current_dir(&parent_dir)
         .output()
@@ -203,7 +244,6 @@ fn preserves_parent_dir_when_cwd_is_inside_orphan_parent() {
 #[test]
 fn no_worktrees_dir_succeeds_silently() {
     let home = TempDir::new().unwrap();
-    // No ~/.wt/worktrees/ exists
 
     let output = wt_bin()
         .args(["prune"])
@@ -804,6 +844,7 @@ fn gone_prunes_upstream_gone_worktree() {
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
     assert_git_success(&wt_path, &["push", "-u", "origin", "gone-branch"]);
 
+    squash_merge(&repo, "gone-branch");
     assert_git_success(&repo, &["push", "origin", "--delete", "gone-branch"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
@@ -895,6 +936,7 @@ fn gone_fetch_failure_only_skips_that_remote() {
     assert_git_success(&wt_origin, &["add", "origin.txt"]);
     assert_git_success(&wt_origin, &["commit", "-m", "origin work"]);
     assert_git_success(&wt_origin, &["push", "-u", "origin", "origin-gone"]);
+    squash_merge(&repo, "origin-gone");
     assert_git_success(&origin, &["branch", "-D", "origin-gone"]);
 
     let wt_upstream = wt_new(home.path(), &repo, "upstream-live");
@@ -929,7 +971,7 @@ fn gone_fetch_failure_only_skips_that_remote() {
     assert_branch_present(&repo, "upstream-live");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("fetch failed, skipping upstream-gone pruning"),
+        stderr.contains("cannot fetch from 'upstream', skipping upstream-gone pruning"),
         "should report upstream fetch failure, got: {stderr}",
     );
 }
@@ -969,6 +1011,7 @@ fn gone_skips_dirty_worktree() {
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
     assert_git_success(&wt_path, &["push", "-u", "origin", "dirty-gone"]);
 
+    squash_merge(&repo, "dirty-gone");
     assert_git_success(&repo, &["push", "origin", "--delete", "dirty-gone"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
@@ -1110,6 +1153,7 @@ fn gone_dry_run_reports_without_removing() {
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
     assert_git_success(&wt_path, &["push", "-u", "origin", "dry-gone"]);
 
+    squash_merge(&repo, "dry-gone");
     assert_git_success(&repo, &["push", "origin", "--delete", "dry-gone"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
@@ -1145,45 +1189,42 @@ fn gone_dry_run_reports_without_removing() {
 }
 
 #[test]
-fn gone_dry_run_does_not_fetch() {
+fn gone_dry_run_matches_real_run_before_fetching() {
     let (home, repo, origin) = setup_with_origin();
 
-    let wt_path = wt_new(home.path(), &repo, "dry-no-fetch");
+    let wt_path = wt_new(home.path(), &repo, "landed");
     std::fs::write(wt_path.join("feature.txt"), "work").unwrap();
     assert_git_success(&wt_path, &["add", "feature.txt"]);
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
-    assert_git_success(&wt_path, &["push", "-u", "origin", "dry-no-fetch"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "landed"]);
+    squash_merge(&repo, "landed");
+    assert_git_success(&origin, &["branch", "-D", "landed"]);
 
-    // Delete branch directly in the bare repo so the local remote-tracking
-    // ref is NOT pruned. A real fetch --prune would remove it.
-    assert_git_success(&origin, &["branch", "-D", "dry-no-fetch"]);
-
-    let output = wt_bin()
+    let dry = wt_bin()
         .args(["prune", "--dry-run", "--gone"])
         .env("HOME", home.path())
         .output()
         .unwrap();
+    assert!(dry.status.success());
+    let dry_stderr = String::from_utf8_lossy(&dry.stderr);
     assert!(
-        output.status.success(),
-        "wt prune --dry-run --gone should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
+        dry_stderr.contains("would remove landed (upstream gone)"),
+        "got: {dry_stderr}"
     );
+    assert!(wt_path.exists());
 
-    // The remote-tracking ref should still exist because dry-run must not fetch
-    let tracking_exists = git(&repo)
-        .args([
-            "show-ref",
-            "--verify",
-            "--quiet",
-            "refs/remotes/origin/dry-no-fetch",
-        ])
-        .status()
-        .unwrap()
-        .success();
+    let real = wt_bin()
+        .args(["prune", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(real.status.success());
+    let real_stderr = String::from_utf8_lossy(&real.stderr);
     assert!(
-        tracking_exists,
-        "dry-run --gone should not fetch (remote-tracking ref should still exist)"
+        real_stderr.contains("removed landed (upstream gone)"),
+        "got: {real_stderr}"
     );
+    assert!(!wt_path.exists());
 }
 
 #[test]
@@ -1378,6 +1419,7 @@ fn repo_flag_gone_prunes_upstream_gone() {
     assert_git_success(&wt_path, &["commit", "-m", "feature work"]);
     assert_git_success(&wt_path, &["push", "-u", "origin", "repo-gone-branch"]);
 
+    squash_merge(&repo, "repo-gone-branch");
     assert_git_success(&repo, &["push", "origin", "--delete", "repo-gone-branch"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
@@ -1441,8 +1483,6 @@ fn gone_skips_locked_worktree() {
 
 #[test]
 fn gone_skips_locked_worktree_without_prior_fetch() {
-    // Verify that --gone detects a locked worktree's gone upstream by fetching
-    // itself, without requiring the user to have run `git fetch` beforehand.
     let (home, repo, _origin) = setup_with_origin();
 
     let wt_path = wt_new(home.path(), &repo, "locked-gone-nofetch");
@@ -1693,7 +1733,6 @@ fn base_flag_overrides_default_branch() {
         "without --base, worktree should be kept (no origin to detect default branch)"
     );
 
-    // With --base develop, prune should detect the merge and remove
     let output = wt_bin()
         .args(["prune", "--repo"])
         .arg(&repo)
@@ -1869,7 +1908,7 @@ fn dry_run_orphan_output_goes_to_stderr_not_stdout() {
     assert!(wt_path.exists(), "worktree dir should exist before dry-run");
 
     let output = wt_bin()
-        .args(["prune", "--dry-run"])
+        .args(["prune", "--dry-run", "--orphans"])
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -1929,6 +1968,47 @@ fn prune_removes_zombie_worktree_directory() {
         !zombie.parent().unwrap().exists(),
         "zombie id dir should be removed by prune"
     );
+}
+
+#[test]
+fn removes_empty_id_dir_left_by_git_worktree_remove() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "feat");
+    let id_dir = wt_path.parent().unwrap().to_path_buf();
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "remove"]).arg(&wt_path);
+    });
+    assert!(id_dir.exists());
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!id_dir.exists(), "empty id dir should be removed");
+    let id = id_dir.file_name().unwrap().to_string_lossy();
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(&format!("removed {id} (empty)")),
+        "got: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn keeps_id_dir_holding_files() {
+    let home = TempDir::new().unwrap();
+    let id_dir = home.path().join(".wt/worktrees/abc123");
+    std::fs::create_dir_all(id_dir.join("myrepo")).unwrap();
+    std::fs::write(id_dir.join("notes.txt"), "keep").unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(id_dir.join("notes.txt").exists());
 }
 
 #[test]
@@ -2438,6 +2518,7 @@ fn stale_combined_with_gone() {
     assert_git_success(&gone_wt, &["add", "feature.txt"]);
     assert_git_success(&gone_wt, &["commit", "-m", "feature work"]);
     assert_git_success(&gone_wt, &["push", "-u", "origin", "gone-pushed"]);
+    squash_merge(&repo, "gone-pushed");
     assert_git_success(&repo, &["push", "origin", "--delete", "gone-pushed"]);
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
@@ -2463,10 +2544,8 @@ fn stale_combined_with_gone() {
 #[test]
 fn stale_skips_detached_head_worktree() {
     let (home, repo) = setup();
-    let sha = assert_git_stdout_success(&repo, &["rev-parse", "HEAD"]);
-    let sha = sha.trim();
-
-    let wt_path = wt_checkout(home.path(), &repo, sha);
+    let wt_path = wt_new(home.path(), &repo, "to-detach");
+    assert_git_success(&wt_path, &["checkout", "--detach"]);
 
     let output = wt_bin()
         .args(["prune", "--stale"])
@@ -2510,5 +2589,382 @@ fn stale_and_merged_with_origin() {
     assert!(
         stderr.contains("merged") && stderr.contains("no upstream"),
         "should report both merged and no upstream, got: {stderr}",
+    );
+}
+
+#[test]
+fn repairs_renamed_worktree_instead_of_removing_it() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "work");
+    std::fs::write(wt_path.join("precious.txt"), "keep").unwrap();
+    let renamed = home.path().join(".wt/worktrees/renamed");
+    std::fs::rename(wt_path.parent().unwrap(), &renamed).unwrap();
+    let moved = renamed.join("repo");
+
+    let dry_run = wt_bin()
+        .args(["prune", "--dry-run"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    let stderr = String::from_utf8_lossy(&dry_run.stderr);
+    assert!(
+        stderr.contains("would repair renamed/repo (moved)") && !stderr.contains("Removing"),
+        "got: {stderr}"
+    );
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("repaired renamed/repo (moved)") && !stderr.contains("orphan"),
+        "got: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(moved.join("precious.txt")).unwrap(),
+        "keep"
+    );
+    assert_git_success(&moved, &["status"]);
+}
+
+#[test]
+fn base_flag_never_prunes_default_branch_of_cloned_repo() {
+    let (home, _repo, origin) = setup_with_origin();
+    assert_git_success(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let output = run_wt(home.path(), |cmd| {
+        cmd.arg("clone").arg(&origin);
+    });
+    assert!(output.status.success());
+    let main_wt = parse_wt_new_path(&output);
+
+    let output = wt_bin()
+        .args(["prune", "--base", "origin/HEAD"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(main_wt.exists(), "default branch worktree must be kept");
+    assert_git_success(&main_wt, &["rev-parse", "--verify", "refs/heads/main"]);
+}
+
+#[test]
+fn gone_keeps_branch_with_commits_after_squash_merge() {
+    let (home, repo, origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "squashed");
+    commit_file(&wt_path, "pushed.txt");
+    assert_git_success(&wt_path, &["push", "-u", "origin", "squashed"]);
+    squash_merge(&repo, "squashed");
+    commit_file(&wt_path, "local-only.txt");
+    assert_git_success(&origin, &["branch", "-D", "squashed"]);
+
+    let output = wt_bin()
+        .args(["prune", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(wt_path.exists());
+    assert_branch_present(&repo, "squashed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping squashed (upstream gone, not merged)"),
+        "got: {stderr}"
+    );
+    assert!(
+        stderr.contains(":\n  fetching from 'origin'\n"),
+        "fetch note should be grouped under its repo, got: {stderr}"
+    );
+}
+
+#[test]
+fn gone_keeps_abandoned_branch() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "abandoned");
+    commit_file(&wt_path, "work.txt");
+    assert_git_success(&wt_path, &["push", "-u", "origin", "abandoned"]);
+    assert_git_success(&repo, &["push", "origin", "--delete", "abandoned"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--gone"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(wt_path.exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping abandoned (upstream gone, not merged)"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn stale_ignores_branch_pushed_without_upstream() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "pushed-plain");
+    commit_file(&wt_path, "work.txt");
+    assert_git_success(&wt_path, &["push", "origin", "pushed-plain"]);
+
+    let output = wt_bin()
+        .args(["prune", "--stale"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(wt_path.exists());
+}
+
+fn clone_origin(home: &Path, origin: &Path) -> (PathBuf, PathBuf) {
+    assert_git_success(origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let output = run_wt(home, |cmd| {
+        cmd.arg("clone").arg(origin);
+    });
+    assert!(output.status.success());
+    let main_wt = parse_wt_new_path(&output);
+    let gitdir = std::fs::read_to_string(main_wt.join(".git")).unwrap();
+    let bare = Path::new(gitdir.trim().strip_prefix("gitdir: ").unwrap())
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf();
+    (main_wt, bare)
+}
+
+#[test]
+fn removes_clone_without_worktrees() {
+    let (home, _repo, origin) = setup_with_origin();
+    let (main_wt, bare) = clone_origin(home.path(), &origin);
+    std::fs::remove_dir_all(main_wt.parent().unwrap()).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!bare.exists(), "unused bare clone should be removed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("(no worktrees)"));
+}
+
+#[test]
+fn keeps_clone_holding_a_stash() {
+    let (home, _repo, origin) = setup_with_origin();
+    let (main_wt, bare) = clone_origin(home.path(), &origin);
+    assert_git_success(&main_wt, &["config", "user.name", "Test"]);
+    assert_git_success(&main_wt, &["config", "user.email", "t@t"]);
+    std::fs::write(main_wt.join("wip"), "wip").unwrap();
+    assert_git_success(&main_wt, &["stash", "push", "--include-untracked"]);
+    std::fs::remove_dir_all(main_wt.parent().unwrap()).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(bare.exists(), "a stash is the only copy of that work");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("(no worktrees, unpushed commits)"));
+}
+
+#[test]
+fn keeps_clone_whose_missing_worktree_is_locked() {
+    let (home, _repo, origin) = setup_with_origin();
+    let (main_wt, bare) = clone_origin(home.path(), &origin);
+    assert_git_success_with(&bare, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&main_wt);
+    });
+    std::fs::remove_dir_all(main_wt.parent().unwrap()).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        bare.exists(),
+        "a locked worktree may be on a volume that is not mounted"
+    );
+}
+
+#[test]
+fn keeps_fresh_branch_that_tracks_the_base() {
+    let (home, repo, _origin) = setup_with_origin();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "fresh", "origin/main", "--repo"])
+            .arg(&repo);
+    });
+    assert!(output.status.success());
+    let wt_path = parse_wt_new_path(&output);
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(wt_path.exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping fresh (no upstream)"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn headers_distinguish_repos_with_the_same_name() {
+    let home = TempDir::new().unwrap();
+    for parent in ["a", "b"] {
+        let repo = home.path().join(parent).join("proj");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo);
+        wt_new(home.path(), &repo, "never-pushed");
+    }
+
+    let output = wt_bin()
+        .args(["prune", "--stale"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("~/a/proj:\n") && stderr.contains("~/b/proj:\n"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn keeps_orphans_unless_requested() {
+    let home = TempDir::new().unwrap();
+    let repo = home.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    let wt_path = wt_new(home.path(), &repo, "orphan-branch");
+    std::fs::write(wt_path.join("uncommitted.txt"), "work").unwrap();
+    std::fs::remove_dir_all(&repo).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(wt_path.join("uncommitted.txt").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(orphan, repo not found, use --orphans to remove)"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn repo_flag_pointing_at_linked_worktree_prunes_it() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "merged-self");
+    commit_file(&wt_path, "work.txt");
+    assert_git_success(&wt_path, &["push", "-u", "origin", "merged-self"]);
+    assert_git_success(&repo, &["merge", "merged-self"]);
+    assert_git_success(&repo, &["push", "origin", "main"]);
+    assert_git_success(&repo, &["fetch", "origin"]);
+
+    let output = wt_bin()
+        .args(["prune", "--repo"])
+        .arg(&wt_path)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!wt_path.exists());
+    assert_branch_absent(&repo, "merged-self");
+}
+
+#[test]
+fn keeps_merged_worktree_that_is_the_link_source() {
+    let (home, repo, _origin) = setup_with_origin();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
+    let feat = wt_new(home.path(), &repo, "feat");
+    assert_git_success(&feat, &["push", "-u", "origin", "feat"]);
+    std::fs::write(feat.join(".env"), "SECRET").unwrap();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["link", ".env", "--repo"]).arg(&feat);
+    });
+    assert!(output.status.success());
+    assert!(repo.join(".env").is_symlink());
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(feat.join(".env").exists(), "linked files must survive");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("skipping feat (merged, link source)"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn stale_never_removes_head_branch_without_a_base() {
+    let (home, repo) = setup();
+    let bare = home.path().join("bare.git");
+    assert_git_success_with(home.path(), |cmd| {
+        cmd.args(["clone", "--bare"]).arg(&repo).arg(&bare);
+    });
+    assert_git_success(&bare, &["remote", "remove", "origin"]);
+    let main_wt = wt_checkout(home.path(), &bare, "main");
+
+    let output = wt_bin()
+        .args(["prune", "--stale"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        main_wt.exists(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_branch_present(&bare, "main");
+}
+
+#[test]
+fn keeps_clone_that_is_still_fetching() {
+    let (home, _repo, origin) = setup_with_origin();
+    let clone = home.path().join(".wt/repos/abc123/origin");
+    std::fs::create_dir_all(&clone).unwrap();
+    assert_git_success(&clone, &["init", "--bare"]);
+    assert_git_success_with(&clone, |cmd| {
+        cmd.args(["remote", "add", "origin"]).arg(&origin);
+    });
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        clone.exists(),
+        "a clone with nothing fetched yet may be in progress"
     );
 }

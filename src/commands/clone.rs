@@ -1,46 +1,41 @@
+use std::path::Path;
+
 use crate::git::Git;
+use crate::layout;
 use crate::terminal;
-use crate::worktree;
 
 pub fn run(url: &str) -> Result<(), String> {
-    let repo_name = worktree::parse_repo_name(url)
+    let repo_name = layout::parse_repo_name(url)
         .ok_or_else(|| format!("cannot determine repo name from: {url}"))?;
 
-    let bare_dest = worktree::create_bare_dest(repo_name)?;
-
-    match clone_into(&bare_dest, url, repo_name) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            worktree::cleanup_dest(&bare_dest);
-            Err(e)
-        }
-    }
+    let bare_dest = layout::create_bare_dest(repo_name)?;
+    clone_into(&bare_dest, url, repo_name).inspect_err(|_| layout::cleanup_dest(&bare_dest))
 }
 
-fn clone_into(bare_dest: &std::path::Path, url: &str, repo_name: &str) -> Result<(), String> {
+fn clone_into(bare_dest: &Path, url: &str, repo_name: &str) -> Result<(), String> {
     eprintln!("cloning {url}");
-    Git::bare_clone(url, bare_dest)?;
-
+    Git::init_bare(bare_dest)?;
     let git = Git::new(bare_dest);
+    git.add_remote("origin", url)?;
+    git.fetch_remote("origin")
+        .map_err(|_| format!("cannot clone {url}"))?;
 
-    git.set_config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")?;
-    terminal::eprintln_dim("fetching from 'origin'");
-    git.fetch_remote("origin")?;
-
+    if !git.has_refs("refs/remotes/origin/") {
+        return Err(format!("cannot clone {url}: repository is empty"));
+    }
     // best-effort: base_ref() has fallbacks if this fails
     let _ = git.set_remote_head("origin");
-
     let base = git.base_ref()?;
     let default_branch = base.strip_prefix("origin/").unwrap_or(&base);
+    git.track_branch(default_branch, &base)?;
+    git.set_head(default_branch)?;
 
-    let wt_dest = worktree::create_worktree_dest(repo_name)?;
-    if let Err(e) = git.checkout_worktree(default_branch, &wt_dest) {
-        worktree::cleanup_dest(&wt_dest);
-        return Err(e);
-    }
+    let wt_dest = layout::create_worktree_dest(repo_name)?;
+    git.checkout_worktree(default_branch, &wt_dest)
+        .inspect_err(|_| layout::cleanup_dest(&wt_dest))?;
 
     eprintln!("checked out '{default_branch}'");
     println!("{}", wt_dest.display());
-    terminal::print_cd_hint(default_branch);
+    terminal::print_cd_hint(&wt_dest);
     Ok(())
 }
