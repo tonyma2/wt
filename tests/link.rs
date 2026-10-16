@@ -818,3 +818,168 @@ fn migrates_links_from_legacy_config() {
         ".env\n"
     );
 }
+
+#[test]
+fn links_a_path_given_twice_once() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+
+    let output = wt_link(home.path(), &repo, &[".env", "./.env"]);
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "moved .env into ~/repo/.git/wt/links/.env\n");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".env")).unwrap(),
+        "SECRET=abc"
+    );
+}
+
+#[test]
+fn rejects_a_path_inside_another_being_linked() {
+    let (home, repo) = setup();
+    std::fs::create_dir(repo.join("config")).unwrap();
+    std::fs::write(repo.join("config/.env"), "SECRET=abc").unwrap();
+
+    let output = wt_link(home.path(), &repo, &["config", "config/.env"]);
+    assert_error(
+        &output,
+        1,
+        "cannot link config/.env: inside config, which is also being linked\n",
+    );
+    assert!(!repo.join("config").is_symlink());
+    assert_stdout_empty(&wt_link_list(home.path(), &repo));
+}
+
+#[test]
+fn concurrent_links_in_one_repo_all_persist() {
+    let (home, repo) = setup();
+    let files: Vec<String> = (0..8).map(|i| format!(".env{i}")).collect();
+    for file in &files {
+        std::fs::write(repo.join(file), file).unwrap();
+    }
+
+    let children: Vec<_> = files
+        .iter()
+        .map(|file| {
+            wt(home.path())
+                .args(["link", file, "--repo"])
+                .arg(&repo)
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    let listed = String::from_utf8_lossy(&wt_link_list(home.path(), &repo).stdout).into_owned();
+    let mut listed: Vec<_> = listed.lines().collect();
+    listed.sort_unstable();
+    assert_eq!(listed, files);
+}
+
+#[test]
+fn replaces_dangling_links_without_force() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat");
+    create_symlink(&home.path().join("moved/.env"), &wt_path.join(".env"));
+
+    let output = wt_link(home.path(), &repo, &[".env"]);
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env")).unwrap(),
+        "SECRET=abc"
+    );
+}
+
+#[test]
+fn reports_when_git_cannot_tell_whether_a_file_is_tracked() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    std::fs::write(repo.join(".git/index"), "corrupt").unwrap();
+
+    let output = wt_link(home.path(), &repo, &[".env"]);
+    assert_exit_code(&output, 1);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).starts_with("cannot check whether .env is tracked"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!repo.join(".env").is_symlink());
+}
+
+fn write_legacy_config(home: &Path, source: &Path, files: &str) -> std::path::PathBuf {
+    let config = home.join(".wt/config");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        format!("[links]\n\"{}\" = [{files}]\n", source.display()),
+    )
+    .unwrap();
+    config
+}
+
+#[test]
+fn keeps_legacy_links_whose_source_is_missing_quietly() {
+    let (home, repo) = setup();
+    let config = write_legacy_config(home.path(), &home.path().join("unmounted"), "\".env\"");
+    let before = std::fs::read_to_string(&config).unwrap();
+
+    let output = wt_link_list(home.path(), &repo);
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "no links configured\n");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+}
+
+#[test]
+fn drops_legacy_links_whose_source_is_no_longer_a_worktree() {
+    let (home, repo) = setup();
+    let source = home.path().join("plain");
+    std::fs::create_dir(&source).unwrap();
+    let config = write_legacy_config(home.path(), &source, "\".env\"");
+
+    let output = wt_link_list(home.path(), &repo);
+    assert!(output.status.success());
+    assert_stderr_exact(
+        &output,
+        "dropped links from ~/plain: no longer a git worktree\nno links configured\n",
+    );
+    assert!(!config.exists());
+}
+
+#[test]
+fn concurrent_legacy_migrations_keep_the_file() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
+    let source = wt_new(home.path(), &repo, "feat-a");
+    let other = wt_new(home.path(), &repo, "feat-b");
+    std::fs::write(source.join(".env"), "SECRET=abc").unwrap();
+    for wt in [&repo, &other] {
+        std::os::unix::fs::symlink(source.join(".env"), wt.join(".env")).unwrap();
+    }
+    let config = write_legacy_config(home.path(), &canonical(&source), "\".env\"");
+
+    let children: Vec<_> = (0..8)
+        .map(|_| {
+            wt(home.path())
+                .args(["link", "--list", "--repo"])
+                .arg(&repo)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    assert!(!config.exists());
+    for wt in [&repo, &source, &other] {
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=abc"
+        );
+    }
+}

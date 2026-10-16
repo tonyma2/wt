@@ -4,7 +4,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use crate::git::Git;
-use crate::links::{Store, normalize_path};
+use crate::links::{Store, normalize_path, normalize_paths};
 use crate::terminal;
 use crate::worktree::{self, Worktree};
 
@@ -12,9 +12,9 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
     let store = Store::of(&git)?;
-    let shared = store.list()?;
 
     if list {
+        let shared = store.list()?;
         if shared.is_empty() {
             eprintln!("no links configured");
         }
@@ -24,10 +24,19 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
         return Ok(());
     }
 
-    let files = files
-        .iter()
-        .map(|f| normalize_path(f))
-        .collect::<Result<Vec<_>, _>>()?;
+    let files = normalize_paths(files)?;
+    for file in &files {
+        if let Some(dir) = files
+            .iter()
+            .find(|dir| *dir != file && Path::new(file).starts_with(dir))
+        {
+            return Err(format!(
+                "cannot link {file}: inside {dir}, which is also being linked"
+            ));
+        }
+    }
+    let _lock = store.lock()?;
+    let shared = store.list()?;
     let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
     let current = worktree::find_by_path(&worktrees, &repo_root).filter(|wt| !wt.bare);
 
@@ -57,7 +66,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
         if meta.is_symlink() {
             return Err(format!("cannot link {file}: is a symlink"));
         }
-        if Git::tracks(&current.path, file) {
+        if Git::tracks(&current.path, file)? {
             return Err(format!(
                 "cannot link {file}: tracked by git, only untracked files can be shared"
             ));
@@ -104,7 +113,8 @@ fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<()
         if is_expected_link(&dest, source) {
             return Ok(());
         }
-        if !force {
+        let dangling = !dest.exists();
+        if !force && !dangling {
             eprintln!("skipped {file} in {label}: already exists, use --force to replace");
             return Ok(());
         }

@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Component, Path, PathBuf};
@@ -32,6 +32,12 @@ impl Store {
 
     fn manifest(&self) -> PathBuf {
         self.dir.join("manifest")
+    }
+
+    pub fn lock(&self) -> Result<File, String> {
+        fs::create_dir_all(&self.dir)
+            .map_err(|e| format!("cannot create {}: {e}", self.dir.display()))?;
+        lock_file(&self.dir.join("lock"))
     }
 
     pub fn list(&self) -> Result<Vec<String>, String> {
@@ -121,6 +127,23 @@ impl Store {
     }
 }
 
+fn lock_file(path: &Path) -> Result<File, String> {
+    File::create(path)
+        .and_then(|file| file.lock().map(|()| file))
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))
+}
+
+pub fn normalize_paths(files: &[String]) -> Result<Vec<String>, String> {
+    let mut unique = Vec::new();
+    for file in files {
+        let file = normalize_path(file)?;
+        if !unique.contains(&file) {
+            unique.push(file);
+        }
+    }
+    Ok(unique)
+}
+
 pub fn normalize_path(file: &str) -> Result<String, String> {
     let mut parts = Vec::new();
     for component in Path::new(file).components() {
@@ -175,6 +198,17 @@ pub fn migrate_legacy_config() {
     let Ok(path) = layout::wt_home().map(|home| home.join("config")) else {
         return;
     };
+    if !path.exists() {
+        return;
+    }
+    let lock_path = path.with_extension("lock");
+    let _lock = match lock_file(&lock_path) {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!("cannot migrate links from {}: {e}", path.display());
+            return;
+        }
+    };
     let Ok(content) = fs::read_to_string(&path) else {
         return;
     };
@@ -187,24 +221,31 @@ pub fn migrate_legacy_config() {
     };
 
     let mut kept = toml::Table::new();
-    if let Some(toml::Value::Table(entries)) = config.remove("links") {
-        for (source, files) in entries {
-            let files: Vec<&str> = files
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(toml::Value::as_str)
-                .collect();
-            let failed = migrate_source(Path::new(&source), &files);
-            if !failed.is_empty() {
-                kept.insert(source, failed.into());
-            }
+    let entries = match config.remove("links") {
+        Some(toml::Value::Table(entries)) => entries,
+        _ => toml::Table::new(),
+    };
+    for (source, files) in &entries {
+        let files: Vec<&str> = files
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(toml::Value::as_str)
+            .collect();
+        let failed = migrate_source(Path::new(source), &files);
+        if !failed.is_empty() {
+            kept.insert(source.clone(), failed.into());
         }
+    }
+    if !kept.is_empty() && kept == entries {
+        return;
     }
 
     let saved = if kept.is_empty() {
-        let _ = fs::remove_file(path.with_extension("lock"));
-        fs::remove_file(&path)
+        // Config first: a run that arrives between the two removals must find nothing to migrate.
+        fs::remove_file(&path).inspect(|()| {
+            let _ = fs::remove_file(&lock_path);
+        })
     } else {
         config.insert("links".into(), kept.into());
         fs::write(&path, config.to_string())
@@ -215,20 +256,20 @@ pub fn migrate_legacy_config() {
 }
 
 fn migrate_source(source: &Path, files: &[&str]) -> Vec<String> {
+    // A missing source may be on an unmounted volume: keep it quietly for a later run.
     if !source.exists() {
+        return files.iter().map(|f| (*f).to_owned()).collect();
+    }
+    let git = Git::new(source);
+    let Ok(store) = Store::of(&git) else {
         eprintln!(
-            "cannot migrate links from {}: worktree not found",
+            "dropped links from {}: no longer a git worktree",
             terminal::tilde_path(source)
         );
         return Vec::new();
-    }
-    let git = Git::new(source);
-    let setup = Store::of(&git).and_then(|store| {
-        let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
-        Ok((store, worktrees))
-    });
-    let (store, worktrees) = match setup {
-        Ok(setup) => setup,
+    };
+    let worktrees = match git.list_worktrees() {
+        Ok(listing) => worktree::parse_porcelain(&listing),
         Err(e) => {
             eprintln!(
                 "cannot migrate links from {}: {e}",

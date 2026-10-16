@@ -40,8 +40,9 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 - Only untracked paths can be shared: a symlink over a tracked file shows as a change in every worktree
 - `link` records the manifest entry before moving the file, so an interrupted run is completed by running `wt link` again
 - `unlink` means "stop sharing", not "delete": each link becomes a copy before the store entry is removed, and if no worktree links to it the store copy is kept
-- Symlinks are absolute: relative links break when only one side moves. Re-running `wt link` repairs them
-- `~/.wt/config` (links keyed by source worktree) is migrated by `links::migrate_legacy_config()`, which `main` runs before every command so a source is moved into the store before `rm` or `prune` can delete it. Entries that fail stay in the file and are retried
+- Symlinks are absolute: relative links break when only one side moves. Re-running `wt link` replaces links left dangling by a move
+- `link` and `unlink` hold `wt/lock` while they read and rewrite the manifest
+- `~/.wt/config` (links keyed by source worktree) is migrated by `links::migrate_legacy_config()`, which `main` runs before every command so a source is moved into the store before `rm` or `prune` can delete it. It holds `~/.wt/config.lock`, since every shell running `wt init` at once would otherwise migrate the same file. Entries that fail stay in the file and are retried, as do entries whose worktree is missing (it may be on an unmounted volume); entries whose path is no longer a git worktree are dropped
 
 ## Do not change cd hint TTY detection to check stderr
 

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::commands::link::{in_linked_dir, is_expected_link};
 use crate::git::Git;
-use crate::links::{Store, copy_tree, normalize_path};
+use crate::links::{Store, copy_tree, normalize_paths};
 use crate::terminal;
 use crate::worktree;
 
@@ -11,6 +11,7 @@ pub fn run(files: &[String], repo: Option<&Path>, all: bool) -> Result<(), Strin
     let repo_root = Git::find_repo(repo)?;
     let git = Git::new(&repo_root);
     let store = Store::of(&git)?;
+    let _lock = store.lock()?;
     let shared = store.list()?;
 
     let files = if all {
@@ -20,10 +21,7 @@ pub fn run(files: &[String], repo: Option<&Path>, all: bool) -> Result<(), Strin
         }
         shared.clone()
     } else {
-        files
-            .iter()
-            .map(|f| normalize_path(f))
-            .collect::<Result<_, _>>()?
+        normalize_paths(files)?
     };
     if let Some(file) = files.iter().find(|file| !shared.contains(file)) {
         return Err(format!("cannot unlink {file}: not linked"));

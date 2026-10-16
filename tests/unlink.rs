@@ -471,3 +471,15 @@ fn restored_copies_keep_permissions() {
         assert_eq!(mode & 0o777, 0o600, "{}", path.display());
     }
 }
+
+#[test]
+fn unlinks_a_path_given_twice_once() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+
+    let output = wt_unlink(home.path(), &repo, &[".env", "./.env"]);
+    assert!(output.status.success());
+    assert_stderr_exact(&output, "unlinked .env in 'main', kept a copy\n");
+    assert_copy(&repo.join(".env"), "SECRET=abc");
+}

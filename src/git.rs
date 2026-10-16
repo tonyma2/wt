@@ -313,12 +313,15 @@ impl Git {
             .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    pub fn tracks(worktree_path: &Path, path: &str) -> bool {
-        query(git_in(
-            worktree_path,
-            ["ls-files", "--", &format!(":(literal){path}")],
-        ))
-        .is_some()
+    pub fn tracks(worktree_path: &Path, path: &str) -> Result<bool, String> {
+        run(
+            git_in(
+                worktree_path,
+                ["ls-files", "--", &format!(":(literal){path}")],
+            ),
+            format!("cannot check whether {path} is tracked"),
+        )
+        .map(|output| !output.stdout.is_empty())
     }
 
     pub fn is_branch_merged(&self, branch: &str) -> bool {
