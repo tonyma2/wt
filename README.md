@@ -42,12 +42,12 @@ wt init fish | source
 | `wt remove <branch>` | `rm` | Remove worktree and delete branch |
 | `wt path <branch>` | `p` | Print worktree path |
 | `wt prune [--gone]` | | Remove merged (and upstream-gone) worktrees |
-| `wt link <file>` | `ln` | Symlink shared files across worktrees |
-| `wt unlink <file>` | | Remove symlinked files |
+| `wt link <file>` | `ln` | Share untracked files (e.g. `.env`) across worktrees |
+| `wt unlink <file>` | | Stop sharing, leaving a copy in each worktree |
 
 ## Highlights
 
 - **Interactive picker** — run bare `wt` to browse all repos and worktrees with fuzzy search, status indicators, and keyboard navigation
 - **Typo detection** — misspell a branch name and `wt` suggests the closest match before creating anything
-- **Shared files** — `wt link .env` symlinks files from the primary worktree into all others, automatically applied to new worktrees
+- **Shared files** — `wt link .env` moves the file into the repo's git directory and symlinks it into every worktree, including new ones, so removing a worktree never loses it
 - **Script-friendly** — stdout is always data (paths); messages go to stderr

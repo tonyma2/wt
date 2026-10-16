@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::PruneArgs;
-use crate::config::Config;
 use crate::git::{self, Git};
 use crate::layout;
+use crate::links::Store;
 use crate::terminal::{self, Colors};
 use crate::worktree::{self, Status, Worktree};
 
@@ -80,7 +80,6 @@ pub fn run(opts: &PruneArgs) -> Result<(), String> {
     let cwd = layout::current_dir();
     let wt_root = layout::canonicalize_or_self(&layout::worktrees_root()?);
     let managed = layout::managed_worktrees(&wt_root);
-    let config = Config::load()?;
     let mut printer = Printer {
         clr: terminal::stderr_colors(),
         started: false,
@@ -99,7 +98,6 @@ pub fn run(opts: &PruneArgs) -> Result<(), String> {
             &managed,
             &wt_root,
             cwd.as_deref(),
-            &config,
             &mut out,
         )? {
             0 => Ok(()),
@@ -114,15 +112,7 @@ pub fn run(opts: &PruneArgs) -> Result<(), String> {
     for repo_path in layout::admin_repos(&managed).iter().filter(|p| p.exists()) {
         let mut out = printer.group(Some(terminal::tilde_path(repo_path)));
         let git = Git::new(repo_path);
-        match prune_repo(
-            &git,
-            opts,
-            &managed,
-            &wt_root,
-            cwd.as_deref(),
-            &config,
-            &mut out,
-        ) {
+        match prune_repo(&git, opts, &managed, &wt_root, cwd.as_deref(), &mut out) {
             Ok(0) => {}
             Ok(_) => failed_repos += 1,
             Err(e) => {
@@ -170,7 +160,6 @@ fn prune_repo(
     managed: &[(PathBuf, Option<PathBuf>)],
     wt_root: &Path,
     cwd: Option<&Path>,
-    config: &Config,
     out: &mut Group,
 ) -> Result<usize, String> {
     let repaired = repair_moved(git, managed, wt_root, opts.dry_run, out)?;
@@ -183,7 +172,7 @@ fn prune_repo(
             out.emit(Msg::Note(line.to_owned()));
         }
     }
-    prune_branches(git, opts, cwd, config, out)
+    prune_branches(git, opts, cwd, out)
 }
 
 // A managed worktree directory that was renamed looks prunable to git; pruning its metadata
@@ -242,7 +231,6 @@ fn prune_branches(
     git: &Git,
     opts: &PruneArgs,
     cwd: Option<&Path>,
-    config: &Config,
     out: &mut Group,
 ) -> Result<usize, String> {
     let base = resolve_base(git, opts.base.as_deref(), out);
@@ -342,8 +330,6 @@ fn prune_branches(
         };
         let blocker = if c.wt.locked {
             Some("locked")
-        } else if !config.links(&c.wt.path).is_empty() {
-            Some("link source")
         } else if gone && unmerged() {
             Some("not merged")
         } else if layout::is_cwd_inside(&c.wt.path, cwd) {
@@ -519,6 +505,11 @@ fn prune_unused_clones(
         let label = terminal::tilde_path(&clone);
         if !git.has_refs("refs/remotes/") {
             out.emit(Msg::Skipping(label, "no worktrees, nothing fetched".into()));
+        } else if !Store::in_git_dir(&clone)
+            .list()
+            .is_ok_and(|files| files.is_empty())
+        {
+            out.emit(Msg::Skipping(label, "no worktrees, shared files".into()));
         } else if git.has_unpushed_commits() {
             out.emit(Msg::Skipping(
                 label,

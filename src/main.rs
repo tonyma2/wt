@@ -1,9 +1,9 @@
 mod cli;
 mod commands;
-mod config;
 mod fuzzy;
 mod git;
 mod layout;
+mod links;
 mod terminal;
 mod tui;
 mod worktree;
@@ -15,7 +15,9 @@ use clap::Parser;
 use crate::cli::{Cli, Command};
 
 fn main() -> ExitCode {
-    let result = match Cli::parse().command {
+    let cli = Cli::parse();
+    links::migrate_legacy_config();
+    let result = match cli.command {
         None => commands::tui::run(),
         Some(Command::Clone { url }) => commands::clone::run(&url),
         Some(Command::Init { shell }) => commands::init::run(shell),

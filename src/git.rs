@@ -313,6 +313,14 @@ impl Git {
             .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
+    pub fn tracks(worktree_path: &Path, path: &str) -> bool {
+        query(git_in(
+            worktree_path,
+            ["ls-files", "--", &format!(":(literal){path}")],
+        ))
+        .is_some()
+    }
+
     pub fn is_branch_merged(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
 

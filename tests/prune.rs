@@ -2897,7 +2897,7 @@ fn repo_flag_pointing_at_linked_worktree_prunes_it() {
 }
 
 #[test]
-fn keeps_merged_worktree_that_is_the_link_source() {
+fn prunes_merged_worktree_that_shared_files_without_losing_them() {
     let (home, repo, _origin) = setup_with_origin();
     std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
     let feat = wt_new(home.path(), &repo, "feat");
@@ -2915,12 +2915,37 @@ fn keeps_merged_worktree_that_is_the_link_source() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert!(feat.join(".env").exists(), "linked files must survive");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("skipping feat (merged, link source)"),
-        "got: {stderr}"
+    assert!(stderr.contains("removed feat (merged)"), "got: {stderr}");
+    assert!(!feat.exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".env")).unwrap(),
+        "SECRET"
     );
+}
+
+#[test]
+fn keeps_clone_holding_shared_files() {
+    let (home, _repo, origin) = setup_with_origin();
+    let (main_wt, bare) = clone_origin(home.path(), &origin);
+    std::fs::write(main_wt.join(".env"), "SECRET").unwrap();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["link", ".env", "--repo"]).arg(&main_wt);
+    });
+    assert!(output.status.success());
+    std::fs::remove_dir_all(main_wt.parent().unwrap()).unwrap();
+
+    let output = wt_bin()
+        .args(["prune"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(bare.join("wt/links/.env")).unwrap(),
+        "SECRET"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("(no worktrees, shared files)"));
 }
 
 #[test]

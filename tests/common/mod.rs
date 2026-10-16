@@ -138,7 +138,7 @@ pub fn setup_with_origin() -> (TempDir, PathBuf, PathBuf) {
 
 pub fn init_bare_repo(path: &Path) {
     let status = Command::new("git")
-        .args(["init", "--bare"])
+        .args(["init", "--bare", "--initial-branch=main"])
         .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

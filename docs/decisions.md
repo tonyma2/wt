@@ -6,9 +6,9 @@ Intentional choices that look like they could be "improved." Read the rationale 
 
 No `anyhow`, `thiserror`, or custom error enums. Every error is a `String` that exits 1. Typed error recovery adds complexity with no benefit — the binary never catches and branches on error variants.
 
-## Do not "fix" `worktree_status()` to match other `Git` methods
+## Do not "fix" `worktree_status()` or `tracks()` to match other `Git` methods
 
-All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check) runs `git -C <worktree_path>` instead. This is correct: `git status` reports the tree it's pointed at, so running it against the admin repo silently gives the wrong dirty status.
+All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check) and `tracks()` (the tracked-file check in `link`) run `git -C <worktree_path>` instead. This is correct: `git status` and `git ls-files` report the tree and index they're pointed at, so running them against the admin repo silently gives the wrong answer (or fails, for a bare repo).
 
 ## Do not split `switch` into separate checkout and create commands
 
@@ -32,9 +32,16 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 
 `///` doc comments in `cli.rs` serve a concrete purpose: clap derives `--help` text from them on structs that derive `Parser`/`Subcommand`. Everywhere else they have no mechanical effect — they'd just be prose attached to internal functions in a binary that has no public API consumers. Code is self-documenting; inline `//` comments explain non-obvious *why*, not *what*.
 
-## Do not split config into per-repo or in-repo files
+## Do not give shared files a source worktree
 
-Link persistence uses `~/.wt/config` with repo paths as TOML keys. Alternatives considered: `.wtlinks` in the repo (pollutes the repository), git config (wrong abstraction for file lists), per-repo config files under `~/.wt/` (more filesystem complexity). A single file is simple to read, edit, and back up.
+`wt link .env` moves the file into `<git-common-dir>/wt/links/` (listed in `wt/manifest`) and symlinks it into every worktree, including the one it came from. Previously one worktree held the real file and the others linked to it; removing that worktree (`wt rm`, or `git worktree remove`, which deletes gitignored files) destroyed the only copy and left every link dangling. With the store, no worktree is special: `rm` and `prune` need no link checks, and every worktree resolves the same store via `--git-common-dir`.
+
+- The store lives with the repo, not in `~/.wt/`: a per-repo store under `~/.wt/` needs a repo → id mapping (config again) and leaks when the repo is deleted. Inside the git directory it never shows up in the working tree, isn't copied by `git clone`, and goes away with the repo. `prune` keeps a bare clone whose store still holds files
+- Only untracked paths can be shared: a symlink over a tracked file shows as a change in every worktree
+- `link` records the manifest entry before moving the file, so an interrupted run is completed by running `wt link` again
+- `unlink` means "stop sharing", not "delete": each link becomes a copy before the store entry is removed, and if no worktree links to it the store copy is kept
+- Symlinks are absolute: relative links break when only one side moves. Re-running `wt link` repairs them
+- `~/.wt/config` (links keyed by source worktree) is migrated by `links::migrate_legacy_config()`, which `main` runs before every command so a source is moved into the store before `rm` or `prune` can delete it. Entries that fail stay in the file and are retried
 
 ## Do not change cd hint TTY detection to check stderr
 
@@ -52,18 +59,6 @@ Subcommands like `switch` and `clone` return paths via stdout, captured by the s
 ## Do not store bare repos in the current directory
 
 `wt clone` stores bare repos under `~/.wt/repos/<id>/<name>/`, not in the current directory like `git clone`. Users never interact with the bare repo directly — they work inside worktrees. Hiding the bare repo avoids the "where did I put that repo" problem and keeps the filesystem clean. The random id prevents collisions when cloning repos with the same name from different orgs.
-
-## Do not key links by the current worktree
-
-`link`, `unlink`, `link --list`, and auto-link (in `switch`) all resolve the "primary" worktree — the source for symlinks — through `link::find_primary()`:
-
-1. The current worktree (matched against `repo_root` with canonical comparison), if it owns this repo's link config
-2. Otherwise any live worktree of the repo that owns a link config entry
-3. Otherwise the current worktree, falling back to the first non-bare entry
-
-Config entries are keyed by the primary's canonical path, so every worktree of a repo resolves the same source. Keying by the current worktree (the previous behavior) meant links configured in one worktree were invisible from the others, and new worktrees created from a linked worktree would have chained symlinks through a worktree that may later be removed.
-
-Do not use `worktrees.first()` for this: it returns the bare entry for bare repos (`wt clone`), which has no files. `.find(|wt| !wt.bare)` alone is non-deterministic because `git worktree list` orders linked worktrees by `readdir()` over the internal `worktrees/` directory. Filter linked worktrees by path (`link::linked_worktrees()`), not `skip(1)`. `prune` is different: it uses `skip(1)` deliberately to exclude the main worktree (or bare entry), which can never be removed.
 
 ## Do not add `--quiet` to network git commands
 
@@ -88,10 +83,9 @@ On non-zero exit, `fetch_remote` returns only a short context error (`cannot fet
 - `--gone` removes a branch only if its changes reached the base: merged, or squash-merged (`git merge-tree --write-tree <base> <branch>` yields the base's own tree). A remote branch deleted unmerged, or new commits after a squash-merge, are skipped as `not merged`. There is no reliable record of what was pushed once the remote-tracking ref is pruned, so "content landed in base" is the only safe test
 - Renamed worktree directories are repaired before `git worktree prune`, which would otherwise detach them and turn them into orphans
 - Orphans (a `.git` file pointing at a missing repo) are only reported unless `--orphans` is passed: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work
-- Bare clones under `~/.wt/repos/` are removed once every worktree entry is prunable (a locked worktree may be on an unmounted volume, so it keeps its clone), and only if `git rev-list --all --not --remotes` is empty: stashes and local tags live in the clone, not the worktree. A clone with no remote-tracking refs is skipped: it may be a `wt clone` still fetching
-- A worktree that owns link config (the link source) is skipped: removing it would delete the real files every other worktree links to
+- Bare clones under `~/.wt/repos/` are removed once every worktree entry is prunable (a locked worktree may be on an unmounted volume, so it keeps its clone), and only if `git rev-list --all --not --remotes` is empty and its link store is empty: stashes, local tags, and shared files live in the clone, not the worktree. A clone with no remote-tracking refs is skipped: it may be a `wt clone` still fetching
 
-Accepted gap: `git worktree remove` deletes gitignored files (build output, a hand-made `.env`). Treating them as dirty would block nearly every removal; files shared via `wt link` are symlinks in every worktree except the link source, which prune skips.
+Accepted gap: `git worktree remove` deletes gitignored files (build output, a hand-made `.env`). Treating them as dirty would block nearly every removal; files shared via `wt link` are symlinks in every worktree, so removal never touches the shared copy.
 
 ## Do not give `prune --dry-run` its own classification path
 

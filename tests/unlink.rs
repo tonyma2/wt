@@ -28,6 +28,12 @@ fn wt_unlink_all(home: &Path, repo: &Path) -> std::process::Output {
     })
 }
 
+fn assert_copy(path: &Path, content: &str) {
+    let meta = path.symlink_metadata().unwrap();
+    assert!(!meta.is_symlink(), "{} should be a copy", path.display());
+    assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+}
+
 fn create_symlink(source: &Path, dest: &Path) {
     #[cfg(unix)]
     {
@@ -72,7 +78,8 @@ fn unlinks_symlinked_file() {
         stderr.contains("unlinked .env"),
         "expected 'unlinked' message, got: {stderr}",
     );
-    assert!(!wt_path.join(".env").exists(), "symlink should be removed",);
+    assert_copy(&wt_path.join(".env"), "SECRET=abc");
+    assert_copy(&repo.join(".env"), "SECRET=abc");
 }
 
 #[test]
@@ -139,11 +146,11 @@ fn skips_missing_file() {
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unlinked"),
-        "should silently skip missing file, got: {stderr}",
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "unlinked .env in 'main', kept a copy\n"
     );
+    assert!(wt_path.join(".env").symlink_metadata().is_err());
 }
 
 #[test]
@@ -159,23 +166,20 @@ fn unlinks_from_multiple_worktrees() {
     let output = wt_unlink(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
 
-    assert!(!wt1.join(".env").exists(), "symlink removed from wt1");
-    assert!(!wt2.join(".env").exists(), "symlink removed from wt2");
+    assert_copy(&wt1.join(".env"), "SECRET=abc");
+    assert_copy(&wt2.join(".env"), "SECRET=abc");
 }
 
 #[test]
-fn no_linked_worktrees() {
+fn restores_copy_when_only_one_worktree() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+    assert!(repo.join(".env").is_symlink());
 
     let output = wt_unlink(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("no linked worktrees"),
-        "expected 'no linked worktrees', got: {stderr}",
-    );
+    assert_copy(&repo.join(".env"), "SECRET=abc");
 }
 
 #[test]
@@ -237,32 +241,8 @@ fn all_unlinks_files_from_config() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    assert!(
-        !wt_path.join(".env").exists(),
-        ".env symlink should be removed"
-    );
-    assert!(
-        !wt_path.join(".env.local").exists(),
-        ".env.local symlink should be removed"
-    );
-}
-
-#[test]
-fn all_no_linked_worktrees() {
-    let (home, repo) = setup();
-    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-
-    let link_out = wt_link(home.path(), &repo, &[".env"]);
-    assert!(link_out.status.success());
-
-    let output = wt_unlink_all(home.path(), &repo);
-    assert!(output.status.success());
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("no linked worktrees"),
-        "expected 'no linked worktrees', got: {stderr}",
-    );
+    assert_copy(&wt_path.join(".env"), "SECRET=abc");
+    assert_copy(&wt_path.join(".env.local"), "LOCAL=xyz");
 }
 
 #[test]
@@ -275,8 +255,8 @@ fn all_with_empty_config() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("no linked files in config"),
-        "expected 'no linked files in config', got: {stderr}",
+        stderr.contains("no linked files"),
+        "expected 'no linked files', got: {stderr}",
     );
 }
 
@@ -301,20 +281,11 @@ fn no_files_and_no_all_errors() {
 }
 
 #[test]
-fn all_removes_config_entries() {
+fn all_empties_link_list() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let _wt_path = wt_new(home.path(), &repo, "feat-all-cfg");
-
-    let link_out = wt_link(home.path(), &repo, &[".env"]);
-    assert!(link_out.status.success());
-
-    let config_path = home.path().join(".wt").join("config");
-    let before = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        before.contains(".env"),
-        "config should contain .env before unlink"
-    );
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
     let output = wt_unlink_all(home.path(), &repo);
     assert!(
@@ -323,11 +294,10 @@ fn all_removes_config_entries() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let after = std::fs::read_to_string(&config_path).unwrap_or_default();
-    assert!(
-        !after.contains(".env"),
-        "config should not contain .env after unlink --all, got: {after}",
-    );
+    let list = run_wt(home.path(), |cmd| {
+        cmd.args(["link", "--list", "--repo"]).arg(&repo);
+    });
+    assert_stdout_empty(&list);
 }
 
 #[test]
@@ -361,12 +331,12 @@ fn all_unlinks_from_multiple_worktrees() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    assert!(!wt1.join(".env").exists(), "symlink removed from wt1");
-    assert!(!wt2.join(".env").exists(), "symlink removed from wt2");
+    assert_copy(&wt1.join(".env"), "SECRET=abc");
+    assert_copy(&wt2.join(".env"), "SECRET=abc");
 }
 
 #[test]
-fn removes_config_entry_without_linked_worktrees() {
+fn unlink_with_one_worktree_empties_link_list() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET").unwrap();
     assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
@@ -381,7 +351,7 @@ fn removes_config_entry_without_linked_worktrees() {
 }
 
 #[test]
-fn removes_config_entry_saved_before_paths_were_normalized() {
+fn unlinks_files_migrated_from_legacy_config() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET").unwrap();
     let feat = wt_new(home.path(), &repo, "feat");
@@ -419,7 +389,7 @@ fn rejects_file_that_was_never_linked() {
 }
 
 #[test]
-fn removes_directories_created_for_nested_links() {
+fn restores_nested_file_as_copy() {
     let (home, repo) = setup();
     std::fs::create_dir_all(repo.join("config/local")).unwrap();
     std::fs::write(repo.join("config/local/app.toml"), "k = 1").unwrap();
@@ -435,13 +405,11 @@ fn removes_directories_created_for_nested_links() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "unlinked config/local/app.toml in 'feat-nested'\n"
+        "unlinked config/local/app.toml in 'main', kept a copy\n\
+         unlinked config/local/app.toml in 'feat-nested', kept a copy\n"
     );
-    assert!(
-        !wt_path.join("config").exists(),
-        "empty parents should be removed"
-    );
-    assert!(wt_path.exists());
+    assert_copy(&wt_path.join("config/local/app.toml"), "k = 1");
+    assert_copy(&repo.join("config/local/app.toml"), "k = 1");
 }
 
 #[test]
@@ -463,4 +431,43 @@ fn keeps_parent_directories_that_hold_other_files() {
             .success()
     );
     assert!(wt_path.join("config/other.toml").exists());
+}
+
+#[test]
+fn keeps_stored_file_when_no_worktree_links_to_it() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+    std::fs::remove_file(repo.join(".env")).unwrap();
+
+    let output = wt_unlink(home.path(), &repo, &[".env"]);
+    assert_exit_code(&output, 1);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cannot unlink .env: no worktree links to it, the only copy is ~/repo/.git/wt/links/.env"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".git/wt/links/.env")).unwrap(),
+        "SECRET=abc"
+    );
+}
+
+#[test]
+fn restored_copies_keep_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (home, repo) = setup();
+    let env = repo.join(".env");
+    std::fs::write(&env, "SECRET=abc").unwrap();
+    std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat-mode");
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+
+    assert!(wt_unlink(home.path(), &repo, &[".env"]).status.success());
+    for path in [&env, &wt_path.join(".env")] {
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{}", path.display());
+    }
 }

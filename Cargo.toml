@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-serde = { version = "1", features = ["derive"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
 toml = "1"
 unicode-width = "0.2"

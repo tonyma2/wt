@@ -133,7 +133,14 @@ fn create_worktree(
     let message = result.inspect_err(|_| layout::cleanup_dest(&dest))?;
 
     eprintln!("{message}");
-    link::auto_link(worktrees, repo_root, &dest, &format!("'{name}'"));
+    link::auto_link(
+        git,
+        &Worktree {
+            path: dest.clone(),
+            branch: Some(name.to_owned()),
+            ..Worktree::default()
+        },
+    );
     println!("{}", dest.display());
     terminal::print_cd_hint(&dest);
     Ok(())

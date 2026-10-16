@@ -129,12 +129,15 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
-    /// Link files from the primary worktree into linked worktrees
+    /// Share untracked files across all worktrees of a repository
     #[command(
         visible_alias = "ln",
-        long_about = "Link files from the primary worktree into all linked worktrees.\n\
-            Source files must exist in the primary worktree.\n\
-            Correct symlinks are left in place. Conflicts are skipped unless --force is used.",
+        long_about = "Share untracked files (e.g. .env) across all worktrees of a repository.\n\
+            The file moves from the current worktree into the repository's git directory \
+            (.git/wt/links/) and every worktree, including the current one, gets a symlink to it, \
+            so removing any worktree never removes the file. New worktrees are linked automatically.\n\
+            Running it again for a shared file repairs missing links. \
+            Existing files in other worktrees are skipped unless --force is used.",
         after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force\n  wt link --list"
     )]
     Link {
@@ -163,12 +166,12 @@ pub enum Command {
         /// Repository URL
         url: String,
     },
-    /// Remove linked files from linked worktrees
+    /// Stop sharing files, leaving a copy in each worktree
     #[command(
-        long_about = "Remove previously linked files from all linked worktrees.\n\
-            Only removes symlinks that point back to the primary worktree; \
-            anything else is skipped.\n\
-            Use --all to unlink all previously linked files.",
+        long_about = "Stop sharing previously linked files.\n\
+            Each worktree's symlink is replaced with a copy of the file, then the shared copy is removed. \
+            Anything that is not a symlink to the shared file is skipped.\n\
+            Use --all to stop sharing every linked file.",
         after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink --all"
     )]
     Unlink {

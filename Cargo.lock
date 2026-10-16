@@ -1059,7 +1059,6 @@ dependencies = [
  "clap",
  "clap_complete",
  "ratatui",
- "serde",
  "tempfile",
  "toml",
  "unicode-width",

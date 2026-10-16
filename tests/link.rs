@@ -141,7 +141,7 @@ fn errors_on_missing_source() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("not found in primary worktree"),
+        stderr.contains("cannot link .env: not found in ~/repo"),
         "expected 'not found' error, got: {stderr}",
     );
 }
@@ -224,16 +224,16 @@ fn links_into_multiple_worktrees() {
 }
 
 #[test]
-fn no_linked_worktrees() {
+fn links_with_a_single_worktree() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
 
     let output = wt_link(home.path(), &repo, &[".env"]);
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("no linked worktrees"),
-        "expected 'no linked worktrees', got: {stderr}",
+    assert!(repo.join(".env").is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".env")).unwrap(),
+        "SECRET=abc"
     );
 }
 
@@ -249,7 +249,8 @@ fn warns_when_regular_file_exists() {
     assert!(output.status.success(), "should still exit 0");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "skipped .env in 'feat-conflict': already exists, use --force to replace\n"
+        "moved .env into ~/repo/.git/wt/links/.env\n\
+         skipped .env in 'feat-conflict': already exists, use --force to replace\n"
     );
 
     assert!(
@@ -400,23 +401,22 @@ fn force_skips_correct_symlink() {
 }
 
 #[test]
-fn link_persists_to_config() {
+fn moves_file_into_git_dir_and_links_it_back() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
-    let _wt_path = wt_new(home.path(), &repo, "feat-persist");
 
-    let output = wt_link(home.path(), &repo, &[".env"]);
-    assert!(output.status.success());
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
-    let config_path = home.path().join(".wt").join("config");
-    assert!(
-        config_path.exists(),
-        "config file should be created after linking"
+    let stored = repo.join(".git/wt/links/.env");
+    assert!(!stored.is_symlink());
+    assert_eq!(std::fs::read_to_string(&stored).unwrap(), "SECRET=abc");
+    assert_eq!(
+        canonical(&std::fs::read_link(repo.join(".env")).unwrap()),
+        canonical(&stored)
     );
-    let content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        content.contains(".env"),
-        "config should contain linked file, got: {content}",
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".git/wt/manifest")).unwrap(),
+        ".env\n"
     );
 }
 
@@ -467,27 +467,19 @@ fn auto_links_on_switch_creation() {
 }
 
 #[test]
-fn unlink_removes_from_config() {
+fn unlink_removes_from_link_list() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let _wt_path = wt_new(home.path(), &repo, "feat-unlink-cfg");
-
-    let link_out = wt_link(home.path(), &repo, &[".env"]);
-    assert!(link_out.status.success());
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
 
     let unlink_out = run_wt(home.path(), |cmd| {
         cmd.args(["unlink", ".env", "--repo"]).arg(&repo);
     });
     assert!(unlink_out.status.success());
 
-    let config_path = home.path().join(".wt").join("config");
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path).unwrap();
-        assert!(
-            !content.contains(".env"),
-            "config should not contain unlinked file, got: {content}",
-        );
-    }
+    assert_stdout_empty(&wt_link_list(home.path(), &repo));
+    assert!(!repo.join(".git/wt/links/.env").exists());
 }
 
 fn assert_auto_link_skips_invalid_path(bad_path: &str, branch: &str, expected_err: &str) {
@@ -498,10 +490,9 @@ fn assert_auto_link_skips_invalid_path(bad_path: &str, branch: &str, expected_er
     let link_out = wt_link(home.path(), &repo, &[".env"]);
     assert!(link_out.status.success());
 
-    let config_path = home.path().join(".wt").join("config");
-    let content = std::fs::read_to_string(&config_path).unwrap();
-    let content = content.replace(r#"[".env"]"#, &format!(r#"[".env", "{bad_path}"]"#));
-    std::fs::write(&config_path, content).unwrap();
+    let manifest = repo.join(".git/wt/manifest");
+    let content = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("{content}{bad_path}\n")).unwrap();
 
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["switch", "-c", branch, "--repo"]).arg(&repo);
@@ -568,7 +559,7 @@ fn list_from_linked_worktree_shows_repo_links() {
 }
 
 #[test]
-fn unlink_from_linked_worktree_removes_links() {
+fn unlink_from_linked_worktree_restores_copies() {
     let (home, repo) = setup();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let feat = wt_new(home.path(), &repo, "feat");
@@ -582,11 +573,13 @@ fn unlink_from_linked_worktree_removes_links() {
         "unlink failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
-    assert!(feat.join(".env").symlink_metadata().is_err());
-    assert_eq!(
-        std::fs::read_to_string(repo.join(".env")).unwrap(),
-        "SECRET=abc"
-    );
+    for wt in [&feat, &repo] {
+        assert!(!wt.join(".env").is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=abc"
+        );
+    }
 }
 
 #[test]
@@ -624,15 +617,19 @@ fn skips_worktrees_whose_directory_is_missing() {
 }
 
 #[test]
-fn list_reports_unparseable_config() {
+fn reports_unparseable_legacy_config() {
     let (home, repo) = setup();
     let config_dir = home.path().join(".wt");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("config"), "links = [").unwrap();
 
     let output = wt_link_list(home.path(), &repo);
-    assert_exit_code(&output, 1);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot parse"));
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot migrate links"));
+    assert!(
+        config_dir.join("config").exists(),
+        "unreadable config must be kept"
+    );
 }
 
 #[test]
@@ -650,8 +647,7 @@ fn force_never_touches_files_inside_a_linked_directory() {
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["unlink", "cfg/local.env", "--repo"]).arg(&repo);
     });
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("inside a linked directory"));
+    assert_error(&output, 1, "cannot unlink cfg/local.env: not linked\n");
 
     assert_eq!(
         std::fs::read_to_string(repo.join("cfg/local.env")).unwrap(),
@@ -736,4 +732,89 @@ fn concurrent_links_in_different_repos_all_persist() {
             repo.display()
         );
     }
+}
+
+#[test]
+fn removing_the_worktree_linked_from_keeps_the_file() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
+    let source = wt_new(home.path(), &repo, "feat-a");
+    let other = wt_new(home.path(), &repo, "feat-b");
+    std::fs::write(source.join(".env"), "SECRET=abc").unwrap();
+    assert!(wt_link(home.path(), &source, &[".env"]).status.success());
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "feat-a", "--repo"]).arg(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!source.exists());
+    for wt in [&repo, &other] {
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=abc"
+        );
+    }
+}
+
+#[test]
+fn refuses_tracked_files() {
+    let (home, repo) = setup();
+    std::fs::create_dir(repo.join("cfg")).unwrap();
+    std::fs::write(repo.join("cfg/app.toml"), "k = 1").unwrap();
+    assert_git_success(&repo, &["add", "cfg"]);
+
+    for path in ["cfg/app.toml", "cfg"] {
+        let output = wt_link(home.path(), &repo, &[path]);
+        assert_error(
+            &output,
+            1,
+            &format!("cannot link {path}: tracked by git, only untracked files can be shared\n"),
+        );
+    }
+    assert!(!repo.join("cfg").is_symlink());
+}
+
+#[test]
+fn migrates_links_from_legacy_config() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
+    let source = wt_new(home.path(), &repo, "feat-a");
+    let other = wt_new(home.path(), &repo, "feat-b");
+    std::fs::write(source.join(".env"), "SECRET=abc").unwrap();
+    for wt in [&repo, &other] {
+        std::os::unix::fs::symlink(source.join(".env"), wt.join(".env")).unwrap();
+    }
+    let config = home.path().join(".wt/config");
+    std::fs::write(
+        &config,
+        format!(
+            "[links]\n\"{}\" = [\".env\"]\n",
+            canonical(&source).display()
+        ),
+    )
+    .unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "feat-a", "--repo"]).arg(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!config.exists(), "migrated config should be deleted");
+    for wt in [&repo, &other] {
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=abc"
+        );
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&wt_link_list(home.path(), &repo).stdout),
+        ".env\n"
+    );
 }
