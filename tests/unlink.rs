@@ -483,3 +483,17 @@ fn unlinks_a_path_given_twice_once() {
     assert_stderr_exact(&output, "unlinked .env in 'main', kept a copy\n");
     assert_copy(&repo.join(".env"), "SECRET=abc");
 }
+
+#[test]
+fn removes_dangling_links_when_shared_copy_is_missing() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    let wt_path = wt_new(home.path(), &repo, "feat");
+    assert_exit_code(&wt_link(home.path(), &repo, &[".env"]), 0);
+    std::fs::remove_file(repo.join(".git/wt/links/.env")).unwrap();
+
+    let output = wt_unlink(home.path(), &repo, &[".env"]);
+    assert_exit_code(&output, 0);
+    assert!(repo.join(".env").symlink_metadata().is_err());
+    assert!(wt_path.join(".env").symlink_metadata().is_err());
+}

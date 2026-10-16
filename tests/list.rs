@@ -438,3 +438,20 @@ fn list_all_lists_repo_once_with_relative_worktree_paths() {
         "{stdout}"
     );
 }
+
+#[test]
+fn piped_output_is_not_truncated() {
+    let (home, repo) = setup();
+    let branch = format!("feat/{}", "long-".repeat(40));
+    let wt_path = wt_new(home.path(), &repo, &branch);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--repo"])
+            .arg(&repo)
+            .env_remove("COLUMNS");
+    });
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = find_row(&stdout, "feat/");
+    assert!(row.contains(&branch), "got: {row}");
+    assert!(row.contains(&tilde(home.path(), &wt_path)), "got: {row}");
+}

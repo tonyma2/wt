@@ -71,7 +71,7 @@ fn switch_creates_new_branch() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "creating branch 'feat/brand-new'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/brand-new' from 'main'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(
@@ -202,7 +202,7 @@ fn switch_alias_works() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "creating branch 'feat/alias-test'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/alias-test' from 'main'\n");
 
     let path = parse_wt_new_path(&output);
     assert!(path.exists(), "worktree path should exist");
@@ -435,7 +435,7 @@ fn switch_creates_when_no_close_match() {
     assert!(output.status.success());
     assert_stderr_exact(
         &output,
-        "creating branch 'feat/something-completely-different'\n",
+        "creating branch 'feat/something-completely-different' from 'main'\n",
     );
 }
 
@@ -450,7 +450,7 @@ fn switch_create_flag_bypasses_fuzzy_check() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "creating branch 'feat/logni'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/logni' from 'main'\n");
     let path = parse_wt_new_path(&output);
     assert!(path.exists());
     assert_branch_present(&repo, "feat/logni");
@@ -465,7 +465,7 @@ fn no_cd_hint_when_stdout_not_tty() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "creating branch 'feat/hint-test'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/hint-test' from 'main'\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("cd '"),
@@ -484,7 +484,7 @@ fn switch_create_flag_long_form() {
     });
 
     assert!(output.status.success());
-    assert_stderr_exact(&output, "creating branch 'feat/logni'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/logni' from 'main'\n");
 }
 
 #[test]
@@ -591,7 +591,7 @@ fn base_sets_start_point() {
         cmd.args(["switch", "feat/x", "develop", "--repo"])
             .arg(&repo);
     });
-    assert_stderr_exact(&output, "creating branch 'feat/x'\n");
+    assert_stderr_exact(&output, "creating branch 'feat/x' from 'develop'\n");
     let wt_path = parse_wt_new_path(&output);
     assert_eq!(
         assert_git_stdout_success(&wt_path, &["rev-parse", "HEAD"]),
@@ -664,7 +664,7 @@ fn base_creates_fresh_branch_when_only_remote_branch_exists() {
         cmd.args(["switch", "remote-only", "main", "--repo"])
             .arg(&repo);
     });
-    assert_stderr_exact(&output, "creating branch 'remote-only'\n");
+    assert_stderr_exact(&output, "creating branch 'remote-only' from 'main'\n");
     parse_wt_new_path(&output);
 }
 
@@ -747,7 +747,7 @@ fn succeeds_with_unreachable_origin() {
     let output = run_wt(home.path(), |cmd| {
         cmd.args(["switch", "offline-branch", "--repo"]).arg(&repo);
     });
-    assert_stderr_exact(&output, "creating branch 'offline-branch'\n");
+    assert_stderr_exact(&output, "creating branch 'offline-branch' from 'main'\n");
     parse_wt_new_path(&output);
 }
 
@@ -803,4 +803,99 @@ fn accepts_bare_repo_as_repo_flag() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(parse_wt_new_path(&output).file_name().unwrap(), "origin");
+}
+
+#[test]
+fn new_branch_names_the_worktree_it_started_from() {
+    let (home, repo) = setup();
+    let feature = wt_new(home.path(), &repo, "feature");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.current_dir(&feature).args(["switch", "-c", "child"]);
+    });
+    assert_stderr_exact(&output, "creating branch 'child' from 'feature'\n");
+}
+
+#[test]
+fn errors_in_repo_without_commits() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = home.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    assert_git_success(&repo, &["init", "-b", "main"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "foo", "--repo"]).arg(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot create branch 'foo': the repository has no commits yet\n",
+    );
+}
+
+#[test]
+fn suggests_branch_whose_last_segment_matches() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["branch", "feature/login"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "login", "--repo"]).arg(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "did you mean 'feature/login'? use `wt switch -c login` to create a new branch\n",
+    );
+}
+
+#[test]
+fn numbered_sibling_is_not_a_typo() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["branch", "fix-123"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "fix-124", "--repo"]).arg(&repo);
+    });
+    assert_stderr_exact(&output, "creating branch 'fix-124' from 'main'\n");
+}
+
+#[test]
+fn tracks_branch_on_remote_whose_name_has_a_slash() {
+    let (home, repo, origin) = setup_with_origin();
+    assert_git_success(&repo, &["push", "origin", "main:feat/x"]);
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["remote", "add", "my/rem"]).arg(&origin);
+    });
+    assert_git_success(&repo, &["remote", "remove", "origin"]);
+    assert_git_success(&repo, &["fetch", "my/rem"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "feat/x", "--repo"]).arg(&repo);
+    });
+    assert_stderr_exact(
+        &output,
+        "creating branch 'feat/x' tracking 'my/rem/feat/x'\n",
+    );
+    let upstream =
+        assert_git_stdout_success(&repo, &["rev-parse", "--abbrev-ref", "feat/x@{upstream}"]);
+    assert_eq!(upstream.trim(), "my/rem/feat/x");
+}
+
+#[test]
+fn failing_post_checkout_hook_rolls_back_branch_and_worktree() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (home, repo) = setup();
+    let hook = repo.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\necho hook failed >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "-c", "hooked", "--repo"]).arg(&repo);
+    });
+    assert_error(&output, 1, "cannot create worktree: hook failed\n");
+    assert_branch_absent(&repo, "hooked");
+    let worktrees = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!worktrees.contains("hooked"), "got: {worktrees}");
+    assert_eq!(dir_entry_count(&home.path().join(".wt/worktrees")), 0);
 }

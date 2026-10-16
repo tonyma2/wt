@@ -4,6 +4,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use crate::git::Git;
+use crate::layout;
 use crate::links::{Store, normalize_path, normalize_paths};
 use crate::terminal;
 use crate::worktree::{self, Worktree};
@@ -57,12 +58,9 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
             eprintln!("skipped {file}: inside a linked directory");
             continue;
         }
-        let meta = src.symlink_metadata().map_err(|_| {
-            format!(
-                "cannot link {file}: not found in {}",
-                terminal::tilde_path(&current.path)
-            )
-        })?;
+        let meta = src
+            .symlink_metadata()
+            .map_err(|_| not_found_error(file, &current.path))?;
         if meta.is_symlink() {
             return Err(format!("cannot link {file}: is a symlink"));
         }
@@ -70,6 +68,12 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
             return Err(format!(
                 "cannot link {file}: tracked by git, only untracked files can be shared"
             ));
+        }
+        if !Git::is_ignored(&current.path, file) {
+            eprintln!(
+                "{file} is not ignored by git, it will show as untracked in every worktree \
+                 and block `wt rm`, add it to .gitignore"
+            );
         }
         to_store.push((file, src));
         linkable.push(file);
@@ -109,6 +113,7 @@ fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<()
         eprintln!("skipped {file} in {label}: inside a linked directory");
         return Ok(());
     }
+    let mut replaced = false;
     if dest.symlink_metadata().is_ok() {
         if is_expected_link(&dest, source) {
             return Ok(());
@@ -119,14 +124,40 @@ fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<()
             return Ok(());
         }
         remove_dest(&dest).map_err(|e| format!("cannot remove {file} in {label}: {e}"))?;
+        if !dangling {
+            replaced = true;
+        }
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create directory {}: {e}", parent.display()))?;
     }
     symlink(source, &dest).map_err(|e| format!("cannot link {file} in {label}: {e}"))?;
-    eprintln!("linked {file} in {label}");
+    if replaced {
+        eprintln!("replaced {file} in {label} with a link");
+    } else {
+        eprintln!("linked {file} in {label}");
+    }
     Ok(())
+}
+
+fn not_found_error(file: &str, root: &Path) -> String {
+    let root_display = terminal::tilde_path(root);
+    let from_cwd = layout::current_dir()
+        .and_then(|cwd| {
+            cwd.strip_prefix(layout::canonicalize_or_self(root))
+                .ok()
+                .map(|rel| rel.join(file))
+        })
+        .filter(|rel| rel != Path::new(file) && root.join(rel).symlink_metadata().is_ok());
+    match from_cwd {
+        Some(rel) => format!(
+            "cannot link {file}: not found in {root_display}, paths are relative to the \
+             worktree root, did you mean {}?",
+            rel.display()
+        ),
+        None => format!("cannot link {file}: not found in {root_display}"),
+    }
 }
 
 pub fn auto_link(git: &Git, wt: &Worktree) {

@@ -48,6 +48,57 @@ const FISH_WRAPPER: &str = "function wt --wraps=wt
 end
 ";
 
+const BASH_COMPLETER: &str = r#"
+_wt_complete() {
+    local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
+    local i pos=0 words
+    if [[ $COMP_CWORD -lt 2 || $cur == -* || $prev == --repo ]]; then
+        _wt "$@"
+        return
+    fi
+    for (( i = 2; i < COMP_CWORD; i++ )); do
+        if [[ ${COMP_WORDS[i]} == --repo ]]; then
+            (( i++ ))
+        elif [[ ${COMP_WORDS[i]} != -* ]]; then
+            (( pos++ ))
+        fi
+    done
+    case ${COMP_WORDS[1]},$pos in
+        switch,0|s,0)
+            words=$({ git for-each-ref --format='%(refname:lstrip=2)' refs/heads/
+                      git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/; } | grep -vx HEAD | sort -u) ;;
+        switch,1|s,1)
+            words=$(git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ refs/remotes/ refs/tags/ |
+                grep -v '/HEAD$') ;;
+        path,0|p,0|remove,*|rm,*)
+            words=$(git worktree list --porcelain | sed -n 's|^branch refs/heads/||p') ;;
+        unlink,*)
+            words=$(command wt link --list) ;;
+        *)
+            _wt "$@"
+            return ;;
+    esac 2>/dev/null
+    COMPREPLY=($(compgen -W "$words" -- "$cur"))
+}
+"#;
+
+const FISH_COMPLETER: &str = r#"
+function __fish_wt_branches
+    git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ 2>/dev/null
+    git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null | string match -v HEAD
+end
+
+function __fish_wt_worktree_branches
+    git worktree list --porcelain 2>/dev/null | string replace -rf '^branch refs/heads/' ''
+end
+
+complete -c wt -n "__fish_wt_using_subcommand switch s" -f -a "(__fish_wt_branches)"
+complete -c wt -n "__fish_wt_using_subcommand path p remove rm" -f -a "(__fish_wt_worktree_branches)"
+complete -c wt -n "__fish_wt_using_subcommand unlink" -f -a "(command wt link --list 2>/dev/null)"
+"#;
+
+const BASH_REGISTRATION: &str = "complete -F _wt ";
+
 const COMPLETERS: [(&str, &str); 7] = [
     (
         ":name -- Branch checked out in the worktree:",
@@ -56,7 +107,7 @@ const COMPLETERS: [(&str, &str); 7] = [
     (":name -- Branch name:", "_wt_switch_targets"),
     (
         "::base -- Start point for a new branch:",
-        "_wt_local_branch_names",
+        "_wt_start_points",
     ),
     (
         "*::names -- Branch names or worktree paths:",
@@ -211,6 +262,12 @@ _wt_switch_targets() {
     return ret
 }
 
+_wt_start_points() {
+    local -a refs=(${(f)"$(_wt_git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ refs/remotes/ refs/tags/)"})
+    refs=(${refs:#*/HEAD})
+    (( ${#refs} > 0 )) && compadd -- "${refs[@]}"
+}
+
 _wt_local_branch_names() {
     _wt_collect_local_branches
     (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
@@ -246,15 +303,30 @@ _wt_unlink_files() {
                      ({completer} target not found), please report this bug"
                 ));
             }
+            // `*::` narrows $words to the operands, hiding --repo from the completer
+            let spec = spec.replacen("*::", "*:", 1);
             script = script.replace(&target, &format!("{spec}{completer}"));
         }
     }
 
     match shell {
-        clap_complete::Shell::Zsh | clap_complete::Shell::Bash => {
+        clap_complete::Shell::Zsh => script.push_str(SH_WRAPPER),
+        clap_complete::Shell::Bash => {
+            if !script.contains(BASH_REGISTRATION) {
+                return Err(
+                    "cannot generate bash completions: clap_complete output format \
+                     changed (registration not found), please report this bug"
+                        .into(),
+                );
+            }
+            script = script.replace(BASH_REGISTRATION, "complete -F _wt_complete ");
+            script.push_str(BASH_COMPLETER);
             script.push_str(SH_WRAPPER);
         }
-        clap_complete::Shell::Fish => script.push_str(FISH_WRAPPER),
+        clap_complete::Shell::Fish => {
+            script.push_str(FISH_COMPLETER);
+            script.push_str(FISH_WRAPPER);
+        }
         _ => {}
     }
 
@@ -276,7 +348,8 @@ mod tests {
         for (completer, uses) in [
             ("_wt_path_branches", 2),
             ("_wt_switch_targets", 2),
-            ("_wt_local_branch_names", 3),
+            ("_wt_start_points", 2),
+            ("_wt_local_branch_names", 1),
             ("_wt_remove_targets", 2),
             ("_wt_link_files", 2),
             ("_wt_unlink_files", 1),
@@ -286,6 +359,22 @@ mod tests {
         }
         let dispatch = script.find(DISPATCH_MARKER).unwrap();
         assert!(script.find("_wt_path_branches() {").unwrap() < dispatch);
+    }
+
+    #[test]
+    fn zsh_operand_completers_see_repo_flag() {
+        let script = render(Shell::Zsh).unwrap();
+        assert!(!script.contains("*::names"));
+        assert!(script.contains("'*:names -- Branch names or worktree paths:_wt_remove_targets'"));
+    }
+
+    #[test]
+    fn bash_and_fish_complete_branches() {
+        let bash = render(Shell::Bash).unwrap();
+        assert!(bash.contains("complete -F _wt_complete "));
+        assert!(!bash.contains("complete -F _wt "));
+        assert!(bash.contains(BASH_COMPLETER));
+        assert!(render(Shell::Fish).unwrap().contains(FISH_COMPLETER));
     }
 
     #[test]

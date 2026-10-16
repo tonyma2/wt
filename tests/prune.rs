@@ -1867,7 +1867,7 @@ fn base_flag_non_origin_remote_does_not_prune_base_branch_worktree() {
 }
 
 #[test]
-fn base_flag_warns_on_nonexistent_branch() {
+fn base_flag_errors_on_nonexistent_branch() {
     let (home, repo) = setup();
 
     let wt_path = wt_new(home.path(), &repo, "feat-keep");
@@ -1879,12 +1879,7 @@ fn base_flag_warns_on_nonexistent_branch() {
         .env("HOME", home.path())
         .output()
         .unwrap();
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("base branch 'nonexistent' not found"),
-        "should warn about nonexistent base branch, got: {stderr}"
-    );
+    assert_error(&output, 1, "base branch 'nonexistent' not found\n");
     assert!(
         wt_path.exists(),
         "worktree should be kept when base branch is invalid"
@@ -2992,4 +2987,13 @@ fn keeps_clone_that_is_still_fetching() {
         clone.exists(),
         "a clone with nothing fetched yet may be in progress"
     );
+}
+
+#[test]
+fn repo_flag_conflicts_with_orphans() {
+    let (home, repo) = setup();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["prune", "--orphans", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 2);
 }

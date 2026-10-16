@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::commands::link;
 use crate::fuzzy;
-use crate::git::{self, Git};
+use crate::git::Git;
 use crate::layout;
 use crate::terminal;
 use crate::worktree::{self, Worktree};
@@ -92,6 +92,12 @@ pub fn run(
 
 fn similar_branch(git: &Git, name: &str) -> Option<String> {
     let branches = git.branch_names();
+    let mut same_leaf = branches
+        .iter()
+        .filter(|b| b.rsplit_once('/').is_some_and(|(_, leaf)| leaf == name));
+    if let (Some(only), None) = (same_leaf.next(), same_leaf.next()) {
+        return Some(only.clone());
+    }
     let candidates: Vec<&str> = branches.iter().map(String::as_str).collect();
     fuzzy::close_match(name, &candidates).map(str::to_owned)
 }
@@ -111,26 +117,44 @@ fn create_worktree(
         git.prune_worktrees(false)?;
     }
 
+    let new_branch = matches!(start, Start::NewBranch(_));
+    let from = match start {
+        Start::NewBranch(None) => Some(start_label(git, name)?),
+        _ => None,
+    };
     let dest = layout::create_dest(repo_root, git)?;
     let result = match start {
         Start::Existing => git
             .checkout_worktree(name, &dest)
             .map(|()| format!("checking out '{name}'")),
         Start::NewBranch(base) => {
-            let upstream = base
-                .and_then(|b| git.full_ref(b))
-                .filter(|r| r.starts_with("refs/remotes/") && git::branch_name(r) == Some(name));
+            let upstream = base.and_then(|b| git.full_ref(b)).filter(|r| {
+                git.remotes_with_branch(name).is_ok_and(|remotes| {
+                    remotes
+                        .iter()
+                        .any(|remote| *r == format!("refs/remotes/{remote}/{name}"))
+                })
+            });
             git.add_worktree(name, &dest, base, upstream.is_some())
                 .map(|()| match upstream {
                     Some(r) => format!(
                         "creating branch '{name}' tracking '{}'",
                         r.trim_start_matches("refs/remotes/")
                     ),
-                    None => format!("creating branch '{name}'"),
+                    None => format!(
+                        "creating branch '{name}' from '{}'",
+                        base.or(from.as_deref()).unwrap_or("HEAD")
+                    ),
                 })
         }
     };
-    let message = result.inspect_err(|_| layout::cleanup_dest(&dest))?;
+    // A failing post-checkout hook fails `worktree add` after the worktree and branch exist.
+    let message = result.inspect_err(|_| {
+        if git.remove_worktree(&dest, true).is_ok() && new_branch {
+            let _ = git.delete_branch(name);
+        }
+        layout::cleanup_dest(&dest);
+    })?;
 
     eprintln!("{message}");
     link::auto_link(
@@ -144,4 +168,14 @@ fn create_worktree(
     println!("{}", dest.display());
     terminal::print_cd_hint(&dest);
     Ok(())
+}
+
+fn start_label(git: &Git, name: &str) -> Result<String, String> {
+    let sha = git.short_sha("HEAD").ok_or_else(|| {
+        format!("cannot create branch '{name}': the repository has no commits yet")
+    })?;
+    Ok(git
+        .head_ref()
+        .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_owned))
+        .unwrap_or(sha))
 }

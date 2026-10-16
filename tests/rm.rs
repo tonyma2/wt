@@ -992,3 +992,82 @@ fn removes_worktree_whose_directory_was_deleted() {
         "empty id dir should be removed"
     );
 }
+
+#[test]
+fn removes_branch_merged_into_remote_default_when_local_main_is_behind() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "landed");
+    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "landed"]);
+    assert_git_success(&wt_path, &["push", "origin", "landed:main"]);
+    assert_git_success(&repo, &["push", "origin", "--delete", "landed"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "landed", "--repo"]).arg(&repo);
+    });
+    assert_exit_code(&output, 0);
+    assert!(!wt_path.exists());
+    assert_branch_absent(&repo, "landed");
+}
+
+#[test]
+fn reports_tip_of_deleted_branch() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "precious");
+    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "work"]);
+    let sha = assert_git_stdout_success(&wt_path, &["rev-parse", "--short", "HEAD"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "precious", "-f", "--repo"]).arg(&repo);
+    });
+    assert_stderr_exact(
+        &output,
+        &format!(
+            "removed worktree and branch 'precious' ({}, was {})\n",
+            tilde(home.path(), &wt_path),
+            sha.trim()
+        ),
+    );
+}
+
+#[test]
+fn keep_branch_names_the_kept_branch() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "kept");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "kept", "--keep-branch", "--repo"])
+            .arg(&repo);
+    });
+    assert_stderr_exact(
+        &output,
+        &format!(
+            "removed worktree ({}), kept branch 'kept'\n",
+            tilde(home.path(), &wt_path)
+        ),
+    );
+    assert_branch_present(&repo, "kept");
+}
+
+#[test]
+fn keeps_branch_that_bare_repo_head_points_at() {
+    let (home, _repo, origin) = setup_with_origin();
+    let clone = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    let main_wt = parse_wt_new_path(&clone);
+    let develop = wt_new(home.path(), &main_wt, "develop");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "main", "--repo"]).arg(&develop);
+    });
+    assert_stderr_exact(
+        &output,
+        &format!(
+            "removed worktree ({}), kept branch 'main' (the repository's HEAD)\n",
+            tilde(home.path(), &main_wt)
+        ),
+    );
+    assert_branch_present(&develop, "main");
+}

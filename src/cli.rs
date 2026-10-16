@@ -45,7 +45,8 @@ pub enum Command {
     #[command(
         visible_alias = "ls",
         long_about = "List worktrees for the current repository.\n\
-            The leading '*' marks the active/current worktree.\n\
+            The leading '*' marks the current worktree.\n\
+            STATUS: '*' uncommitted changes, '↑N' ahead of upstream, '↓N' behind upstream.\n\
             Use --all to list worktrees across all repositories managed under ~/.wt/worktrees/.",
         after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --all"
     )]
@@ -54,7 +55,7 @@ pub enum Command {
         #[arg(long, conflicts_with = "all")]
         repo: Option<PathBuf>,
         /// List worktrees across all discovered repositories
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
     /// Remove worktrees by branch or path
@@ -74,7 +75,7 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
         /// Force removal
-        #[arg(long)]
+        #[arg(short, long)]
         force: bool,
         /// Remove the worktree but keep the branch
         #[arg(long)]
@@ -84,9 +85,8 @@ pub enum Command {
     #[command(
         long_about = "Clean up merged, stale, and orphaned worktrees.\n\n\
             Removes clean worktrees whose branch is fully merged into the base branch, \
-            along with the branch. The base branch, the remote's default branch, the \
-            repo's HEAD branch, and the worktree that is the source for `wt link` are \
-            never removed. Also repairs worktree directories that were renamed, prunes \
+            along with the branch. The base branch, the remote's default branch, and the \
+            repo's HEAD branch are never removed. Also repairs worktree directories that were renamed, prunes \
             stale worktree metadata, and removes bare clones under ~/.wt/repos/ that have \
             no worktrees and no unpushed commits.\n\n\
             Use --gone to also remove worktrees whose upstream branch no longer exists, \
@@ -109,7 +109,7 @@ pub enum Command {
     #[command(
         long_about = "Set up shell integration.\n\
             Outputs completions and a wrapper function that auto-changes \
-            directory after switch and clone.",
+            directory after switch and clone. The wrapper is only generated for bash, zsh, and fish.",
         after_help = "Examples:\n  eval \"$(wt init zsh)\"\n  eval \"$(wt init bash)\"\n  wt init fish | source"
     )]
     Init {
@@ -136,6 +136,7 @@ pub enum Command {
             The file moves from the current worktree into the repository's git directory \
             (.git/wt/links/) and every worktree, including the current one, gets a symlink to it, \
             so removing any worktree never removes the file. New worktrees are linked automatically.\n\
+            Paths are relative to the worktree root. \
             Running it again for a shared file repairs missing links. \
             Existing files in other worktrees are skipped unless --force is used.",
         after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force\n  wt link --list"
@@ -148,7 +149,7 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
         /// Replace existing destinations that are not correct symlinks
-        #[arg(long)]
+        #[arg(short, long)]
         force: bool,
         /// List currently configured links for this repository
         #[arg(long)]
@@ -182,7 +183,7 @@ pub enum Command {
         #[arg(long)]
         repo: Option<PathBuf>,
         /// Unlink all previously linked files
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
 }
@@ -202,7 +203,7 @@ pub struct PruneArgs {
     #[arg(long)]
     pub orphans: bool,
     /// Repository path (prune only this repo, skip orphan cleanup)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "orphans")]
     pub repo: Option<PathBuf>,
     /// Base branch for merged detection (e.g. develop, trunk)
     #[arg(long)]

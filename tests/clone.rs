@@ -439,3 +439,63 @@ fn clone_empty_repo_fails_and_cleans_up() {
         "no worktree dirs should exist"
     );
 }
+
+#[test]
+fn clone_resolves_relative_path_against_cwd() {
+    let (home, _origin) = setup_origin();
+    let output = run_wt(home.path(), |cmd| {
+        cmd.current_dir(home.path()).args(["clone", "origin"]);
+    });
+    assert_exit_code(&output, 0);
+    let wt_path = parse_wt_new_path(&output);
+    assert!(wt_path.join(".git").exists());
+    let url = assert_git_stdout_success(
+        &find_repo_under(&repos_dir(home.path())),
+        &["remote", "get-url", "origin"],
+    );
+    assert_eq!(
+        Path::new(url.trim()),
+        canonical(&home.path().join("origin"))
+    );
+}
+
+#[test]
+fn clone_of_already_cloned_url_reuses_existing_worktree() {
+    let (home, origin) = setup_origin();
+    let first = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    let first_path = parse_wt_new_path(&first);
+
+    let second = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    assert_exit_code(&second, 0);
+    assert_stderr_exact(&second, "already cloned, switching to 'main'\n");
+    assert_eq!(parse_wt_new_path(&second), first_path);
+    find_repo_under(&repos_dir(home.path()));
+}
+
+#[test]
+fn clone_of_already_cloned_url_without_default_worktree_errors() {
+    let (home, origin) = setup_origin();
+    let first = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    let first_path = parse_wt_new_path(&first);
+    std::fs::remove_dir_all(&first_path).unwrap();
+    let bare = find_repo_under(&repos_dir(home.path()));
+
+    let second = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    let bare = tilde(home.path(), &bare);
+    assert_error(
+        &second,
+        1,
+        &format!(
+            "{} is already cloned into {bare}, use `wt switch <branch> --repo {bare}`\n",
+            canonical(&origin).display()
+        ),
+    );
+}

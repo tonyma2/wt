@@ -160,3 +160,28 @@ fn zsh_switch_offers_worktrees_then_other_branches_once() {
         ["main", "feat", "local-only", "remote-only"]
     );
 }
+
+#[test]
+fn bash_completes_branches_and_worktrees() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["branch", "feat/a"]);
+    assert_git_success(&repo, &["tag", "v1.0"]);
+    wt_new(home.path(), &repo, "feat/b");
+
+    let complete = |words: &str| {
+        let script = format!(
+            "COMP_WORDS=({words}); COMP_CWORD=$(( ${{#COMP_WORDS[@]}} - 1 ))\n\
+             _wt_complete wt \"${{COMP_WORDS[COMP_CWORD]}}\" \"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\
+             printf '%s\\n' \"${{COMPREPLY[@]}}\""
+        );
+        let output = run_wrapper(home.path(), &repo, &script);
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    assert_eq!(complete("wt s ''"), "feat/a\nfeat/b\nmain\n");
+    assert_eq!(complete("wt s -c f"), "feat/a\nfeat/b\n");
+    assert_eq!(complete("wt s x ''"), "feat/a\nfeat/b\nmain\nv1.0\n");
+    assert_eq!(complete("wt rm ''"), "main\nfeat/b\n");
+    assert!(complete("wt s --").contains("--create"));
+}

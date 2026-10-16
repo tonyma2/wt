@@ -37,6 +37,12 @@ pub fn run(files: &[String], repo: Option<&Path>, all: bool) -> Result<(), Strin
     for file in &files {
         let source = store.path(file);
         if source.symlink_metadata().is_err() {
+            for wt in &live {
+                let dest = wt.path.join(file);
+                if is_expected_link(&dest, &source) {
+                    let _ = fs::remove_file(&dest);
+                }
+            }
             store.remove(file)?;
             eprintln!(
                 "unlinked {file}: it was missing from {}",

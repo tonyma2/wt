@@ -77,12 +77,21 @@ fn remove_one(
         ));
     }
 
-    let branch = wt
-        .branch
-        .as_deref()
-        .filter(|b| !keep_branch && git.has_local_branch(b));
-    let in_use = branch.filter(|b| worktree::branch_checked_out_elsewhere(&worktrees, b, &target));
-    let delete_branch = branch.filter(|_| in_use.is_none());
+    let branch = wt.branch.as_deref().filter(|b| git.has_local_branch(b));
+    // git lists the main worktree (or the bare repo) first; its HEAD is the repository's
+    let repo_head = worktrees
+        .first()
+        .and_then(|main| Git::new(&main.path).head_ref());
+    let kept = branch.and_then(|b| {
+        if worktree::branch_checked_out_elsewhere(&worktrees, b, &target) {
+            Some(" (checked out in another worktree)")
+        } else if repo_head == Some(format!("refs/heads/{b}")) {
+            Some(" (the repository's HEAD)")
+        } else {
+            keep_branch.then_some("")
+        }
+    });
+    let delete_branch = branch.filter(|_| kept.is_none());
 
     if !force {
         if Status::of(wt).dirty {
@@ -100,17 +109,17 @@ fn remove_one(
         }
     }
 
+    let sha = delete_branch.and_then(|b| git.short_sha(&format!("refs/heads/{b}")));
     git.remove_worktree(&target, force)?;
     layout::cleanup_empty_parent(&target, cwd.as_deref());
 
     let path_display = terminal::tilde_path(&target);
     if let Some(branch) = delete_branch {
-        git.delete_branch(branch, force)?;
-        eprintln!("removed worktree and branch '{branch}' ({path_display})");
-    } else if let Some(branch) = in_use {
-        eprintln!(
-            "removed worktree ({path_display}), kept branch '{branch}' (checked out in another worktree)"
-        );
+        git.delete_branch(branch)?;
+        let was = sha.map(|sha| format!(", was {sha}")).unwrap_or_default();
+        eprintln!("removed worktree and branch '{branch}' ({path_display}{was})");
+    } else if let (Some(branch), Some(reason)) = (branch, kept) {
+        eprintln!("removed worktree ({path_display}), kept branch '{branch}'{reason}");
     } else {
         eprintln!("removed worktree ({path_display})");
     }

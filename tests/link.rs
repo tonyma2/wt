@@ -240,6 +240,7 @@ fn links_with_a_single_worktree() {
 #[test]
 fn warns_when_regular_file_exists() {
     let (home, repo) = setup();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
     let wt_path = wt_new(home.path(), &repo, "feat-conflict");
 
@@ -302,8 +303,8 @@ fn force_replaces_regular_file() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("linked .env"),
-        "should report linking, got: {stderr}",
+        stderr.contains("replaced .env in 'feat-force' with a link"),
+        "should report replacing, got: {stderr}",
     );
     assert!(
         !stderr.contains("skipped"),
@@ -822,6 +823,7 @@ fn migrates_links_from_legacy_config() {
 #[test]
 fn links_a_path_given_twice_once() {
     let (home, repo) = setup();
+    std::fs::write(repo.join(".git/info/exclude"), ".env\n").unwrap();
     std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
 
     let output = wt_link(home.path(), &repo, &[".env", "./.env"]);
@@ -982,4 +984,36 @@ fn concurrent_legacy_migrations_keep_the_file() {
             "SECRET=abc"
         );
     }
+}
+
+#[test]
+fn warns_when_file_is_not_ignored() {
+    let (home, repo) = setup();
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+
+    let output = wt_link(home.path(), &repo, &[".env"]);
+    assert_exit_code(&output, 0);
+    assert_stderr_exact(
+        &output,
+        ".env is not ignored by git, it will show as untracked in every worktree \
+         and block `wt rm`, add it to .gitignore\n\
+         moved .env into ~/repo/.git/wt/links/.env\n",
+    );
+}
+
+#[test]
+fn not_found_from_subdirectory_suggests_root_relative_path() {
+    let (home, repo) = setup();
+    std::fs::create_dir(repo.join("sub")).unwrap();
+    std::fs::write(repo.join("sub/key.txt"), "k").unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.current_dir(repo.join("sub")).args(["link", "key.txt"]);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot link key.txt: not found in ~/repo, paths are relative to the worktree root, \
+         did you mean sub/key.txt?\n",
+    );
 }

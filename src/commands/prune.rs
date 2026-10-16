@@ -233,7 +233,7 @@ fn prune_branches(
     cwd: Option<&Path>,
     out: &mut Group,
 ) -> Result<usize, String> {
-    let base = resolve_base(git, opts.base.as_deref(), out);
+    let base = resolve_base(git, opts.base.as_deref(), out)?;
     let base_ref = base.as_deref().and_then(|b| git.full_ref(b));
     let default_ref = opts
         .base
@@ -354,19 +354,14 @@ fn prune_branches(
     Ok(failures)
 }
 
-fn resolve_base(git: &Git, base: Option<&str>, out: &mut Group) -> Option<String> {
+fn resolve_base(git: &Git, base: Option<&str>, out: &mut Group) -> Result<Option<String>, String> {
     match base {
-        Some(b) if git.rev_parse(b).is_some() => Some(b.to_owned()),
-        Some(b) => {
-            out.emit(Msg::Error(format!(
-                "base branch '{b}' not found, skipping merged worktree pruning"
-            )));
-            None
-        }
-        None => git
+        Some(b) if git.rev_parse(b).is_some() => Ok(Some(b.to_owned())),
+        Some(b) => Err(format!("base branch '{b}' not found")),
+        None => Ok(git
             .base_ref()
             .inspect_err(|e| out.emit(Msg::Error(format!("{e}, skipping merged worktree pruning"))))
-            .ok(),
+            .ok()),
     }
 }
 
@@ -411,7 +406,7 @@ fn gone_upstreams<'a>(
 fn remove(git: &Git, candidate: &Candidate, cwd: Option<&Path>) -> Result<(), String> {
     git.remove_worktree(&candidate.wt.path, false)?;
     layout::cleanup_empty_parent(&candidate.wt.path, cwd);
-    git.delete_branch(candidate.branch, true)
+    git.delete_branch(candidate.branch)
 }
 
 fn prune_orphans(wt_root: &Path, opts: &PruneArgs, cwd: Option<&Path>, out: &mut Group) -> usize {

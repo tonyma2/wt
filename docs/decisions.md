@@ -6,9 +6,9 @@ Intentional choices that look like they could be "improved." Read the rationale 
 
 No `anyhow`, `thiserror`, or custom error enums. Every error is a `String` that exits 1. Typed error recovery adds complexity with no benefit — the binary never catches and branches on error variants.
 
-## Do not "fix" `worktree_status()` or `tracks()` to match other `Git` methods
+## Do not "fix" `worktree_status()`, `tracks()`, or `is_ignored()` to match other `Git` methods
 
-All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check) and `tracks()` (the tracked-file check in `link`) run `git -C <worktree_path>` instead. This is correct: `git status` and `git ls-files` report the tree and index they're pointed at, so running them against the admin repo silently gives the wrong answer (or fails, for a bare repo).
+All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check), `tracks()` (the tracked-file check in `link`), and `is_ignored()` (`link`'s not-gitignored warning) run `git -C <worktree_path>` instead. This is correct: `git status`, `git ls-files`, and `git check-ignore` report the tree and index they're pointed at, so running them against the admin repo silently gives the wrong answer (or fails, for a bare repo).
 
 ## Do not split `switch` into separate checkout and create commands
 

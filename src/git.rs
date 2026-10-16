@@ -199,23 +199,16 @@ impl Git {
         .unwrap_or_default()
     }
 
+    // Matched per remote: a `refs/remotes/*/{name}` pattern misses remotes whose name has a `/`.
     pub fn remotes_with_branch(&self, name: &str) -> Result<Vec<String>, String> {
         if name == "HEAD" {
             return Ok(vec![]);
         }
-        let pattern = format!("refs/remotes/*/{name}");
-        let output = run(
-            self.cmd(["for-each-ref", "--format=%(refname)", &pattern]),
-            "cannot list remotes",
-        )?;
-        let suffix = format!("/{name}");
+        let output = run(self.cmd(["remote"]), "cannot list remotes")?;
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
-            .filter_map(|line| {
-                line.strip_prefix("refs/remotes/")?
-                    .strip_suffix(&suffix)
-                    .map(str::to_owned)
-            })
+            .filter(|remote| self.ref_exists(&format!("refs/remotes/{remote}/{name}")))
+            .map(str::to_owned)
             .collect())
     }
 
@@ -275,12 +268,10 @@ impl Git {
         run(cmd, format!("cannot remove worktree: {}", path.display())).map(drop)
     }
 
-    pub fn delete_branch(&self, branch: &str, force: bool) -> Result<(), String> {
-        let flag = if force { "-D" } else { "-d" };
-        let action = if force { "force-delete" } else { "delete" };
+    pub fn delete_branch(&self, branch: &str) -> Result<(), String> {
         run(
-            self.cmd(["branch", flag, "--quiet", branch]),
-            format!("worktree removed but cannot {action} branch '{branch}'"),
+            self.cmd(["branch", "-D", "--quiet", branch]),
+            format!("worktree removed but cannot delete branch '{branch}'"),
         )
         .map(drop)
     }
@@ -324,16 +315,26 @@ impl Git {
         .map(|output| !output.stdout.is_empty())
     }
 
+    // Agrees with `prune`: reachable from the upstream, HEAD, or the remote's default branch,
+    // or squash-merged into the default branch. `git branch -d` checks only one of these.
+    pub fn is_ignored(worktree_path: &Path, path: &str) -> bool {
+        succeeds(git_in(
+            worktree_path,
+            ["check-ignore", "--quiet", "--", path],
+        ))
+    }
+
     pub fn is_branch_merged(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
-
-        if let Some(upstream) = self.upstream(branch)
-            && self.rev_parse(&upstream).is_some()
-        {
-            return self.is_ancestor(&branch_ref, &upstream);
-        }
-
-        self.is_ancestor(&branch_ref, "HEAD")
+        let base = self.base_ref().ok();
+        let upstream = self.upstream(branch);
+        upstream
+            .iter()
+            .chain(&base)
+            .map(String::as_str)
+            .chain(["HEAD"])
+            .any(|target| self.is_ancestor(&branch_ref, target))
+            || base.is_some_and(|b| self.is_squash_merged(&branch_ref, &b))
     }
 
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
@@ -343,6 +344,17 @@ impl Git {
     pub fn rev_parse(&self, refname: &str) -> Option<String> {
         query(self.cmd([
             "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            refname,
+        ]))
+    }
+
+    pub fn short_sha(&self, refname: &str) -> Option<String> {
+        query(self.cmd([
+            "rev-parse",
+            "--short",
             "--verify",
             "--quiet",
             "--end-of-options",

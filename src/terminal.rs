@@ -136,6 +136,10 @@ fn cd_hint(path: &Path) -> String {
 
 pub fn width() -> usize {
     let columns = std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok());
+    // piped output is read by scripts, which need whole values
+    if columns.is_none() && !is_stdout_tty() {
+        return usize::MAX;
+    }
     width_from(columns.or_else(|| {
         terminal::window_size()
             .ok()

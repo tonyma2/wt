@@ -199,6 +199,14 @@ impl App {
         self.scroll();
     }
 
+    fn move_to_end(&mut self, last: bool) {
+        if self.cursor.is_none() {
+            return;
+        }
+        self.cursor = Some(if last { self.filtered.len() - 1 } else { 0 });
+        self.scroll();
+    }
+
     fn page(&mut self, delta: isize) {
         let Some(cursor) = self.cursor else { return };
         let target = cursor.saturating_add_signed(delta * MAX_ROWS as isize);
@@ -261,6 +269,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         KeyCode::Right | KeyCode::Tab => app.jump_repo(true),
         KeyCode::PageUp => app.page(-1),
         KeyCode::PageDown => app.page(1),
+        KeyCode::Home => app.move_to_end(false),
+        KeyCode::End => app.move_to_end(true),
         KeyCode::Backspace if !app.filter.is_empty() => {
             app.filter.pop();
             app.refilter();
@@ -566,12 +576,17 @@ fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::R
 
 pub fn run() -> Result<(), String> {
     if !term::is_stdout_tty() {
-        return Err("cannot launch picker, stdout is not a terminal".into());
+        return Err(
+            "cannot launch picker, stdout is not a terminal, use `wt list` in scripts".into(),
+        );
     }
 
     let repos = build_repos(worktree::load_all(&layout::worktrees_root()?));
     if repos.is_empty() {
-        return Err("no worktrees".into());
+        return Err(
+            "no worktrees, use `wt clone <url>`, or `wt switch <branch>` inside a repository"
+                .into(),
+        );
     }
     let mut app = App::new(repos);
     let height = viewport_height(&app);
@@ -841,6 +856,17 @@ mod tests {
         assert_eq!(app.offset, 7);
         press(&mut app, KeyCode::PageUp);
         press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.cursor, Some(0));
+        assert_eq!(app.offset, 0);
+    }
+
+    #[test]
+    fn home_and_end_jump_to_first_and_last_rows() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.cursor, Some(14));
+        assert_eq!(app.offset, 7);
+        press(&mut app, KeyCode::Home);
         assert_eq!(app.cursor, Some(0));
         assert_eq!(app.offset, 0);
     }
