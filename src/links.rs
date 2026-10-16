@@ -8,8 +8,6 @@ use crate::layout;
 use crate::terminal;
 use crate::worktree::{self, Worktree};
 
-// Shared files live in the repo's git directory so that no worktree owns them: removing any
-// worktree only removes its symlinks.
 pub struct Store {
     dir: PathBuf,
 }
@@ -71,8 +69,7 @@ impl Store {
             })
     }
 
-    // Records the entry before moving the file, so an interrupted run is finished by the next
-    // `wt link` instead of leaving an untracked file in the store.
+    // Manifest first, so re-running `wt link` finishes an interrupted move.
     pub fn add(&self, file: &str, src: &Path) -> Result<(), String> {
         let mut files = self.list()?;
         let added = !files.iter().any(|f| f == file);
@@ -174,9 +171,6 @@ fn move_path(src: &Path, dest: &Path) -> io::Result<()> {
     }
 }
 
-// Before shared files moved into the store, `~/.wt/config` mapped a source worktree to the files
-// it shared. Each entry's files move into that repo's store and links to them are re-pointed;
-// entries that fail are kept so the next run retries them.
 pub fn migrate_legacy_config() {
     let Ok(path) = layout::wt_home().map(|home| home.join("config")) else {
         return;
@@ -278,8 +272,7 @@ fn migrate_file(
         (false, true) => {}
     }
 
-    // Old links point at the former source, which now links to the store; a target that
-    // resolves to the store entry is one of them.
+    // Old links target the former source, which now resolves to the store entry.
     let entry = store.path(file);
     let canonical_entry = layout::canonicalize_or_self(&entry);
     for wt in worktrees.iter().filter(|wt| !wt.bare && wt.live()) {
