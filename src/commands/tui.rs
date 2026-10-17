@@ -3,16 +3,23 @@ use std::path::{Path, PathBuf};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
+use ratatui::widgets::Paragraph;
 
 use crate::fuzzy;
-use crate::terminal::{self as term, trunc, trunc_tail};
+use crate::layout;
+use crate::terminal::{self as term, display_width, trunc, trunc_tail};
 use crate::worktree;
 
 const EMPTY_HINT: &str = "no matches · backspace to edit";
+const LOCK_BADGE: &str = "lock";
+const SEP: &str = " · ";
+const MAX_ROWS: usize = 8;
+const REPO_MIN: usize = 8;
+// branch columns include the 2-column gap before the next column
+const BRANCH_MIN: usize = 16 + 2;
 
 struct RepoData {
     name: String,
@@ -33,9 +40,8 @@ struct WorktreeData {
 }
 
 impl WorktreeData {
-    fn from_info(wt: &worktree::WorktreeInfo, repo_name: &str) -> Self {
-        let status =
-            worktree::format_status(false, wt.dirty, wt.ahead, wt.behind).unwrap_or_default();
+    fn from_info(info: &worktree::WorktreeInfo, repo_name: &str) -> Self {
+        let wt = &info.worktree;
         let filter_candidate = match &wt.branch {
             Some(b) => format!("{repo_name} {b}"),
             None => repo_name.to_owned(),
@@ -45,27 +51,12 @@ impl WorktreeData {
             path: wt.path.clone(),
             branch: wt.branch.clone(),
             filter_candidate,
-            status,
-            dirty: wt.dirty,
+            status: info.status.summary().unwrap_or_default(),
+            dirty: info.status.dirty,
             detached: wt.detached,
             locked: wt.locked,
-            current: wt.current,
+            current: info.current,
         }
-    }
-
-    fn sort_key(&self) -> (u8, &str) {
-        let rank = if self
-            .branch
-            .as_deref()
-            .is_some_and(|b| b == "main" || b == "master")
-        {
-            0
-        } else if self.branch.is_some() {
-            1
-        } else {
-            2
-        };
-        (rank, self.branch.as_deref().unwrap_or(""))
     }
 
     fn display_branch(&self) -> &str {
@@ -73,93 +64,46 @@ impl WorktreeData {
             .as_deref()
             .unwrap_or(if self.detached { "(detached)" } else { "" })
     }
-
-    fn badge(&self) -> Option<(&'static str, Color)> {
-        if self.locked {
-            Some(("lock", Color::Yellow))
-        } else {
-            None
-        }
-    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pane {
-    Repos,
-    Worktrees,
+struct Row {
+    repo: usize,
+    wt: WorktreeData,
 }
 
 struct App {
-    repos: Vec<RepoData>,
-    filtered_repo_indices: Vec<usize>,
-    filtered_repo_wt_counts: Vec<usize>,
-    filtered_wt_indices: Vec<usize>,
-    repo_state: ListState,
-    wt_state: ListState,
-    active_pane: Pane,
+    repos: Vec<String>,
+    rows: Vec<Row>,
+    filtered: Vec<usize>,
+    cursor: Option<usize>,
+    offset: usize,
     filter: String,
     quit: bool,
     selected_path: Option<PathBuf>,
     color: bool,
-    repos_w: u16,
-    collapsed: bool,
-    content_width: u16,
-    match_count: usize,
 }
 
 impl App {
     fn new(repos: Vec<RepoData>) -> Self {
-        let filtered_repo_wt_counts: Vec<usize> = repos.iter().map(|r| r.worktrees.len()).collect();
-        let filtered_repo_indices: Vec<usize> = (0..repos.len()).collect();
-
-        let current_repo = repos
-            .iter()
-            .position(|r| r.worktrees.iter().any(|wt| wt.current));
-        let selected_repo = current_repo.unwrap_or(0);
-
-        let mut repo_state = ListState::default();
-        repo_state.select((!filtered_repo_indices.is_empty()).then_some(selected_repo));
-
-        let filtered_wt_indices: Vec<usize> = repos
-            .get(selected_repo)
-            .map(|r| (0..r.worktrees.len()).collect())
-            .unwrap_or_default();
-
-        let wt_start = repos
-            .get(selected_repo)
-            .and_then(|r| r.worktrees.iter().position(|wt| wt.current))
-            .unwrap_or(0);
-
-        let mut wt_state = ListState::default();
-        wt_state.select((!filtered_wt_indices.is_empty()).then_some(wt_start));
-
-        let active_pane = if filtered_repo_indices.len() == 1 || current_repo.is_some() {
-            Pane::Worktrees
-        } else {
-            Pane::Repos
-        };
-
-        let color = term::color_enabled(term::is_stdout_tty());
-        let (repos_w, content_width) = compute_pane_widths(&repos);
-        let match_count = repos.iter().map(|r| r.worktrees.len()).sum();
-
-        Self {
-            repos,
-            filtered_repo_indices,
-            filtered_repo_wt_counts,
-            filtered_wt_indices,
-            repo_state,
-            wt_state,
-            active_pane,
+        let mut names = Vec::new();
+        let mut rows = Vec::new();
+        for (repo, data) in repos.into_iter().enumerate() {
+            names.push(data.name);
+            rows.extend(data.worktrees.into_iter().map(|wt| Row { repo, wt }));
+        }
+        let mut app = Self {
+            repos: names,
+            filtered: Vec::new(),
+            rows,
+            cursor: None,
+            offset: 0,
             filter: String::new(),
             quit: false,
             selected_path: None,
-            color,
-            repos_w,
-            collapsed: false,
-            content_width,
-            match_count,
-        }
+            color: term::color_enabled(term::is_stdout_tty()),
+        };
+        app.refilter();
+        app
     }
 
     fn fg(&self, color: Color) -> Style {
@@ -170,125 +114,122 @@ impl App {
         }
     }
 
-    fn selected_repo_index(&self) -> Option<usize> {
-        self.repo_state
-            .selected()
-            .and_then(|i| self.filtered_repo_indices.get(i).copied())
+    fn row(&self, i: usize) -> &Row {
+        &self.rows[self.filtered[i]]
     }
 
-    fn selected_worktree(&self) -> Option<&WorktreeData> {
-        let repo_idx = self.selected_repo_index()?;
-        let wt_idx = self
-            .wt_state
-            .selected()
-            .and_then(|i| self.filtered_wt_indices.get(i).copied())?;
-        Some(&self.repos[repo_idx].worktrees[wt_idx])
+    fn selected_row(&self) -> Option<&Row> {
+        self.cursor.map(|i| self.row(i))
     }
 
-    fn selected_worktree_path(&self) -> Option<&Path> {
-        self.selected_worktree().map(|wt| wt.path.as_path())
+    fn group_start(&self, mut i: usize) -> usize {
+        while i > 0 && self.row(i - 1).repo == self.row(i).repo {
+            i -= 1;
+        }
+        i
     }
 
-    fn cursor_move(&mut self, delta: isize) {
-        let pane = self.effective_pane();
-        let (selected, len) = match pane {
-            Pane::Repos => (self.repo_state.selected(), self.filtered_repo_indices.len()),
-            Pane::Worktrees => (self.wt_state.selected(), self.filtered_wt_indices.len()),
-        };
-        let Some(i) = selected else { return };
-        if len == 0 {
+    // Clearing the filter keeps the highlighted worktree; typing moves to the best match.
+    fn refilter(&mut self) {
+        let kept = self.cursor.map(|i| self.filtered[i]);
+        if self.filter.is_empty() {
+            self.filtered = (0..self.rows.len()).collect();
+            self.cursor = kept
+                .or_else(|| self.rows.iter().position(|row| row.wt.current))
+                .or((!self.rows.is_empty()).then_some(0));
+            self.snap();
             return;
         }
-        let next = (i as isize + delta).rem_euclid(len as isize) as usize;
-        match pane {
-            Pane::Repos => {
-                self.repo_state.select(Some(next));
-                self.refresh_wt_filter();
-            }
-            Pane::Worktrees => self.wt_state.select(Some(next)),
+
+        let mut scored: Vec<(usize, usize)> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                fuzzy::filter_score(&self.filter, &row.wt.filter_candidate).map(|s| (i, s))
+            })
+            .collect();
+        let mut best = vec![usize::MAX; self.repos.len()];
+        for &(i, score) in &scored {
+            let repo = self.rows[i].repo;
+            best[repo] = best[repo].min(score);
         }
+        scored.sort_by_key(|&(i, score)| {
+            let repo = self.rows[i].repo;
+            (best[repo], repo, score, i)
+        });
+        self.filtered = scored.into_iter().map(|(i, _)| i).collect();
+        self.cursor = (!self.filtered.is_empty()).then_some(0);
+        self.offset = 0;
     }
 
-    fn next_pane(&mut self) {
-        self.active_pane = match self.active_pane {
-            Pane::Repos => Pane::Worktrees,
-            Pane::Worktrees => Pane::Repos,
+    // Jumps put the cursor's repo at the top of the view.
+    fn snap(&mut self) {
+        let Some(cursor) = self.cursor else {
+            self.offset = 0;
+            return;
         };
-    }
-
-    fn effective_pane(&self) -> Pane {
-        if self.collapsed {
-            Pane::Repos
-        } else {
-            self.active_pane
+        self.offset = self
+            .group_start(cursor)
+            .min(self.filtered.len().saturating_sub(MAX_ROWS));
+        if cursor >= self.offset + MAX_ROWS {
+            self.scroll();
         }
     }
 
-    fn refilter(&mut self) {
-        if self.filter.is_empty() {
-            self.filtered_repo_indices = (0..self.repos.len()).collect();
-            self.filtered_repo_wt_counts = self.repos.iter().map(|r| r.worktrees.len()).collect();
-            self.match_count = self.filtered_repo_wt_counts.iter().sum();
-        } else {
-            let mut total_matches = 0usize;
-            let mut scored: Vec<(usize, usize, usize)> = self
-                .repos
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| {
-                    let mut best: Option<usize> = None;
-                    let mut count = 0usize;
-                    for wt in &r.worktrees {
-                        if let Some(s) = fuzzy::filter_score(&self.filter, &wt.filter_candidate) {
-                            count += 1;
-                            best = Some(best.map_or(s, |b| b.min(s)));
-                        }
-                    }
-                    total_matches += count;
-                    best.map(|s| (i, s, count))
-                })
-                .collect();
-            scored.sort_unstable_by_key(|&(_, s, _)| s);
-            self.filtered_repo_indices = scored.iter().map(|&(i, _, _)| i).collect();
-            self.filtered_repo_wt_counts = scored.iter().map(|&(_, _, c)| c).collect();
-            self.match_count = total_matches;
+    // Moves within the list scroll as little as possible, keeping a row of context.
+    fn scroll(&mut self) {
+        let len = self.filtered.len();
+        let Some(cursor) = self.cursor.filter(|_| len > MAX_ROWS) else {
+            self.offset = 0;
+            return;
+        };
+        if cursor < self.offset + 1 {
+            self.offset = cursor.saturating_sub(1);
         }
-
-        self.repo_state
-            .select((!self.filtered_repo_indices.is_empty()).then_some(0));
-
-        if self.filtered_repo_indices.len() == 1 && !self.collapsed {
-            self.active_pane = Pane::Worktrees;
-        } else if self.filtered_repo_indices.len() > 1 {
-            self.active_pane = Pane::Repos;
+        if cursor + 2 > self.offset + MAX_ROWS {
+            self.offset = (cursor + 2 - MAX_ROWS).min(len - MAX_ROWS);
         }
-
-        self.refresh_wt_filter();
     }
 
-    fn refresh_wt_filter(&mut self) {
-        if let Some(repo_idx) = self.selected_repo_index() {
-            let repo = &self.repos[repo_idx];
-            if self.filter.is_empty() {
-                self.filtered_wt_indices = (0..repo.worktrees.len()).collect();
-            } else {
-                let mut scored: Vec<(usize, usize)> = repo
-                    .worktrees
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, wt)| {
-                        fuzzy::filter_score(&self.filter, &wt.filter_candidate).map(|s| (i, s))
-                    })
-                    .collect();
-                scored.sort_unstable_by_key(|(_, s)| *s);
-                self.filtered_wt_indices = scored.into_iter().map(|(i, _)| i).collect();
-            }
-        } else {
-            self.filtered_wt_indices = Vec::new();
-        }
+    fn move_cursor(&mut self, delta: isize) {
+        let Some(cursor) = self.cursor else { return };
+        let len = self.filtered.len() as isize;
+        self.cursor = Some((cursor as isize + delta).rem_euclid(len) as usize);
+        self.scroll();
+    }
 
-        self.wt_state
-            .select((!self.filtered_wt_indices.is_empty()).then_some(0));
+    fn move_to_end(&mut self, last: bool) {
+        if self.cursor.is_none() {
+            return;
+        }
+        self.cursor = Some(if last { self.filtered.len() - 1 } else { 0 });
+        self.scroll();
+    }
+
+    fn page(&mut self, delta: isize) {
+        let Some(cursor) = self.cursor else { return };
+        let target = cursor.saturating_add_signed(delta * MAX_ROWS as isize);
+        self.cursor = Some(target.min(self.filtered.len() - 1));
+        self.scroll();
+    }
+
+    // Back goes to the top of the current repo before the previous one, like vim's `{`.
+    fn jump_repo(&mut self, forward: bool) {
+        let Some(cursor) = self.cursor else { return };
+        let len = self.filtered.len();
+        let start = self.group_start(cursor);
+        let target = if forward {
+            (cursor..len)
+                .find(|&i| self.row(i).repo != self.row(cursor).repo)
+                .unwrap_or(0)
+        } else if cursor != start {
+            start
+        } else {
+            self.group_start((start + len - 1) % len)
+        };
+        self.cursor = Some(target);
+        self.snap();
     }
 }
 
@@ -297,64 +238,44 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         return;
     }
 
-    match key.code {
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.filter.is_empty() {
-                app.quit = true;
-            } else {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('c') if app.filter.is_empty() => app.quit = true,
+            KeyCode::Char('c' | 'u') if !app.filter.is_empty() => {
                 app.filter.clear();
                 app.refilter();
             }
+            KeyCode::Char('d') => app.quit = true,
+            KeyCode::Char('n') => app.move_cursor(1),
+            KeyCode::Char('p') => app.move_cursor(-1),
+            _ => {}
         }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.quit = true;
-        }
-        KeyCode::Char('u')
-            if key.modifiers.contains(KeyModifiers::CONTROL) && !app.filter.is_empty() =>
-        {
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc if app.filter.is_empty() => app.quit = true,
+        KeyCode::Esc => {
             app.filter.clear();
             app.refilter();
         }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {}
-        KeyCode::Esc => {
-            if !app.filter.is_empty() {
-                app.filter.clear();
-                app.refilter();
-            } else if app.active_pane == Pane::Worktrees && !app.collapsed {
-                app.active_pane = Pane::Repos;
-            } else {
-                app.quit = true;
-            }
+        KeyCode::Enter => {
+            app.selected_path = app.selected_row().map(|row| row.wt.path.clone());
+            app.quit = true;
         }
-        KeyCode::Enter => match app.active_pane {
-            Pane::Repos => {
-                if app.filtered_repo_indices.is_empty() {
-                    app.quit = true;
-                } else if app.collapsed {
-                    // Worktrees column hidden: select the highlighted worktree directly.
-                    let path = app.selected_worktree_path().map(Path::to_path_buf);
-                    app.selected_path = path;
-                    app.quit = true;
-                } else {
-                    app.active_pane = Pane::Worktrees;
-                }
-            }
-            Pane::Worktrees => {
-                let path = app.selected_worktree_path().map(Path::to_path_buf);
-                app.selected_path = path;
-                app.quit = true;
-            }
-        },
-        KeyCode::Tab | KeyCode::BackTab if !app.collapsed => app.next_pane(),
-        KeyCode::Left => app.active_pane = Pane::Repos,
-        KeyCode::Right if !app.collapsed => app.active_pane = Pane::Worktrees,
-        KeyCode::Up => app.cursor_move(-1),
-        KeyCode::Down => app.cursor_move(1),
-        KeyCode::Backspace => {
+        KeyCode::Up => app.move_cursor(-1),
+        KeyCode::Down => app.move_cursor(1),
+        KeyCode::Left | KeyCode::BackTab => app.jump_repo(false),
+        KeyCode::Right | KeyCode::Tab => app.jump_repo(true),
+        KeyCode::PageUp => app.page(-1),
+        KeyCode::PageDown => app.page(1),
+        KeyCode::Home => app.move_to_end(false),
+        KeyCode::End => app.move_to_end(true),
+        KeyCode::Backspace if !app.filter.is_empty() => {
             app.filter.pop();
             app.refilter();
         }
-        KeyCode::Char(c) => {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::ALT) => {
             app.filter.push(c);
             app.refilter();
         }
@@ -365,287 +286,249 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
 fn worktree_column_widths<'a>(
     wts: impl Iterator<Item = &'a WorktreeData>,
 ) -> (usize, usize, usize) {
-    let (mut max_branch, mut max_status, mut max_badge) = (0usize, 0usize, 0usize);
+    let (mut max_branch, mut max_status, mut badge_w) = (0usize, 0usize, 0usize);
     for wt in wts {
-        max_branch = max_branch.max(wt.display_branch().chars().count());
-        max_status = max_status.max(wt.status.chars().count());
-        max_badge = max_badge.max(wt.badge().map_or(0, |(s, _)| s.chars().count()));
+        max_branch = max_branch.max(display_width(wt.display_branch()));
+        max_status = max_status.max(display_width(&wt.status));
+        if wt.locked {
+            badge_w = LOCK_BADGE.len();
+        }
     }
     let branch_w = max_branch.clamp(4, 40) + 2;
     let status_w = if max_status > 0 { max_status + 2 } else { 0 };
-    (branch_w, status_w, max_badge)
+    (branch_w, status_w, badge_w)
 }
 
-fn repos_col_w(max_name: usize, max_count: usize) -> u16 {
-    let symbol_w = 2; // "› " prefix
-    let count_suffix_w = format!(" ({max_count})").chars().count();
-    (max_name + symbol_w + count_suffix_w).max(8) as u16
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Columns {
+    name: usize,
+    count: usize,
+    branch: usize,
+    status: usize,
+    badge: usize,
 }
 
-fn compute_pane_widths(repos: &[RepoData]) -> (u16, u16) {
-    let max_name = repos
-        .iter()
-        .map(|r| r.name.chars().count())
-        .max()
-        .unwrap_or(4);
-    let max_count = repos.iter().map(|r| r.worktrees.len()).max().unwrap_or(0);
-    let repos_w = repos_col_w(max_name, max_count);
-
-    let mut max_wt_w = 0u16;
-
-    for repo in repos {
-        let (branch_w, status_w, badge_w) = worktree_column_widths(repo.worktrees.iter());
-        max_wt_w = max_wt_w.max((2 + branch_w + status_w + badge_w) as u16);
+impl Columns {
+    fn width(&self) -> usize {
+        let repo = if self.name > 0 {
+            self.name + self.count + 2
+        } else {
+            0
+        };
+        repo + self.branch + self.status + self.badge
     }
+}
 
-    (repos_w, repos_w + max_wt_w + 2)
+// Widths come from every row, so columns don't shift while filtering. When the
+// terminal is too narrow, columns give way in order of least use for picking.
+fn columns(app: &App, width: u16) -> Columns {
+    let mut repo_sizes = vec![0usize; app.repos.len()];
+    for row in &app.rows {
+        repo_sizes[row.repo] += 1;
+    }
+    let multi = app.repos.len() > 1;
+    let name_w = if multi {
+        app.repos
+            .iter()
+            .map(|n| display_width(n))
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let count_w = if multi {
+        repo_sizes
+            .iter()
+            .map(|n| format!(" ({n})").len())
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let (branch_w, status_w, badge_w) = worktree_column_widths(app.rows.iter().map(|r| &r.wt));
+    let mut c = Columns {
+        name: name_w,
+        count: count_w,
+        branch: branch_w,
+        status: status_w,
+        badge: badge_w,
+    };
+
+    let avail = usize::from(width).saturating_sub(2);
+    let over = |c: &Columns| c.width().saturating_sub(avail);
+    if over(&c) > 0 {
+        c.badge = 0;
+    }
+    if over(&c) > 0 {
+        c.count = 0;
+    }
+    if over(&c) > 0 {
+        c.name = c.name.saturating_sub(over(&c)).max(REPO_MIN.min(name_w));
+    }
+    if over(&c) > 0 {
+        c.branch = c
+            .branch
+            .saturating_sub(over(&c))
+            .max(BRANCH_MIN.min(branch_w));
+    }
+    if over(&c) > 0 {
+        c.status = 0;
+        let rest = avail.saturating_sub(Columns { branch: 0, ..c }.width());
+        c.branch = branch_w.min(rest).max(1);
+    }
+    c
 }
 
 fn viewport_height(app: &App) -> u16 {
-    let repo_count = app.repos.len();
-    let max_wt = app
-        .repos
-        .iter()
-        .map(|r| r.worktrees.len())
-        .max()
-        .unwrap_or(0);
-    let content_rows = repo_count.max(max_wt).max(1) as u16;
-    let total = content_rows + 2;
-    total.min(10)
+    app.rows.len().clamp(1, MAX_ROWS) as u16 + 2
 }
 
-fn render(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
-    let [content_area, detail_area, footer_area] = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(area);
-
-    let pane_w = app.content_width.min(area.width);
-    let pane_area = Rect::new(content_area.x, content_area.y, pane_w, content_area.height);
-
-    let wt_min: u16 = 8;
-    let spacing: u16 = 2;
-    // Always update collapsed so refilter() and handle_key() see a current value
-    // even when filtered_repo_indices is empty (the empty branch renders nothing
-    // that would otherwise set this flag).
-    app.collapsed = pane_w < wt_min + spacing + app.repos_w;
-
-    if app.filtered_repo_indices.is_empty() {
-        frame.render_widget(EMPTY_HINT.dim(), pane_area);
-    } else if app.collapsed {
-        render_repos(frame, app, pane_area);
-    } else {
-        // Guard above ensures pane_w - (wt_min + spacing) >= repos_w, so no cap needed.
-        let repos_w = app.repos_w;
-        let [repos_area, wt_area] =
-            Layout::horizontal([Constraint::Length(repos_w), Constraint::Min(wt_min)])
-                .spacing(spacing)
-                .areas(pane_area);
-        render_repos(frame, app, repos_area);
-        render_worktrees(frame, app, wt_area);
+fn row_lines(app: &App, width: u16, height: usize) -> Vec<Line<'static>> {
+    let c = columns(app, width);
+    let mut counts = vec![0usize; app.repos.len()];
+    for &i in &app.filtered {
+        counts[app.rows[i].repo] += 1;
     }
-    render_detail(frame, app, detail_area);
-    render_footer(frame, app, footer_area, content_area.height);
-}
-
-fn styled_list<'a>(items: Vec<ListItem<'a>>, active: bool, app: &App) -> List<'a> {
-    let highlight = if active {
-        app.fg(Color::Cyan).bold()
+    let branch_text_w = if c.status > 0 || c.badge > 0 {
+        c.branch.saturating_sub(2)
     } else {
-        Style::new()
+        c.branch
     };
-    let symbol = if active { "› " } else { "  " };
-    let mut list = List::new(items)
-        .highlight_style(highlight)
-        .highlight_symbol(symbol)
-        .highlight_spacing(HighlightSpacing::Always)
-        .scroll_padding(1);
-    if !active {
-        list = list.style(Style::new().dim());
-    }
-    list
-}
+    // A terminal shorter than the picker gets fewer rows than MAX_ROWS.
+    let offset = app.cursor.map_or(app.offset, |cursor| {
+        app.offset.max((cursor + 1).saturating_sub(height))
+    });
 
-fn render_repos(frame: &mut Frame, app: &mut App, area: Rect) {
-    let content_w = (area.width as usize).saturating_sub(2);
-    let items: Vec<ListItem> = app
-        .filtered_repo_indices
-        .iter()
-        .enumerate()
-        .map(|(j, &i)| {
-            let repo = &app.repos[i];
-            let wt_count = app.filtered_repo_wt_counts[j];
-            let suffix = format!(" ({wt_count})");
-            let name_budget = content_w.saturating_sub(suffix.chars().count());
-            let name = trunc(&repo.name, name_budget);
-            ListItem::new(Line::from(vec![Span::raw(name), suffix.dim()]))
-        })
-        .collect();
+    (offset..app.filtered.len().min(offset + height))
+        .map(|i| {
+            let row = app.row(i);
+            let selected = app.cursor == Some(i);
+            let mut spans = vec![Span::raw(if selected { "› " } else { "  " })];
+            if c.name > 0 {
+                let label = i == offset || app.row(i - 1).repo != row.repo;
+                let (name, count) = if label {
+                    let count = if c.count > 0 {
+                        format!(" ({})", counts[row.repo])
+                    } else {
+                        String::new()
+                    };
+                    (trunc(&app.repos[row.repo], c.name), count)
+                } else {
+                    (String::new(), String::new())
+                };
+                let gap = c.name + c.count + 2 - display_width(&name) - display_width(&count);
+                spans.push(Span::raw(name));
+                spans.push(Span::styled(count, Style::new().dim()));
+                spans.push(Span::raw(" ".repeat(gap)));
+            }
 
-    let list = styled_list(items, app.effective_pane() == Pane::Repos, app);
-    frame.render_stateful_widget(list, area, &mut app.repo_state);
-}
-
-fn render_worktrees(frame: &mut Frame, app: &mut App, area: Rect) {
-    let Some(repo_idx) = app.selected_repo_index() else {
-        return;
-    };
-    let wts = &app.repos[repo_idx].worktrees;
-    let content_w = (area.width as usize).saturating_sub(2);
-
-    let (ideal_branch, status_w, badge_w) =
-        worktree_column_widths(app.filtered_wt_indices.iter().map(|&i| &wts[i]));
-    let has_badge = badge_w > 0;
-
-    let (branch_width, show_status, show_badge) = if content_w >= ideal_branch + status_w + badge_w
-    {
-        (ideal_branch, true, has_badge)
-    } else if content_w >= ideal_branch + status_w {
-        (ideal_branch, true, false)
-    } else if content_w >= ideal_branch {
-        (ideal_branch, false, false)
-    } else {
-        (content_w, false, false)
-    };
-    let trunc_len = branch_width.saturating_sub(2);
-
-    let items: Vec<ListItem> = app
-        .filtered_wt_indices
-        .iter()
-        .map(|&i| {
-            let wt = &wts[i];
-
-            let display_branch = trunc(wt.display_branch(), trunc_len);
-
-            let branch_style = if wt.current {
+            let branch_style = if row.wt.current {
                 app.fg(Color::Green)
-            } else if wt.detached {
+            } else if row.wt.detached {
                 app.fg(Color::Yellow)
             } else {
                 Style::new()
             };
-
-            let mut spans = vec![Span::styled(
-                format!("{display_branch:<branch_width$}"),
+            spans.push(Span::styled(
+                term::pad(&trunc(row.wt.display_branch(), branch_text_w), c.branch),
                 branch_style,
-            )];
-
-            if show_status {
-                let status = &wt.status;
-                let status_style = if wt.dirty {
+            ));
+            if c.status > 0 {
+                let style = if row.wt.dirty {
                     app.fg(Color::Yellow)
                 } else {
                     Style::new().dim()
                 };
-                spans.push(Span::styled(format!("{status:<status_w$}"), status_style));
+                spans.push(Span::styled(term::pad(&row.wt.status, c.status), style));
+            }
+            if c.badge > 0 && row.wt.locked {
+                spans.push(Span::styled(LOCK_BADGE, app.fg(Color::Yellow)));
             }
 
-            if show_badge && let Some((label, color)) = wt.badge() {
-                spans.push(Span::styled(label, app.fg(color)));
+            let line = Line::from(spans);
+            if selected {
+                line.patch_style(app.fg(Color::Cyan).bold())
+            } else {
+                line
             }
-            ListItem::new(Line::from(spans))
         })
-        .collect();
-
-    let list = styled_list(items, app.effective_pane() == Pane::Worktrees, app);
-    frame.render_stateful_widget(list, area, &mut app.wt_state);
+        .collect()
 }
 
-fn render_detail(frame: &mut Frame, app: &App, area: Rect) {
-    if let Some(wt) = app.selected_worktree() {
-        let budget = area.width as usize;
-        let display = trunc_tail(&wt.display_path, budget);
-        frame.render_widget(display.dim(), area);
+fn render(frame: &mut Frame, app: &App) {
+    let [rows_area, detail_area, footer_area] = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+
+    if app.filtered.is_empty() {
+        frame.render_widget(EMPTY_HINT.dim(), rows_area);
+    } else {
+        let lines = row_lines(app, rows_area.width, rows_area.height.into());
+        frame.render_widget(Paragraph::new(lines), rows_area);
     }
+    if let Some(row) = app.selected_row() {
+        let path = trunc_tail(&row.wt.display_path, detail_area.width.into());
+        frame.render_widget(path.dim(), detail_area);
+    }
+    frame.render_widget(
+        footer_line(app, footer_area.width, rows_area.height),
+        footer_area,
+    );
 }
 
 fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
-    let w = width as usize;
+    let w = usize::from(width);
+    let spans_w =
+        |spans: &[Span]| -> usize { spans.iter().map(|s| display_width(&s.content)).sum() };
 
     if !app.filter.is_empty() {
         let prefix = "/ ";
-        let count_label = if app.match_count == 1 {
-            " · 1 match".to_owned()
-        } else {
-            format!(" · {} matches", app.match_count)
+        let count = match app.filtered.len() {
+            1 => " · 1 match".to_owned(),
+            n => format!(" · {n} matches"),
         };
-        let prefix_w = prefix.chars().count();
-        let count_w = count_label.chars().count();
-
-        if w > prefix_w + count_w {
-            let query_budget = w - prefix_w - count_w;
-            let display = trunc_tail(&app.filter, query_budget);
-            return Line::from(vec![prefix.dim(), Span::raw(display), count_label.dim()]);
+        let fixed = display_width(prefix) + display_width(&count);
+        if w > fixed {
+            let query = trunc_tail(&app.filter, w - fixed);
+            return Line::from(vec![prefix.dim(), Span::raw(query), count.dim()]);
         }
-        let budget = w.saturating_sub(prefix_w);
-        let display = trunc_tail(&app.filter, budget);
-        return Line::from(vec![prefix.dim(), Span::raw(display)]);
+        let query = trunc_tail(&app.filter, w.saturating_sub(display_width(prefix)));
+        return Line::from(vec![prefix.dim(), Span::raw(query)]);
     }
 
-    let effective_pane = app.effective_pane();
-    let (enter_action, esc_action) = match effective_pane {
-        Pane::Repos if app.collapsed => (" select", " quit"),
-        Pane::Repos => (" open", " quit"),
-        Pane::Worktrees => (" select", " back"),
-    };
-
-    let sep = " · ";
-    let base: Vec<Span> = vec![
+    let base = vec![
         Span::raw("enter"),
-        enter_action.dim(),
-        sep.dim(),
+        " select".dim(),
+        SEP.dim(),
         Span::raw("esc"),
-        esc_action.dim(),
+        " quit".dim(),
     ];
-    let tab_tier: Vec<Span> = vec![sep.dim(), Span::raw("tab"), " switch".dim()];
-    let filter_tier: Vec<Span> = vec![sep.dim(), "type to filter".dim()];
-
-    let (selected, len) = match effective_pane {
-        Pane::Repos => (app.repo_state.selected(), app.filtered_repo_indices.len()),
-        Pane::Worktrees => (app.wt_state.selected(), app.filtered_wt_indices.len()),
-    };
-    let pos_tier: Option<Vec<Span>> = if len > visible_rows as usize {
-        selected.map(|i| vec![sep.dim(), format!("{}/{}", i + 1, len).dim()])
+    if w < spans_w(&base) {
+        return Line::default();
+    }
+    let repo_tier = if app.repos.len() > 1 {
+        vec![SEP.dim(), Span::raw("←→"), " repo".dim()]
     } else {
-        None
+        Vec::new()
+    };
+    let filter_tier = vec![SEP.dim(), "type to filter".dim()];
+    let position_tier = match app.cursor {
+        Some(i) if app.filtered.len() > usize::from(visible_rows) => {
+            vec![SEP.dim(), format!("{}/{}", i + 1, app.filtered.len()).dim()]
+        }
+        _ => Vec::new(),
     };
 
-    let span_w =
-        |spans: &[Span]| -> usize { spans.iter().map(|s| s.content.chars().count()).sum() };
-    let base_w = span_w(&base);
-    let tab_w = span_w(&tab_tier);
-    let filter_w = span_w(&filter_tier);
-    let pos_w = pos_tier.as_ref().map_or(0, |t| span_w(t));
-
-    let effective_tab_w = if app.collapsed { 0 } else { tab_w };
     let mut spans = base;
-    if w >= base_w + effective_tab_w {
-        if !app.collapsed {
-            spans.extend(tab_tier);
-        }
-        if w >= span_w(&spans) + filter_w + pos_w {
-            spans.extend(filter_tier);
-        }
-        if let Some(pos) = pos_tier
-            && w >= span_w(&spans) + pos_w
-        {
-            spans.extend(pos);
+    for tier in [repo_tier, filter_tier, position_tier] {
+        if !tier.is_empty() && w >= spans_w(&spans) + spans_w(&tier) {
+            spans.extend(tier);
         }
     }
-
     Line::from(spans)
-}
-
-fn render_footer(frame: &mut Frame, app: &App, area: Rect, visible_rows: u16) {
-    let line = footer_line(app, area.width, visible_rows);
-    if app.filter.is_empty() && (area.width as usize) < line.width() {
-        return;
-    }
-    frame.render_widget(line, area);
 }
 
 fn build_repos(infos: Vec<worktree::RepoInfo>) -> Vec<RepoData> {
@@ -653,13 +536,16 @@ fn build_repos(infos: Vec<worktree::RepoInfo>) -> Vec<RepoData> {
         .into_iter()
         .filter_map(|repo| {
             let name = repo.name;
-            let mut worktrees: Vec<WorktreeData> = repo
+            let mut infos: Vec<_> = repo
                 .worktrees
                 .iter()
-                .filter(|wt| !wt.bare && !wt.prunable)
-                .map(|wt| WorktreeData::from_info(wt, &name))
+                .filter(|info| !info.worktree.bare && !info.worktree.prunable)
                 .collect();
-            worktrees.sort_unstable_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+            infos.sort_by(|a, b| a.worktree.display_order().cmp(&b.worktree.display_order()));
+            let worktrees: Vec<WorktreeData> = infos
+                .into_iter()
+                .map(|info| WorktreeData::from_info(info, &name))
+                .collect();
             if worktrees.is_empty() {
                 return None;
             }
@@ -689,14 +575,18 @@ fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::R
 }
 
 pub fn run() -> Result<(), String> {
-    if !term::is_stdout_tty() {
-        return Err("cannot launch picker, stdout is not a terminal".into());
+    if !term::is_stdin_tty() || !term::is_stdout_tty() {
+        return Err(
+            "cannot launch picker, not running in a terminal, use `wt list` in scripts".into(),
+        );
     }
 
-    let repo_infos = worktree::load_all(&worktree::worktrees_root()?)?;
-    let repos = build_repos(repo_infos);
+    let repos = build_repos(worktree::load_all(&layout::worktrees_root()?));
     if repos.is_empty() {
-        return Err("no worktrees".into());
+        return Err(
+            "no worktrees, use `wt clone <url>`, or `wt switch <branch>` inside a repository"
+                .into(),
+        );
     }
     let mut app = App::new(repos);
     let height = viewport_height(&app);
@@ -704,717 +594,712 @@ pub fn run() -> Result<(), String> {
     crate::tui::run(height, |terminal| event_loop(terminal, &mut app))
         .map_err(|e| format!("cannot run picker: {e}"))?;
 
-    if let Some(path) = &app.selected_path
-        && let Ok(f) = std::env::var("__WT_CD")
-    {
-        let canonical = crate::worktree::canonicalize_or_self(path);
-        std::fs::write(&f, canonical.as_os_str().as_encoded_bytes())
-            .map_err(|e| format!("cannot write {f}: {e}"))?;
+    let Some(path) = app.selected_path else {
+        return Ok(());
+    };
+    let path = layout::canonicalize_or_self(&path);
+    match std::env::var_os("__WT_CD") {
+        Some(cd_file) => std::fs::write(&cd_file, path.as_os_str().as_encoded_bytes())
+            .map_err(|e| format!("cannot write {}: {e}", Path::new(&cd_file).display())),
+        None => {
+            println!("{}", path.display());
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use ratatui::backend::TestBackend;
+
     use super::*;
 
+    fn info(worktree: worktree::Worktree, status: worktree::Status) -> worktree::WorktreeInfo {
+        worktree::WorktreeInfo {
+            worktree,
+            status,
+            current: false,
+        }
+    }
+
+    fn wt(repo: &str, branch: &str) -> WorktreeData {
+        WorktreeData {
+            path: PathBuf::from(format!("/wt/{repo}/{branch}")),
+            display_path: format!("/wt/{repo}/{branch}"),
+            branch: Some(branch.into()),
+            filter_candidate: format!("{repo} {branch}"),
+            ..Default::default()
+        }
+    }
+
+    fn repo(name: &str, branches: &[&str]) -> RepoData {
+        RepoData {
+            name: name.into(),
+            worktrees: branches.iter().map(|b| wt(name, b)).collect(),
+        }
+    }
+
     fn test_repos() -> Vec<RepoData> {
-        vec![
-            RepoData {
-                name: "my-app".into(),
-                worktrees: vec![
-                    WorktreeData {
-                        path: PathBuf::from("/wt/my-app/main"),
-                        display_path: "/wt/my-app/main".into(),
-                        branch: Some("main".into()),
-                        filter_candidate: "my-app main".into(),
-                        ..Default::default()
-                    },
-                    WorktreeData {
-                        path: PathBuf::from("/wt/my-app/feat"),
-                        display_path: "/wt/my-app/feat".into(),
-                        branch: Some("feat/login".into()),
-                        filter_candidate: "my-app feat/login".into(),
-                        status: "* ↑2".into(),
-                        dirty: true,
-                        ..Default::default()
-                    },
-                ],
-            },
-            RepoData {
-                name: "other-repo".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/other-repo/main"),
-                    display_path: "/wt/other-repo/main".into(),
-                    branch: Some("main".into()),
-                    filter_candidate: "other-repo main".into(),
-                    status: "↓1".into(),
-                    ..Default::default()
-                }],
-            },
-        ]
+        let mut my_app = repo("my-app", &["main", "feat/login"]);
+        my_app.worktrees[1].status = "* ↑2".into();
+        my_app.worktrees[1].dirty = true;
+        let mut other = repo("other-repo", &["main"]);
+        other.worktrees[0].status = "↓1".into();
+        vec![my_app, other]
     }
 
-    #[test]
-    fn app_initial_state() {
-        let app = App::new(test_repos());
-        assert_eq!(app.filtered_repo_indices, vec![0, 1]);
-        assert_eq!(app.filtered_wt_indices, vec![0, 1]);
-        assert_eq!(app.repo_state.selected(), Some(0));
-        assert_eq!(app.wt_state.selected(), Some(0));
-        assert_eq!(app.active_pane, Pane::Repos);
-        assert!(app.filter.is_empty());
+    // Three repos of 5 worktrees each: 15 rows, more than fit on screen.
+    fn long_repos() -> Vec<RepoData> {
+        ["alpha", "beta", "gamma"]
+            .iter()
+            .map(|name| repo(name, &["main", "b1", "b2", "b3", "b4"]))
+            .collect()
     }
 
-    #[test]
-    fn cursor_down_up_repos() {
-        let mut app = App::new(test_repos());
-        app.cursor_move(1);
-        assert_eq!(app.repo_state.selected(), Some(1));
-        assert_eq!(app.filtered_wt_indices, vec![0]);
-        app.cursor_move(1);
-        assert_eq!(app.repo_state.selected(), Some(0));
-        app.cursor_move(-1);
-        assert_eq!(app.repo_state.selected(), Some(1));
+    fn press(app: &mut App, code: KeyCode) {
+        handle_key(app, event::KeyEvent::new(code, KeyModifiers::NONE));
     }
 
-    #[test]
-    fn cursor_down_up_worktrees() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        app.cursor_move(1);
-        assert_eq!(app.wt_state.selected(), Some(1));
-        app.cursor_move(1);
-        assert_eq!(app.wt_state.selected(), Some(0));
-        app.cursor_move(-1);
-        assert_eq!(app.wt_state.selected(), Some(1));
-    }
-
-    #[test]
-    fn pane_switching() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.active_pane, Pane::Repos);
-        app.next_pane();
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        app.next_pane();
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn left_right_arrows_are_directional() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.active_pane, Pane::Repos);
-
+    fn ctrl(app: &mut App, c: char) {
         handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            app,
+            event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
         );
-        assert_eq!(app.active_pane, Pane::Worktrees);
-
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
-        );
-        assert_eq!(
-            app.active_pane,
-            Pane::Worktrees,
-            "right is no-op in worktrees"
-        );
-
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-        );
-        assert_eq!(app.active_pane, Pane::Repos);
-
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-        );
-        assert_eq!(app.active_pane, Pane::Repos, "left is no-op in repos");
     }
 
-    #[test]
-    fn enter_in_repos_pane_switches_to_worktrees() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        assert!(!app.quit);
-    }
-
-    #[test]
-    fn enter_in_worktrees_pane_selects_and_quits() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        assert!(app.quit);
-        assert_eq!(app.selected_path, Some(PathBuf::from("/wt/my-app/main")));
-    }
-
-    #[test]
-    fn enter_quits_when_no_results() {
-        for pane in [Pane::Repos, Pane::Worktrees] {
-            let mut app = App::new(test_repos());
-            app.active_pane = pane;
-            app.filter = "zzzzz".into();
-            app.refilter();
-            handle_key(
-                &mut app,
-                event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            );
-            assert!(app.quit, "enter should quit with no results in {pane:?}");
-            assert!(app.selected_path.is_none());
+    fn type_str(app: &mut App, s: &str) {
+        for c in s.chars() {
+            press(app, KeyCode::Char(c));
         }
     }
 
-    #[test]
-    fn esc_quits_from_repos_pane() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.active_pane, Pane::Repos);
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        );
-        assert!(app.quit);
-        assert!(app.selected_path.is_none());
+    fn selected_branch(app: &App) -> Option<&str> {
+        app.selected_row().and_then(|r| r.wt.branch.as_deref())
     }
 
-    #[test]
-    fn esc_goes_back_to_repos_from_worktrees() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        );
-        assert!(!app.quit);
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn ctrl_c_quits_when_filter_empty() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        );
-        assert!(app.quit);
-        assert!(app.selected_path.is_none());
-    }
-
-    #[test]
-    fn ctrl_d_quits() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
-        );
-        assert!(app.quit);
-        assert!(app.selected_path.is_none());
-    }
-
-    #[test]
-    fn ctrl_c_clears_filter_when_nonempty() {
-        let mut app = App::new(test_repos());
-        app.filter = "ot".into();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 1);
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-        );
-        assert!(!app.quit);
-        assert!(app.filter.is_empty());
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-    }
-
-    #[test]
-    fn esc_clears_filter_when_nonempty() {
-        let mut app = App::new(test_repos());
-        app.filter = "ot".into();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 1);
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        );
-        assert!(!app.quit);
-        assert!(app.filter.is_empty());
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-    }
-
-    #[test]
-    fn ctrl_u_clears_filter_restores_pane_by_result_count() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        app.filter = "ot".into();
-        app.refilter();
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        );
-        assert!(!app.quit);
-        assert!(app.filter.is_empty());
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-        // Clearing to >1 result: refilter auto-switches to Repos (not Worktrees).
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn ctrl_u_noop_when_filter_empty() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        );
-        assert!(!app.quit);
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        assert!(app.filter.is_empty());
-    }
-
-    #[test]
-    fn typing_filters_repos() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
-        );
-        assert_eq!(app.filter, "ot");
-        assert_eq!(app.filtered_repo_indices, vec![1]);
-    }
-
-    #[test]
-    fn backspace_removes_filter_char() {
-        let mut app = App::new(test_repos());
-        app.filter = "ot".into();
-        app.refilter();
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        assert_eq!(app.filter, "o");
-    }
-
-    #[test]
-    fn filter_matches_worktree_branches() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-        );
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
-        );
-        assert_eq!(app.filter, "log");
-        assert!(app.filtered_repo_indices.contains(&0));
-    }
-
-    #[test]
-    fn filter_matches_across_repo_and_branch() {
-        let mut app = App::new(test_repos());
-        for c in "my log".chars() {
-            handle_key(
-                &mut app,
-                event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
-            );
-        }
-        assert_eq!(app.filter, "my log");
-        assert_eq!(app.filtered_repo_indices, vec![0]);
-        assert_eq!(app.filtered_wt_indices, vec![1]);
-    }
-
-    #[test]
-    fn empty_repos_does_not_panic() {
-        let app = App::new(Vec::new());
-        assert!(app.filtered_repo_indices.is_empty());
-        assert!(app.repo_state.selected().is_none());
-    }
-
-    #[test]
-    fn single_repo_starts_in_worktrees_pane() {
-        let repos = vec![test_repos().remove(0)];
-        let app = App::new(repos);
-        assert_eq!(app.active_pane, Pane::Worktrees);
-    }
-
-    #[test]
-    fn filter_auto_switches_pane_with_result_count() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.active_pane, Pane::Repos);
-        app.filter = "ot".into();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 1);
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        app.filter.pop();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn selecting_second_repo_updates_worktrees() {
-        let mut app = App::new(test_repos());
-        app.cursor_move(1);
-        assert_eq!(app.repo_state.selected(), Some(1));
-        assert_eq!(app.filtered_wt_indices, vec![0]);
-        app.active_pane = Pane::Worktrees;
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        assert_eq!(
-            app.selected_path,
-            Some(PathBuf::from("/wt/other-repo/main"))
-        );
-    }
-
-    #[test]
-    fn cursor_movement_on_empty_filtered_list() {
-        let mut app = App::new(test_repos());
-        app.filter = "zzzzz".into();
-        app.refilter();
-        assert!(app.filtered_repo_indices.is_empty());
-        assert!(app.repo_state.selected().is_none());
-        app.cursor_move(1);
-        app.cursor_move(-1);
-        assert!(app.repo_state.selected().is_none());
-    }
-
-    #[test]
-    fn filter_no_match_clears_selection() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.repo_state.selected(), Some(0));
-        app.filter = "zzzzz".into();
-        app.refilter();
-        assert!(app.filtered_repo_indices.is_empty());
-        assert!(app.repo_state.selected().is_none());
-        assert!(app.filtered_wt_indices.is_empty());
-        assert!(app.wt_state.selected().is_none());
-    }
-
-    #[test]
-    fn backspace_on_empty_filter_is_noop() {
-        let mut app = App::new(test_repos());
-        assert!(app.filter.is_empty());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        assert!(app.filter.is_empty());
-        assert_eq!(app.filtered_repo_indices, vec![0, 1]);
-    }
-
-    #[test]
-    fn viewport_height_caps_at_10() {
-        let mut repos = Vec::new();
-        for i in 0..15 {
-            repos.push(RepoData {
-                name: format!("repo-{i}"),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from(format!("/wt/repo-{i}/main")),
-                    branch: Some("main".into()),
-                    filter_candidate: format!("repo-{i} main"),
-                    ..Default::default()
-                }],
-            });
-        }
-        let app = App::new(repos);
-        assert_eq!(viewport_height(&app), 10);
-    }
-
-    #[test]
-    fn viewport_height_fits_content() {
-        let app = App::new(test_repos());
-        let h = viewport_height(&app);
-        assert_eq!(h, 4);
-    }
-
-    #[test]
-    fn filter_ranks_better_matches_first() {
-        let mut app = App::new(test_repos());
-        app.filter = "main".into();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-        assert_eq!(app.repos[app.filtered_repo_indices[0]].name, "my-app");
-        assert_eq!(app.repos[app.filtered_repo_indices[1]].name, "other-repo");
-    }
-
-    #[test]
-    fn tab_switches_panes() {
-        let mut app = App::new(test_repos());
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-        );
-        assert_eq!(app.active_pane, Pane::Worktrees);
-        handle_key(
-            &mut app,
-            event::KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-        );
-        assert_eq!(app.active_pane, Pane::Repos);
-    }
-
-    #[test]
-    fn pre_selects_current_worktree() {
-        let repos = vec![
-            RepoData {
-                name: "alpha".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/alpha/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "alpha main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "beta".into(),
-                worktrees: vec![
-                    WorktreeData {
-                        path: PathBuf::from("/wt/beta/main"),
-                        branch: Some("main".into()),
-                        filter_candidate: "beta main".into(),
-                        ..Default::default()
-                    },
-                    WorktreeData {
-                        path: PathBuf::from("/wt/beta/feat"),
-                        branch: Some("feat/work".into()),
-                        filter_candidate: "beta feat/work".into(),
-                        current: true,
-                        ..Default::default()
-                    },
-                ],
-            },
-        ];
-        let app = App::new(repos);
-        assert_eq!(app.repo_state.selected(), Some(1));
-        assert_eq!(app.wt_state.selected(), Some(1));
-        assert_eq!(app.active_pane, Pane::Worktrees);
-    }
-
-    #[test]
-    fn pre_selects_current_worktree_after_navigation() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.wt_state.selected(), Some(0));
-        app.cursor_move(1);
-        app.cursor_move(-1);
-        assert_eq!(app.repo_state.selected(), Some(0));
-        assert_eq!(app.wt_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn no_current_worktree_selects_first() {
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![
-                WorktreeData {
-                    path: PathBuf::from("/wt/repo/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "repo main".into(),
-                    ..Default::default()
-                },
-                WorktreeData {
-                    path: PathBuf::from("/wt/repo/feat"),
-                    branch: Some("feat".into()),
-                    filter_candidate: "repo feat".into(),
-                    ..Default::default()
-                },
-            ],
-        }];
-        let app = App::new(repos);
-        assert_eq!(app.repo_state.selected(), Some(0));
-        assert_eq!(app.wt_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn badge_locked() {
-        let base = WorktreeData::default();
-        assert!(base.badge().is_none());
-
-        let locked = WorktreeData {
-            locked: true,
-            ..base
-        };
-        assert_eq!(locked.badge().unwrap(), ("lock", Color::Yellow));
+    fn selected_repo(app: &App) -> &str {
+        &app.repos[app.selected_row().unwrap().repo]
     }
 
     fn line_text(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
+    fn screen(app: &App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn app_initial_state() {
+        let app = App::new(test_repos());
+        assert_eq!(app.filtered, vec![0, 1, 2]);
+        assert_eq!(app.cursor, Some(0));
+        assert_eq!(app.offset, 0);
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn empty_repos_does_not_panic() {
+        let mut app = App::new(Vec::new());
+        assert_eq!(app.cursor, None);
+        for code in [
+            KeyCode::Down,
+            KeyCode::Up,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::PageDown,
+        ] {
+            press(&mut app, code);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.quit);
+        assert_eq!(app.selected_path, None);
+    }
+
+    #[test]
+    fn pre_selects_current_worktree() {
+        let mut repos = test_repos();
+        repos[1].worktrees[0].current = true;
+        let app = App::new(repos);
+        assert_eq!(selected_repo(&app), "other-repo");
+    }
+
+    #[test]
+    fn opens_with_current_repo_at_top() {
+        let mut repos = long_repos();
+        repos[1].worktrees[3].current = true;
+        let app = App::new(repos);
+        assert_eq!(selected_branch(&app), Some("b3"));
+        assert_eq!(app.offset, 5, "beta's first row should be at the top");
+    }
+
+    #[test]
+    fn arrows_move_and_wrap() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Down);
+        assert_eq!(selected_branch(&app), Some("feat/login"));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.cursor, Some(0));
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.cursor, Some(2));
+    }
+
+    #[test]
+    fn ctrl_n_and_ctrl_p_move() {
+        let mut app = App::new(test_repos());
+        ctrl(&mut app, 'n');
+        assert_eq!(app.cursor, Some(1));
+        ctrl(&mut app, 'p');
+        assert_eq!(app.cursor, Some(0));
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn arrows_scroll_minimally_keeping_a_row_of_context() {
+        let mut app = App::new(long_repos());
+        for _ in 0..6 {
+            press(&mut app, KeyCode::Down);
+        }
+        assert_eq!(app.cursor, Some(6));
+        assert_eq!(app.offset, 0, "row 6 plus one row of context still fits");
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.offset, 1);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.offset, 1, "moving up inside the view does not scroll");
+    }
+
+    #[test]
+    fn right_jumps_to_next_repo_and_wraps() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            (selected_repo(&app), selected_branch(&app)),
+            ("beta", Some("main"))
+        );
+        press(&mut app, KeyCode::Right);
+        assert_eq!(selected_repo(&app), "gamma");
+        press(&mut app, KeyCode::Right);
+        assert_eq!(selected_repo(&app), "alpha");
+    }
+
+    #[test]
+    fn left_goes_to_repo_top_then_previous_repo() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            (selected_repo(&app), selected_branch(&app)),
+            ("beta", Some("main"))
+        );
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            (selected_repo(&app), selected_branch(&app)),
+            ("alpha", Some("main"))
+        );
+        press(&mut app, KeyCode::Left);
+        assert_eq!(selected_repo(&app), "gamma", "wraps to the last repo");
+    }
+
+    #[test]
+    fn tab_and_backtab_jump_like_arrows() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(selected_repo(&app), "beta");
+        handle_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        );
+        assert_eq!(selected_repo(&app), "alpha");
+    }
+
+    #[test]
+    fn jumps_put_the_repo_at_the_top_of_the_view() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.offset, 5);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.offset, 7, "the last repo can't scroll past the end");
+    }
+
+    #[test]
+    fn jump_into_single_repo_is_noop() {
+        let mut app = App::new(vec![repo("solo", &["main", "feat"])]);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(selected_branch(&app), Some("main"), "wraps to its own top");
+        press(&mut app, KeyCode::Left);
+        assert_eq!(selected_branch(&app), Some("main"));
+    }
+
+    #[test]
+    fn page_keys_move_by_a_page_and_clamp() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::PageDown);
+        assert_eq!(app.cursor, Some(MAX_ROWS));
+        press(&mut app, KeyCode::PageDown);
+        assert_eq!(app.cursor, Some(14));
+        assert_eq!(app.offset, 7);
+        press(&mut app, KeyCode::PageUp);
+        press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.cursor, Some(0));
+        assert_eq!(app.offset, 0);
+    }
+
+    #[test]
+    fn home_and_end_jump_to_first_and_last_rows() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.cursor, Some(14));
+        assert_eq!(app.offset, 7);
+        press(&mut app, KeyCode::Home);
+        assert_eq!(app.cursor, Some(0));
+        assert_eq!(app.offset, 0);
+    }
+
+    #[test]
+    fn same_named_repos_stay_separate_groups() {
+        let app = App::new(vec![repo("api", &["main"]), repo("api", &["main"])]);
+        let lines = screen(&app, 40, 4);
+        assert!(lines[0].contains("api"));
+        assert!(lines[1].contains("api"), "second repo keeps its own label");
+    }
+
+    #[test]
+    fn enter_selects_and_quits() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.quit);
+        assert_eq!(
+            app.selected_path,
+            Some(PathBuf::from("/wt/my-app/feat/login"))
+        );
+    }
+
+    #[test]
+    fn enter_quits_when_no_results() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "zzz");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.quit);
+        assert_eq!(app.selected_path, None);
+    }
+
+    #[test]
+    fn esc_quits_when_filter_empty() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Esc);
+        assert!(app.quit);
+        assert_eq!(app.selected_path, None);
+    }
+
+    #[test]
+    fn esc_clears_filter_when_nonempty() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "ot");
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.quit);
+        assert!(app.filter.is_empty());
+        assert_eq!(app.filtered.len(), 3);
+    }
+
+    #[test]
+    fn ctrl_c_quits_when_filter_empty() {
+        let mut app = App::new(test_repos());
+        ctrl(&mut app, 'c');
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn ctrl_c_clears_filter_when_nonempty() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "ot");
+        ctrl(&mut app, 'c');
+        assert!(!app.quit);
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn ctrl_d_quits() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "ot");
+        ctrl(&mut app, 'd');
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn ctrl_u_clears_filter() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "ot");
+        ctrl(&mut app, 'u');
+        assert!(!app.quit);
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn ctrl_u_noop_when_filter_empty() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Down);
+        ctrl(&mut app, 'u');
+        assert!(!app.quit);
+        assert_eq!(app.cursor, Some(1));
+    }
+
+    #[test]
+    fn clearing_filter_keeps_highlighted_worktree() {
+        let mut app = App::new(long_repos());
+        type_str(&mut app, "gamma b2");
+        assert_eq!(
+            (selected_repo(&app), selected_branch(&app)),
+            ("gamma", Some("b2"))
+        );
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(
+            (selected_repo(&app), selected_branch(&app)),
+            ("gamma", Some("b2"))
+        );
+        assert_eq!(app.offset, 7, "its repo moves to the top");
+    }
+
+    #[test]
+    fn clearing_filter_without_match_returns_to_current() {
+        let mut repos = test_repos();
+        repos[0].worktrees[1].current = true;
+        let mut app = App::new(repos);
+        type_str(&mut app, "zzz");
+        assert_eq!(app.cursor, None);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(selected_branch(&app), Some("feat/login"));
+    }
+
+    #[test]
+    fn typing_filters_and_selects_best_match() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Down);
+        type_str(&mut app, "login");
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(app.cursor, Some(0));
+        assert_eq!(selected_branch(&app), Some("feat/login"));
+    }
+
+    #[test]
+    fn filter_matches_across_repo_and_branch() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "other main");
+        assert_eq!(app.filtered.len(), 1);
+        assert_eq!(selected_repo(&app), "other-repo");
+    }
+
+    #[test]
+    fn filter_groups_rows_by_repo_with_best_repo_first() {
+        let mut app = App::new(vec![
+            repo("alpha", &["main", "fix/a"]),
+            repo("beta", &["fix"]),
+        ]);
+        type_str(&mut app, "fix");
+        let order: Vec<_> = (0..app.filtered.len())
+            .map(|i| {
+                (
+                    app.repos[app.row(i).repo].as_str(),
+                    app.row(i).wt.branch.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(order, [("beta", Some("fix")), ("alpha", Some("fix/a"))]);
+    }
+
+    #[test]
+    fn modified_chars_do_not_edit_filter() {
+        let mut app = App::new(test_repos());
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            handle_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Char('w'), modifiers),
+            );
+        }
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn backspace_removes_filter_char() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "ot");
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.filter, "o");
+    }
+
+    #[test]
+    fn backspace_on_empty_filter_is_noop() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.cursor, Some(1));
+    }
+
+    #[test]
+    fn viewport_height_caps_at_10() {
+        assert_eq!(viewport_height(&App::new(long_repos())), 10);
+    }
+
+    #[test]
+    fn viewport_height_fits_content() {
+        assert_eq!(viewport_height(&App::new(test_repos())), 5);
+    }
+
+    #[test]
+    fn columns_fit_content_when_wide() {
+        let mut repos = test_repos();
+        repos[0].worktrees[0].locked = true;
+        let app = App::new(repos);
+        assert_eq!(
+            columns(&app, 80),
+            Columns {
+                name: 10,
+                count: 4,
+                branch: 12,
+                status: 6,
+                badge: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn columns_give_way_in_order_as_the_terminal_narrows() {
+        let mut repos = vec![
+            repo("billing-service", &["main", "feat/graphql-subscriptions"]),
+            repo("wt", &["main"]),
+        ];
+        repos[0].worktrees[1].status = "↑7 ↓2".into();
+        repos[0].worktrees[1].locked = true;
+        let app = App::new(repos);
+        let wide = columns(&app, 80);
+        assert_eq!(
+            (wide.name, wide.count, wide.branch, wide.status, wide.badge),
+            (15, 4, 28, 7, 4)
+        );
+
+        let c = columns(&app, 56);
+        assert_eq!(
+            (c.badge, c.count, c.name),
+            (0, 0, 15),
+            "badge, then counts go first"
+        );
+        let c = columns(&app, 48);
+        assert_eq!(
+            (c.name, c.branch, c.status),
+            (9, 28, 7),
+            "repo names shorten next"
+        );
+        let c = columns(&app, 40);
+        assert_eq!((c.name, c.branch, c.status), (8, 21, 7), "then branches");
+        let c = columns(&app, 32);
+        assert_eq!(
+            (c.name, c.branch, c.status),
+            (8, 20, 0),
+            "status goes last, branch takes its room"
+        );
+    }
+
+    #[test]
+    fn single_repo_hides_repo_column() {
+        let app = App::new(vec![repo("solo", &["main", "feat"])]);
+        assert_eq!(columns(&app, 80).name, 0);
+        let lines = screen(&app, 40, 4);
+        assert_eq!(lines[0], "› main");
+    }
+
+    #[test]
+    fn repo_label_and_count_show_on_first_row_of_each_group() {
+        let app = App::new(test_repos());
+        let lines = screen(&app, 60, 5);
+        assert_eq!(lines[0], "› my-app (2)      main");
+        assert_eq!(lines[1], "                  feat/login  * ↑2");
+        assert_eq!(lines[2], "  other-repo (1)  main        ↓1");
+    }
+
+    #[test]
+    fn counts_show_matches_while_filtering() {
+        let mut app = App::new(long_repos());
+        type_str(&mut app, "beta b");
+        let lines = screen(&app, 40, 10);
+        assert!(lines[0].starts_with("› beta (4)"), "{lines:?}");
+    }
+
+    #[test]
+    fn repo_label_sticks_to_top_row_when_scrolled() {
+        let mut app = App::new(long_repos());
+        for _ in 0..8 {
+            press(&mut app, KeyCode::Down);
+        }
+        assert_eq!(app.offset, 2);
+        let lines = screen(&app, 40, 10);
+        assert!(lines[0].starts_with("  alpha (5)"), "{lines:?}");
+        assert!(lines[3].starts_with("  beta (5)"), "{lines:?}");
+    }
+
+    #[test]
+    fn short_terminal_keeps_cursor_visible() {
+        let mut app = App::new(long_repos());
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Down);
+        }
+        let lines = screen(&app, 40, 5);
+        assert!(lines[2].starts_with("› beta (5)"), "{lines:?}");
+    }
+
+    #[test]
+    fn current_and_detached_branches_are_colored() {
+        let mut repos = test_repos();
+        repos[0].worktrees[0].current = true;
+        repos[1].worktrees[0].branch = None;
+        repos[1].worktrees[0].detached = true;
+        let mut app = App::new(repos);
+        app.color = true;
+        let lines = row_lines(&app, 60, 8);
+        let branch_fg = |line: &Line| line.spans[4].style.fg;
+        assert_eq!(branch_fg(&lines[0]), Some(Color::Green));
+        assert_eq!(branch_fg(&lines[2]), Some(Color::Yellow));
+        assert_eq!(lines[2].spans[4].content.trim(), "(detached)");
+    }
+
+    #[test]
+    fn selected_row_is_highlighted() {
+        let mut app = App::new(test_repos());
+        app.color = true;
+        let lines = row_lines(&app, 60, 8);
+        assert_eq!(lines[0].style.fg, Some(Color::Cyan));
+        assert_eq!(lines[1].style.fg, None);
+    }
+
+    #[test]
+    fn render_truncates_long_branches_in_narrow_terminal() {
+        let app = App::new(vec![repo(
+            "repo",
+            &["feature/a-very-long-branch-name-that-keeps-going"],
+        )]);
+        let lines = screen(&app, 20, 3);
+        assert_eq!(lines[0], "› feature/a-very-lo…");
+    }
+
+    #[test]
+    fn render_empty_filter_shows_hint() {
+        let mut app = App::new(test_repos());
+        type_str(&mut app, "zzzzzzz");
+        let lines = screen(&app, 60, 5);
+        assert!(lines[0].contains("no matches"), "{lines:?}");
+    }
+
+    #[test]
+    fn render_detail_shows_selected_path() {
+        let app = App::new(test_repos());
+        let lines = screen(&app, 60, 5);
+        assert_eq!(lines[3], "/wt/my-app/main");
+    }
+
     #[test]
     fn footer_full_width_shows_all_hints() {
         let app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("enter"));
-        assert!(text.contains("esc"));
-        assert!(text.contains("tab switch"));
-        assert!(text.contains("type to filter"));
+        let text = line_text(&footer_line(&app, 80, 3));
+        assert_eq!(text, "enter select · esc quit · ←→ repo · type to filter");
     }
 
     #[test]
-    fn footer_medium_width_drops_filter_hint() {
+    fn footer_drops_filter_hint_before_repo_hint() {
         let app = App::new(test_repos());
-        let line = footer_line(&app, 40, 10);
-        let text = line_text(&line);
-        assert!(text.contains("tab switch"));
-        assert!(!text.contains("type to filter"));
+        assert_eq!(
+            line_text(&footer_line(&app, 40, 3)),
+            "enter select · esc quit · ←→ repo"
+        );
+        assert_eq!(
+            line_text(&footer_line(&app, 30, 3)),
+            "enter select · esc quit"
+        );
+        assert_eq!(line_text(&footer_line(&app, 10, 3)), "");
     }
 
     #[test]
-    fn footer_narrow_drops_tab_hint() {
+    fn footer_hides_repo_hint_for_single_repo() {
+        let app = App::new(vec![repo("solo", &["main"])]);
+        assert!(!line_text(&footer_line(&app, 80, 1)).contains("repo"));
+    }
+
+    #[test]
+    fn footer_shows_position_when_scrollable() {
+        let mut app = App::new(long_repos());
+        press(&mut app, KeyCode::Down);
+        let text = line_text(&footer_line(&app, 80, 8));
+        assert!(text.ends_with(" · 2/15"), "{text}");
         let app = App::new(test_repos());
-        let line = footer_line(&app, 25, 10);
-        let text = line_text(&line);
-        assert!(text.contains("enter"));
-        assert!(text.contains("esc"));
-        assert!(!text.contains("tab"));
+        assert!(!line_text(&footer_line(&app, 80, 3)).contains("1/3"));
     }
 
     #[test]
-    fn footer_repos_vs_worktrees_actions() {
+    fn footer_filter_shows_text_and_match_count() {
         let mut app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("open"));
-        assert!(text.contains("quit"));
-
-        app.active_pane = Pane::Worktrees;
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("select"));
-        assert!(text.contains("back"));
-    }
-
-    #[test]
-    fn footer_filter_shows_text() {
+        type_str(&mut app, "ma");
+        assert_eq!(line_text(&footer_line(&app, 80, 3)), "/ ma · 3 matches");
         let mut app = App::new(test_repos());
-        app.filter = "test".into();
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("/ "));
-        assert!(text.contains("test"));
-    }
-
-    #[test]
-    fn footer_filter_shows_match_count() {
-        let mut app = App::new(test_repos());
-        app.filter = "main".into();
-        app.refilter();
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("3 matches"), "got: {text}");
-    }
-
-    #[test]
-    fn footer_filter_shows_singular_match() {
-        let mut app = App::new(test_repos());
-        app.filter = "login".into();
-        app.refilter();
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("1 match"), "got: {text}");
-        assert!(!text.contains("matches"));
+        type_str(&mut app, "login");
+        assert_eq!(line_text(&footer_line(&app, 80, 3)), "/ login · 1 match");
     }
 
     #[test]
     fn footer_filter_hides_count_at_narrow_width() {
         let mut app = App::new(test_repos());
-        app.filter = "main".into();
-        app.refilter();
-        let text = line_text(&footer_line(&app, 12, 10));
-        assert!(text.contains("main"));
-        assert!(!text.contains("match"));
+        type_str(&mut app, "main");
+        assert_eq!(line_text(&footer_line(&app, 10, 3)), "/ main");
     }
 
     #[test]
     fn footer_width_counts_display_columns_not_bytes() {
         let app = App::new(test_repos());
-        let line = footer_line(&app, 51, 10);
-        let text = line_text(&line);
-        assert!(
-            text.contains("type to filter"),
-            "filter hint should fit at exact display width: {text}"
-        );
+        let text = line_text(&footer_line(&app, 33, 3));
+        assert_eq!(display_width(&text), 33, "{text}");
     }
 
     #[test]
-    fn footer_filter_width_counts_display_columns_not_bytes() {
-        let mut app = App::new(test_repos());
-        app.filter = "main".into();
-        app.refilter();
-        let line = footer_line(&app, 16, 10);
-        let text = line_text(&line);
-        assert!(
-            text.contains("3 matches"),
-            "match count should fit at exact display width: {text}"
-        );
+    fn worktree_column_widths_empty_status() {
+        let wts = [wt("r", "main")];
+        let (branch_w, status_w, badge_w) = worktree_column_widths(wts.iter());
+        assert_eq!((branch_w, status_w, badge_w), (6, 0, 0));
     }
 
     #[test]
-    fn sort_key_main_first() {
-        let main = WorktreeData {
-            branch: Some("main".into()),
-            ..Default::default()
-        };
-        let master = WorktreeData {
-            branch: Some("master".into()),
-            ..Default::default()
-        };
-        let feat = WorktreeData {
-            branch: Some("feat/login".into()),
-            ..Default::default()
-        };
-        let detached = WorktreeData {
-            detached: true,
-            ..Default::default()
-        };
-
-        assert!(main.sort_key() < feat.sort_key());
-        assert!(master.sort_key() < feat.sort_key());
-        assert!(feat.sort_key() < detached.sort_key());
-    }
-
-    #[test]
-    fn sort_key_branches_alphabetical() {
-        let a = WorktreeData {
-            branch: Some("feat/a".into()),
-            ..Default::default()
-        };
-        let b = WorktreeData {
-            branch: Some("feat/b".into()),
-            ..Default::default()
-        };
-        assert!(a.sort_key() < b.sort_key());
+    fn worktree_column_widths_branch_clamped() {
+        let long = [wt("r", &"x".repeat(60))];
+        assert_eq!(worktree_column_widths(long.iter()).0, 42);
+        let short = [wt("r", "ab")];
+        assert_eq!(worktree_column_widths(short.iter()).0, 6);
     }
 
     #[test]
     fn from_info_dirty() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/feat"),
-            head: "abc".into(),
-            branch: Some("feat".into()),
-            bare: false,
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: true,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
+        let info = info(
+            worktree::Worktree {
+                path: PathBuf::from("/wt/repo/feat"),
+                branch: Some("feat".into()),
+                ..Default::default()
+            },
+            worktree::Status {
+                dirty: true,
+                ..Default::default()
+            },
+        );
         let data = WorktreeData::from_info(&info, "repo");
         assert!(data.dirty);
         assert_eq!(data.filter_candidate, "repo feat");
@@ -1422,19 +1307,14 @@ mod tests {
 
     #[test]
     fn from_info_detached_no_branch_candidate() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/detached"),
-            head: "abc123".into(),
-            branch: None,
-            bare: false,
-            detached: true,
-            locked: false,
-            prunable: false,
-            dirty: false,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
+        let info = info(
+            worktree::Worktree {
+                path: PathBuf::from("/wt/repo/detached"),
+                detached: true,
+                ..Default::default()
+            },
+            worktree::Status::default(),
+        );
         let data = WorktreeData::from_info(&info, "repo");
         assert_eq!(data.filter_candidate, "repo");
         assert_eq!(data.display_branch(), "(detached)");
@@ -1442,21 +1322,49 @@ mod tests {
 
     #[test]
     fn from_info_clean_status_is_empty() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/main"),
-            head: "abc".into(),
-            branch: Some("main".into()),
-            bare: false,
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: false,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
+        let info = info(
+            worktree::Worktree {
+                path: PathBuf::from("/wt/repo/main"),
+                branch: Some("main".into()),
+                ..Default::default()
+            },
+            worktree::Status::default(),
+        );
         let data = WorktreeData::from_info(&info, "repo");
         assert!(data.status.is_empty());
+    }
+
+    #[test]
+    fn from_info_ahead_behind() {
+        let info = info(
+            worktree::Worktree {
+                path: PathBuf::from("/wt/repo/feat"),
+                branch: Some("feat".into()),
+                ..Default::default()
+            },
+            worktree::Status {
+                dirty: true,
+                ahead: Some(3),
+                behind: Some(1),
+            },
+        );
+        let data = WorktreeData::from_info(&info, "repo");
+        assert_eq!(data.status, "* \u{2191}3 \u{2193}1");
+    }
+
+    #[test]
+    fn from_info_locked() {
+        let info = info(
+            worktree::Worktree {
+                path: PathBuf::from("/wt/repo/feat"),
+                branch: Some("feat".into()),
+                locked: true,
+                ..Default::default()
+            },
+            worktree::Status::default(),
+        );
+        let data = WorktreeData::from_info(&info, "repo");
+        assert!(data.locked);
     }
 
     #[test]
@@ -1464,58 +1372,40 @@ mod tests {
         let infos = vec![worktree::RepoInfo {
             name: "repo".into(),
             worktrees: vec![
-                worktree::WorktreeInfo {
-                    path: PathBuf::from("/admin"),
-                    head: "abc".into(),
-                    branch: Some("main".into()),
-                    bare: true,
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
-                },
-                worktree::WorktreeInfo {
-                    path: PathBuf::from("/wt/stale"),
-                    head: "xxx".into(),
-                    branch: Some("stale-branch".into()),
-                    bare: false,
-                    detached: false,
-                    locked: false,
-                    prunable: true,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
-                },
-                worktree::WorktreeInfo {
-                    path: PathBuf::from("/wt/feat"),
-                    head: "def".into(),
-                    branch: Some("feat/z".into()),
-                    bare: false,
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
-                },
-                worktree::WorktreeInfo {
-                    path: PathBuf::from("/wt/main"),
-                    head: "ghi".into(),
-                    branch: Some("main".into()),
-                    bare: false,
-                    detached: false,
-                    locked: false,
-                    prunable: false,
-                    dirty: false,
-                    ahead: None,
-                    behind: None,
-                    current: false,
-                },
+                info(
+                    worktree::Worktree {
+                        path: PathBuf::from("/admin"),
+                        branch: Some("main".into()),
+                        bare: true,
+                        ..Default::default()
+                    },
+                    worktree::Status::default(),
+                ),
+                info(
+                    worktree::Worktree {
+                        path: PathBuf::from("/wt/stale"),
+                        branch: Some("stale-branch".into()),
+                        prunable: true,
+                        ..Default::default()
+                    },
+                    worktree::Status::default(),
+                ),
+                info(
+                    worktree::Worktree {
+                        path: PathBuf::from("/wt/feat"),
+                        branch: Some("feat/z".into()),
+                        ..Default::default()
+                    },
+                    worktree::Status::default(),
+                ),
+                info(
+                    worktree::Worktree {
+                        path: PathBuf::from("/wt/main"),
+                        branch: Some("main".into()),
+                        ..Default::default()
+                    },
+                    worktree::Status::default(),
+                ),
             ],
         }];
 
@@ -1530,949 +1420,16 @@ mod tests {
     fn build_repos_drops_empty() {
         let infos = vec![worktree::RepoInfo {
             name: "bare-only".into(),
-            worktrees: vec![worktree::WorktreeInfo {
-                path: PathBuf::from("/admin"),
-                head: "abc".into(),
-                branch: None,
-                bare: true,
-                detached: false,
-                locked: false,
-                prunable: false,
-                dirty: false,
-                ahead: None,
-                behind: None,
-                current: false,
-            }],
+            worktrees: vec![info(
+                worktree::Worktree {
+                    path: PathBuf::from("/admin"),
+                    bare: true,
+                    ..Default::default()
+                },
+                worktree::Status::default(),
+            )],
         }];
 
         assert!(build_repos(infos).is_empty());
-    }
-
-    #[test]
-    fn compute_pane_widths_basic() {
-        let repos = test_repos();
-        let (repos_w, content_w) = compute_pane_widths(&repos);
-        assert!(repos_w >= 8);
-        assert!(content_w > repos_w);
-    }
-
-    #[test]
-    fn compute_pane_widths_empty() {
-        let (repos_w, _) = compute_pane_widths(&[]);
-        assert!(repos_w >= 8);
-    }
-
-    #[test]
-    fn compute_pane_widths_three_digit_count() {
-        let worktrees: Vec<WorktreeData> = (0..100)
-            .map(|i| WorktreeData {
-                path: PathBuf::from(format!("/wt/repo/{i}")),
-                branch: Some(format!("b{i}")),
-                filter_candidate: format!("repo b{i}"),
-                ..Default::default()
-            })
-            .collect();
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees,
-        }];
-        let (repos_w, _) = compute_pane_widths(&repos);
-        // " (100)" is 6 chars + "repo" is 4 + highlight 2 = 12
-        assert!(repos_w >= 12, "repos_w={repos_w} should fit 3-digit count");
-    }
-
-    #[test]
-    fn worktree_column_widths_empty_status() {
-        let wts = [
-            WorktreeData {
-                branch: Some("main".into()),
-                ..Default::default()
-            },
-            WorktreeData {
-                branch: Some("feat".into()),
-                ..Default::default()
-            },
-        ];
-        let (_, status_w, _) = worktree_column_widths(wts.iter());
-        assert_eq!(status_w, 0);
-    }
-
-    #[test]
-    fn worktree_column_widths_branch_clamped() {
-        let wts = [WorktreeData {
-            branch: Some("a".repeat(60)),
-            ..Default::default()
-        }];
-        let (branch_w, _, _) = worktree_column_widths(wts.iter());
-        assert_eq!(branch_w, 42, "long branch should clamp to 40 + 2 padding");
-
-        let short = [WorktreeData {
-            branch: Some("ab".into()),
-            ..Default::default()
-        }];
-        let (branch_w, _, _) = worktree_column_widths(short.iter());
-        assert_eq!(branch_w, 6, "short branch should clamp to 4 + 2 padding");
-    }
-
-    #[test]
-    fn render_empty_filter_shows_hint() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(60, 6);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-        app.filter = "zzzzzzz".into();
-        app.refilter();
-
-        terminal
-            .draw(|frame| {
-                render(frame, &mut app);
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let all_text: String = (0..buf.area().height)
-            .flat_map(|y| {
-                let buf = &buf;
-                (0..buf.area().width)
-                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
-            })
-            .collect();
-        assert!(
-            all_text.contains("no matches"),
-            "empty filter should show hint, got: {all_text}"
-        );
-    }
-
-    #[test]
-    fn render_repos_pane() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(40, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-
-        terminal
-            .draw(|frame| {
-                render_repos(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(first_line.contains("my-app"));
-    }
-
-    #[test]
-    fn render_repos_filtered_count() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(40, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-        app.filter = "login".into();
-        app.refilter();
-
-        terminal
-            .draw(|frame| {
-                render_repos(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(
-            first_line.contains("(1)"),
-            "filtered count should show 1, got: {first_line}"
-        );
-    }
-
-    #[test]
-    fn render_worktrees_pane() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(50, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(first_line.contains("main"));
-    }
-
-    #[test]
-    fn detached_worktree_styled_yellow() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![
-                WorktreeData {
-                    path: PathBuf::from("/wt/repo/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "repo main".into(),
-                    ..Default::default()
-                },
-                WorktreeData {
-                    path: PathBuf::from("/wt/repo/detached"),
-                    branch: None,
-                    detached: true,
-                    filter_candidate: "repo".into(),
-                    ..Default::default()
-                },
-            ],
-        }];
-        let backend = TestBackend::new(50, 3);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-        app.active_pane = Pane::Worktrees;
-        app.color = true;
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let cell = &buf[(2, 1)];
-        assert_eq!(cell.fg, Color::Yellow);
-    }
-
-    #[test]
-    fn render_detail_shows_path() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(40, 1);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let app = App::new(test_repos());
-
-        terminal
-            .draw(|frame| {
-                render_detail(frame, &app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(line.contains("/wt/my-app/main"));
-    }
-
-    #[test]
-    fn footer_shows_position_when_scrollable() {
-        let app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80, 1));
-        assert!(text.contains("1/2"), "expected position, got: {text}");
-    }
-
-    #[test]
-    fn footer_no_position_when_fits() {
-        let app = App::new(test_repos());
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(
-            !text.contains("1/2"),
-            "should not show position, got: {text}"
-        );
-    }
-
-    #[test]
-    fn render_detail_no_position() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(40, 1);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let app = App::new(test_repos());
-
-        terminal
-            .draw(|frame| {
-                render_detail(frame, &app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(
-            !line.contains("1/2"),
-            "should not show position when list fits"
-        );
-    }
-
-    #[test]
-    fn render_full_layout() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(60, 6);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-
-        terminal
-            .draw(|frame| {
-                render(frame, &mut app);
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let all_text: String = (0..buf.area().height)
-            .flat_map(|y| {
-                let buf = &buf;
-                (0..buf.area().width)
-                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
-            })
-            .collect();
-        assert!(all_text.contains("my-app"));
-        assert!(all_text.contains("enter"));
-    }
-
-    #[test]
-    fn render_worktrees_column_collapse() {
-        use ratatui::backend::TestBackend;
-        let backend = TestBackend::new(15, 3);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(test_repos());
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(
-            first_line.contains("main"),
-            "branch should still show at narrow width"
-        );
-    }
-
-    #[test]
-    fn from_info_ahead_behind() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/feat"),
-            head: "abc".into(),
-            branch: Some("feat".into()),
-            bare: false,
-            detached: false,
-            locked: false,
-            prunable: false,
-            dirty: true,
-            ahead: Some(3),
-            behind: Some(1),
-            current: false,
-        };
-        let data = WorktreeData::from_info(&info, "repo");
-        assert_eq!(data.status, "* \u{2191}3 \u{2193}1");
-    }
-
-    #[test]
-    fn from_info_locked_sets_badge() {
-        let info = worktree::WorktreeInfo {
-            path: PathBuf::from("/wt/repo/feat"),
-            head: "abc".into(),
-            branch: Some("feat".into()),
-            bare: false,
-            detached: false,
-            locked: true,
-            prunable: false,
-            dirty: false,
-            ahead: None,
-            behind: None,
-            current: false,
-        };
-        let data = WorktreeData::from_info(&info, "repo");
-        assert!(data.locked);
-        assert!(data.badge().is_some());
-    }
-
-    #[test]
-    fn refilter_on_empty_app() {
-        let mut app = App::new(Vec::new());
-        app.filter = "test".into();
-        app.refilter();
-        assert!(app.filtered_repo_indices.is_empty());
-        assert_eq!(app.match_count, 0);
-        assert!(app.repo_state.selected().is_none());
-    }
-
-    #[test]
-    fn match_count_tracks_worktree_matches() {
-        let mut app = App::new(test_repos());
-        assert_eq!(app.match_count, 3);
-
-        app.filter = "main".into();
-        app.refilter();
-        assert_eq!(app.match_count, 3);
-
-        app.filter = "login".into();
-        app.refilter();
-        assert_eq!(app.match_count, 1);
-
-        app.filter = "zzzzz".into();
-        app.refilter();
-        assert_eq!(app.match_count, 0);
-
-        app.filter.clear();
-        app.refilter();
-        assert_eq!(app.match_count, 3);
-    }
-
-    #[test]
-    fn build_repos_drops_all_prunable() {
-        let infos = vec![worktree::RepoInfo {
-            name: "stale-repo".into(),
-            worktrees: vec![worktree::WorktreeInfo {
-                path: PathBuf::from("/wt/stale"),
-                head: "abc".into(),
-                branch: Some("feat".into()),
-                bare: false,
-                detached: false,
-                locked: false,
-                prunable: true,
-                dirty: false,
-                ahead: None,
-                behind: None,
-                current: false,
-            }],
-        }];
-
-        assert!(build_repos(infos).is_empty());
-    }
-
-    #[test]
-    fn display_branch_no_branch_not_detached() {
-        let wt = WorktreeData::default();
-        assert_eq!(wt.display_branch(), "");
-    }
-
-    #[test]
-    fn cursor_single_repo_wraps_to_self() {
-        let repos = vec![test_repos().remove(0)];
-        let mut app = App::new(repos);
-        app.active_pane = Pane::Repos;
-        app.cursor_move(1);
-        assert_eq!(app.repo_state.selected(), Some(0));
-        app.cursor_move(-1);
-        assert_eq!(app.repo_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn cursor_single_worktree_wraps_to_self() {
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![WorktreeData {
-                path: PathBuf::from("/wt/repo/main"),
-                branch: Some("main".into()),
-                filter_candidate: "repo main".into(),
-                ..Default::default()
-            }],
-        }];
-        let mut app = App::new(repos);
-        app.active_pane = Pane::Worktrees;
-        app.cursor_move(1);
-        assert_eq!(app.wt_state.selected(), Some(0));
-        app.cursor_move(-1);
-        assert_eq!(app.wt_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn worktree_column_widths_with_badge() {
-        let wts = [
-            WorktreeData {
-                branch: Some("main".into()),
-                ..Default::default()
-            },
-            WorktreeData {
-                branch: Some("feat".into()),
-                locked: true,
-                ..Default::default()
-            },
-        ];
-        let (_, _, badge_w) = worktree_column_widths(wts.iter());
-        assert_eq!(badge_w, 4, "badge 'lock' is 4 chars");
-    }
-
-    #[test]
-    fn render_worktrees_locked_badge_visible() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![WorktreeData {
-                path: PathBuf::from("/wt/repo/feat"),
-                display_path: "/wt/repo/feat".into(),
-                branch: Some("feat".into()),
-                filter_candidate: "repo feat".into(),
-                locked: true,
-                ..Default::default()
-            }],
-        }];
-        let backend = TestBackend::new(50, 3);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-        app.active_pane = Pane::Worktrees;
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(
-            first_line.contains("lock"),
-            "badge should render at sufficient width, got: {first_line}"
-        );
-    }
-
-    #[test]
-    fn render_worktrees_badge_collapses_at_narrow_width() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![WorktreeData {
-                path: PathBuf::from("/wt/repo/feat"),
-                display_path: "/wt/repo/feat".into(),
-                branch: Some("feat".into()),
-                filter_candidate: "repo feat".into(),
-                locked: true,
-                status: "* ↑2".into(),
-                dirty: true,
-                ..Default::default()
-            }],
-        }];
-        let backend = TestBackend::new(16, 3);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-        app.active_pane = Pane::Worktrees;
-
-        terminal
-            .draw(|frame| {
-                render_worktrees(frame, &mut app, frame.area());
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let first_line: String = (0..buf.area().width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(
-            !first_line.contains("lock"),
-            "badge should collapse at narrow width, got: {first_line}"
-        );
-    }
-
-    #[test]
-    fn footer_position_drops_when_too_narrow_for_it() {
-        let app = App::new(test_repos());
-        let full = line_text(&footer_line(&app, 80, 1));
-        assert!(full.contains("1/2"), "position should show at wide width");
-
-        let narrow = line_text(&footer_line(&app, 38, 1));
-        assert!(
-            narrow.contains("tab"),
-            "tab hint should fit at width 38: {narrow}"
-        );
-        assert!(
-            !narrow.contains("1/2"),
-            "position should drop at width 38: {narrow}"
-        );
-    }
-
-    #[test]
-    fn refilter_preserves_pane_on_zero_results() {
-        let mut app = App::new(test_repos());
-        app.active_pane = Pane::Worktrees;
-        app.filter = "zzzzz".into();
-        app.refilter();
-        assert!(app.filtered_repo_indices.is_empty());
-        assert_eq!(
-            app.active_pane,
-            Pane::Worktrees,
-            "pane should be preserved when filter yields 0 results"
-        );
-
-        app.filter = "ot".into();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 1);
-        assert_eq!(
-            app.active_pane,
-            Pane::Worktrees,
-            "single result should switch to worktrees"
-        );
-
-        app.filter.clear();
-        app.refilter();
-        assert_eq!(app.filtered_repo_indices.len(), 2);
-        assert_eq!(
-            app.active_pane,
-            Pane::Repos,
-            "multiple results should switch to repos"
-        );
-    }
-
-    #[test]
-    fn viewport_height_single_worktree() {
-        let repos = vec![RepoData {
-            name: "repo".into(),
-            worktrees: vec![WorktreeData {
-                path: PathBuf::from("/wt/repo/main"),
-                branch: Some("main".into()),
-                filter_candidate: "repo main".into(),
-                ..Default::default()
-            }],
-        }];
-        let app = App::new(repos);
-        assert_eq!(viewport_height(&app), 3);
-    }
-
-    // Regression: short repo names were truncated to 3 chars (e.g. "chunk"→"chu")
-    // when all branches are short ("main") because repos_w was capped at pane_w/2,
-    // causing ratatui to squeeze the repos column below its computed width.
-    #[test]
-    fn render_full_layout_short_branch_no_name_truncation() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![
-            RepoData {
-                name: "chunk".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/main"),
-                    display_path: "/wt/chunk/main".into(),
-                    branch: Some("dev".into()),
-                    filter_candidate: "chunk dev".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "rust".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/rust/main"),
-                    display_path: "/wt/rust/main".into(),
-                    branch: Some("main".into()),
-                    filter_candidate: "rust main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "wt".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/wt/main"),
-                    display_path: "/wt/wt/main".into(),
-                    branch: Some("main".into()),
-                    filter_candidate: "wt main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        // content_width for these repos is 21; use exactly that width so the
-        // layout is at its tightest while still having enough room.
-        let backend = TestBackend::new(21, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-
-        terminal
-            .draw(|frame| {
-                render(frame, &mut app);
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let all_text: String = (0..buf.area().height)
-            .flat_map(|y| {
-                let buf = &buf;
-                (0..buf.area().width)
-                    .map(move |x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
-            })
-            .collect();
-        assert!(
-            all_text.contains("chunk"),
-            "repo name 'chunk' should not be truncated, got: {all_text}"
-        );
-        assert!(
-            all_text.contains("rust"),
-            "repo name 'rust' should not be truncated, got: {all_text}"
-        );
-        assert!(
-            all_text.contains("dev"),
-            "branch name 'dev' should be visible in the worktrees column at minimum layout width, got: {all_text}"
-        );
-    }
-
-    // At widths below the two-column threshold, the layout collapses to repos-only.
-    // Repo names must still render; the worktrees column (and detail row) must not appear.
-    #[test]
-    fn render_full_layout_collapses_below_threshold() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![
-            RepoData {
-                name: "chunk".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/topic"),
-                    display_path: "/wt/chunk/topic".into(),
-                    branch: Some("topic".into()),
-                    filter_candidate: "chunk topic".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "rust".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/rust/main"),
-                    display_path: "/wt/rust/main".into(),
-                    branch: Some("main".into()),
-                    filter_candidate: "rust main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        // repos_w = 11; threshold = wt_min(8) + spacing(2) + repos_w(11) = 21.
-        // Width 20 is one below threshold → single-column (repos only, no wt column).
-        let backend = TestBackend::new(20, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-
-        terminal
-            .draw(|frame| {
-                render(frame, &mut app);
-            })
-            .unwrap();
-
-        let buf = terminal.backend().buffer().clone();
-        let h = buf.area().height as usize;
-        // Layout: content rows 0..h-2, detail row h-2, footer row h-1.
-        let content_text: String = (0..h.saturating_sub(2))
-            .flat_map(|y| {
-                let buf = &buf;
-                (0..buf.area().width)
-                    .map(move |x| buf[(x, y as u16)].symbol().chars().next().unwrap_or(' '))
-            })
-            .collect();
-        let detail_text: String = (0..buf.area().width)
-            .map(|x| {
-                buf[(x, (h - 2) as u16)]
-                    .symbol()
-                    .chars()
-                    .next()
-                    .unwrap_or(' ')
-            })
-            .collect();
-        assert!(
-            content_text.contains("chunk"),
-            "repo name 'chunk' should be visible in collapsed layout, got: {content_text}"
-        );
-        assert!(
-            content_text.contains("rust"),
-            "repo name 'rust' should be visible in collapsed layout, got: {content_text}"
-        );
-        assert!(
-            !content_text.contains("topic"),
-            "branch 'topic' should not appear in the repos column when collapsed, got: {content_text}"
-        );
-        assert!(
-            detail_text.contains("topic"),
-            "detail row should show the selected worktree path even when collapsed, got: {detail_text}"
-        );
-    }
-
-    // Collapsed layout must set the collapsed flag so handle_key can guard pane
-    // transitions; render must NOT override active_pane (that caused Tab/Enter
-    // to be silently swallowed on every frame).
-    #[test]
-    fn collapsed_layout_sets_collapsed_flag() {
-        use ratatui::backend::TestBackend;
-        let repos = vec![
-            RepoData {
-                name: "chunk".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "chunk main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "rust".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/rust/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "rust main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        // repos_w = 11; threshold = 21; width 20 → collapsed layout.
-        let backend = TestBackend::new(20, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut app = App::new(repos);
-
-        // Force active_pane to Worktrees (as would happen after Tab or a narrow resize).
-        app.active_pane = Pane::Worktrees;
-
-        // Render at narrow width: must set collapsed flag, must NOT touch active_pane.
-        terminal.draw(|frame| render(frame, &mut app)).unwrap();
-
-        assert!(
-            app.collapsed,
-            "render must set collapsed flag in narrow layout"
-        );
-        assert_eq!(
-            app.active_pane,
-            Pane::Worktrees,
-            "render must not override active_pane in collapsed layout"
-        );
-        assert!(!app.quit, "app must not quit");
-        assert!(app.selected_path.is_none(), "no path should be selected");
-    }
-
-    // Enter in collapsed Repos mode must select the highlighted worktree directly
-    // (worktrees column hidden but selection is deterministic).
-    #[test]
-    fn collapsed_enter_selects_worktree_directly() {
-        use ratatui::crossterm::event::{
-            KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
-        };
-        let repos = vec![
-            RepoData {
-                name: "chunk".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/chunk/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "chunk main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "rust".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/rust/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "rust main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        let mut app = App::new(repos);
-        // Simulate what render sets when the terminal is collapsed.
-        app.collapsed = true;
-        app.active_pane = Pane::Repos;
-
-        let enter = KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        handle_key(&mut app, enter);
-
-        assert!(app.quit, "Enter in collapsed Repos must quit");
-        assert_eq!(
-            app.selected_path,
-            Some(PathBuf::from("/wt/chunk/main")),
-            "Enter in collapsed Repos must select the first repo's worktree path"
-        );
-    }
-
-    // repos_w must stay fixed during filtering so the worktrees column does not
-    // shift as the visible repo set changes.
-    #[test]
-    fn refilter_keeps_repos_w_stable() {
-        let repos = vec![
-            RepoData {
-                name: "a-very-long-repository-name".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/long/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "a-very-long-repository-name main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "ab".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/ab/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "ab main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        let mut app = App::new(repos);
-        let initial_repos_w = app.repos_w;
-
-        app.filter = "ab".into();
-        app.refilter();
-
-        assert_eq!(app.filtered_repo_indices.len(), 1);
-        assert_eq!(
-            app.repos_w, initial_repos_w,
-            "repos_w must not change during filtering to avoid shifting the worktrees column"
-        );
-    }
-
-    #[test]
-    fn footer_collapsed_shows_select_not_open() {
-        let mut app = App::new(test_repos());
-        app.collapsed = true;
-        app.active_pane = Pane::Repos;
-        let text = line_text(&footer_line(&app, 80, 10));
-        assert!(text.contains("select"), "collapsed mode should show 'select'");
-        assert!(!text.contains("open"), "collapsed mode must not show 'open'");
-    }
-
-    // When collapsed, refilter() narrowing to a single result must NOT auto-switch
-    // active_pane to Worktrees — the worktrees column is hidden, so doing so would
-    // cause render_repos to dim the only visible column and the footer to show wrong labels.
-    #[test]
-    fn refilter_in_collapsed_mode_keeps_active_pane_repos() {
-        let repos = vec![
-            RepoData {
-                name: "unique-repo".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/unique-repo/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "unique-repo main".into(),
-                    ..Default::default()
-                }],
-            },
-            RepoData {
-                name: "other".into(),
-                worktrees: vec![WorktreeData {
-                    path: PathBuf::from("/wt/other/main"),
-                    branch: Some("main".into()),
-                    filter_candidate: "other main".into(),
-                    ..Default::default()
-                }],
-            },
-        ];
-        let mut app = App::new(repos);
-        app.collapsed = true;
-        app.active_pane = Pane::Repos;
-
-        // Filter to exactly one result — this is the path that previously triggered
-        // an unconditional active_pane=Worktrees switch inside refilter().
-        app.filter = "unique".into();
-        app.refilter();
-
-        assert_eq!(
-            app.filtered_repo_indices.len(),
-            1,
-            "filter should yield one result"
-        );
-        assert_eq!(
-            app.active_pane,
-            Pane::Repos,
-            "refilter must not switch active_pane to Worktrees when collapsed"
-        );
     }
 }

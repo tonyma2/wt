@@ -37,7 +37,9 @@ where
 {
     let mut terminal = init(height)?;
     let result = f(&mut terminal);
+    let viewport = terminal.get_frame().area();
     let _ = terminal.clear();
+    let _ = terminal.set_cursor_position(viewport.as_position());
     if result.is_ok() {
         restore()?;
     } else {

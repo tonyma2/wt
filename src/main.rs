@@ -1,69 +1,46 @@
 mod cli;
 mod commands;
-mod config;
 mod fuzzy;
 mod git;
+mod layout;
 mod terminal;
 mod tui;
 mod worktree;
 
-use std::process;
+use std::process::ExitCode;
 
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
 
-fn main() {
-    let cli = Cli::parse();
+unsafe extern "C" {
+    fn signal(signum: i32, handler: usize) -> usize;
+}
 
-    let result = match &cli.command {
+fn main() -> ExitCode {
+    // SIGPIPE (13) back to SIG_DFL (0): Rust ignores it, so a closed pipe made println! panic
+    unsafe {
+        signal(13, 0);
+    }
+    let cli = Cli::parse();
+    let result = match cli.command {
         None => commands::tui::run(),
-        Some(Command::Clone { url }) => commands::clone::run(url),
-        Some(Command::Init { shell }) => commands::init::run(*shell),
-        Some(Command::New {
-            name,
-            create,
-            base,
-            repo,
-        }) => commands::new::run(name, *create, base.as_deref(), repo.as_deref()),
-        Some(Command::List { repo, json, all }) => {
-            commands::list::run(repo.as_deref(), *json, *all)
+        Some(Command::Clone { url }) => commands::clone::run(&url),
+        Some(Command::Init { shell }) => commands::init::run(shell),
+        Some(Command::Switch { name, base, create }) => {
+            commands::switch::run(&name, base.as_deref(), create)
         }
-        Some(Command::Remove {
-            names,
-            repo,
-            force,
-            keep_branch,
-        }) => commands::rm::run(names, repo.as_deref(), *force, *keep_branch),
-        Some(Command::Prune {
-            dry_run,
-            gone,
-            stale,
-            repo,
-            base,
-        }) => commands::prune::run(*dry_run, *gone, *stale, repo.as_deref(), base.as_deref()),
-        Some(Command::Path { name, repo }) => commands::path::run(name, repo.as_deref()),
-        Some(Command::Switch { name, create, repo }) => {
-            commands::switch::run(name, *create, repo.as_deref())
-        }
-        Some(Command::Link {
-            files,
-            repo,
-            force,
-            list,
-        }) => commands::link::run(files, repo.as_deref(), *force, *list),
-        Some(Command::Unlink {
-            files,
-            repo,
-            force,
-            all,
-        }) => commands::unlink::run(files, repo.as_deref(), *force, *all),
+        Some(Command::List { all }) => commands::list::run(all),
+        Some(Command::Remove { names, force }) => commands::rm::run(&names, force),
+        Some(Command::Prune { dry_run }) => commands::prune::run(dry_run),
+        Some(Command::Link { files, force }) => commands::link::run(&files, force),
     };
 
-    if let Err(e) = result {
-        if !e.is_empty() {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
             eprintln!("{e}");
+            ExitCode::FAILURE
         }
-        process::exit(1);
     }
 }

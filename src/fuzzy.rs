@@ -73,16 +73,26 @@ pub fn close_match<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     if len == 0 {
         return None;
     }
-    let threshold = (len as f64 * 0.3).ceil().max(2.0).min(len as f64 / 2.0) as usize;
+    let threshold = (len * 3).div_ceil(10).max(2).min(len / 2);
     candidates
         .iter()
-        .filter(|c| **c != name)
+        .filter(|c| **c != name && !differs_only_in_digits(name, c))
         .filter_map(|c| {
             let dist = levenshtein(name, c);
             (dist <= threshold).then_some((dist, *c))
         })
         .min_by_key(|(dist, _)| *dist)
         .map(|(_, name)| name)
+}
+
+// `fix-123` and `fix-124` are siblings, not typos of each other
+fn differs_only_in_digits(a: &str, b: &str) -> bool {
+    let letters = |s: &str| {
+        s.chars()
+            .filter(|c| !c.is_ascii_digit())
+            .collect::<String>()
+    };
+    letters(a) == letters(b)
 }
 
 #[cfg(test)]
@@ -288,6 +298,13 @@ mod tests {
     fn close_match_two_char_allows_distance_one() {
         assert_eq!(close_match("ab", &["ac"]), Some("ac"));
         assert_eq!(close_match("ab", &["xy"]), None);
+    }
+
+    #[test]
+    fn close_match_ignores_numbered_siblings() {
+        assert_eq!(close_match("fix-124", &["fix-123"]), None);
+        assert_eq!(close_match("feat/login2", &["feat/login"]), None);
+        assert_eq!(close_match("fix-124", &["fxi-124"]), Some("fxi-124"));
     }
 
     #[test]

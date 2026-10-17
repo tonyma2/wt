@@ -3,47 +3,48 @@ use std::path::Path;
 use crate::commands::link;
 use crate::fuzzy;
 use crate::git::Git;
+use crate::layout;
 use crate::terminal;
-use crate::worktree;
+use crate::worktree::{self, Worktree};
 
-pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> {
-    let repo_root = Git::find_repo(repo)?;
+enum Start<'a> {
+    Existing,
+    NewBranch(Option<&'a str>),
+}
+
+pub fn run(name: &str, base: Option<&str>, create: bool) -> Result<(), String> {
+    let repo_root = Git::find_repo(None)?;
     let git = Git::new(&repo_root);
+    let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
 
-    let output = git.list_worktrees()?;
-    let worktrees = worktree::parse_porcelain(&output);
+    if base.is_some() {
+        if git.has_local_branch(name) {
+            return Err(format!(
+                "cannot create branch '{name}': already exists, use `wt switch {name}` to go there"
+            ));
+        }
+        return create_worktree(&git, &repo_root, &worktrees, name, Start::NewBranch(base));
+    }
 
-    let branch_matches: Vec<_> = worktrees
+    let live: Vec<_> = worktrees
         .iter()
-        .filter(|wt| wt.branch.as_deref() == Some(name))
+        .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
         .collect();
-    let has_prunable = branch_matches.iter().any(|wt| wt.prunable);
-    let matches: Vec<_> = branch_matches.into_iter().filter(|wt| wt.live()).collect();
 
-    match matches.as_slice() {
+    match live.as_slice() {
         [one] => {
-            if has_prunable {
-                eprintln!("pruning stale worktree metadata");
-                if let Err(e) = git.prune_worktrees(false) {
-                    eprintln!("{e}");
-                }
-            }
             println!("{}", one.path.display());
+            terminal::print_cd_hint(&one.path);
             return Ok(());
         }
         [_, _, ..] => {
-            eprintln!("ambiguous name '{name}'; matches:");
-            for m in &matches {
-                eprintln!("  - {}", m.path.display());
-            }
-            return Err("multiple worktrees match, remove duplicates with `wt rm`".into());
+            return Err(worktree::ambiguous_error(
+                name,
+                &live,
+                "remove duplicates with `wt rm`",
+            ));
         }
         [] => {}
-    }
-
-    if has_prunable {
-        eprintln!("pruning stale worktree metadata");
-        git.prune_worktrees(false)?;
     }
 
     let is_local = git.has_local_branch(name);
@@ -52,10 +53,9 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     } else {
         git.remotes_with_branch(name)?
     };
-
-    if !is_local && remotes.len() > 1 {
+    if remotes.len() > 1 {
         return Err(format!(
-            "branch '{name}' exists on multiple remotes: {}, use `wt new <remote>/{name}` instead",
+            "branch '{name}' exists on multiple remotes: {}, use `wt switch {name} <remote>/{name}` to pick one",
             remotes.join(", ")
         ));
     }
@@ -63,45 +63,114 @@ pub fn run(name: &str, create: bool, repo: Option<&Path>) -> Result<(), String> 
     let is_branch = is_local || !remotes.is_empty();
     if !is_branch && git.rev_parse(name).is_some() {
         return Err(format!(
-            "'{name}' is not a branch, use `wt new {name}` to check out a ref"
+            "'{name}' is not a branch, use `wt switch <branch> {name}` to start a branch from it"
         ));
     }
 
-    if !is_branch && !create {
-        let owned = git.local_branches();
-        let branches: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-        if let Some(suggestion) = fuzzy::close_match(name, &branches) {
-            return Err(format!(
-                "did you mean '{suggestion}'? use `wt switch -c {name}` to create a new branch"
-            ));
-        }
+    if !is_branch
+        && !create
+        && let Some(suggestion) = similar_branch(&git, name)
+    {
+        return Err(format!(
+            "did you mean '{suggestion}'? use `wt switch -c {name}` to create a new branch"
+        ));
     }
 
-    let dest = worktree::create_dest(&repo_root, &git)?;
-
-    let result = if is_branch {
-        git.checkout_worktree(name, &dest)
+    let remote_ref = remotes.first().map(|r| format!("refs/remotes/{r}/{name}"));
+    let start = if is_local {
+        Start::Existing
     } else {
-        git.add_worktree(name, &dest, None)
+        Start::NewBranch(remote_ref.as_deref())
     };
+    create_worktree(&git, &repo_root, &worktrees, name, start)
+}
 
-    if let Err(e) = result {
-        worktree::cleanup_dest(&dest);
-        return Err(e);
+fn similar_branch(git: &Git, name: &str) -> Option<String> {
+    let branches = git.branch_names();
+    let mut same_leaf = branches
+        .iter()
+        .filter(|b| b.rsplit_once('/').is_some_and(|(_, leaf)| leaf == name));
+    if let (Some(only), None) = (same_leaf.next(), same_leaf.next()) {
+        return Some(only.clone());
+    }
+    let candidates: Vec<&str> = branches.iter().map(String::as_str).collect();
+    fuzzy::close_match(name, &candidates).map(str::to_owned)
+}
+
+fn create_worktree(
+    git: &Git,
+    repo_root: &Path,
+    worktrees: &[Worktree],
+    name: &str,
+    start: Start,
+) -> Result<(), String> {
+    if worktrees
+        .iter()
+        .any(|wt| wt.prunable && wt.branch.as_deref() == Some(name))
+    {
+        eprintln!("pruning stale worktree metadata");
+        git.prune_worktrees()?;
     }
 
-    if is_branch {
-        eprintln!("checking out '{name}'");
-    } else {
-        eprintln!("creating branch '{name}'");
-    }
+    let new_branch = matches!(start, Start::NewBranch(_));
+    let from = match start {
+        Start::NewBranch(None) => Some(start_label(git, name)?),
+        _ => None,
+    };
+    let dest = layout::create_dest(repo_root, git)?;
+    let result = match start {
+        Start::Existing => git
+            .checkout_worktree(name, &dest)
+            .map(|()| format!("checking out '{name}'")),
+        Start::NewBranch(base) => {
+            let upstream = base.and_then(|b| git.full_ref(b)).filter(|r| {
+                git.remotes_with_branch(name).is_ok_and(|remotes| {
+                    remotes
+                        .iter()
+                        .any(|remote| *r == format!("refs/remotes/{remote}/{name}"))
+                })
+            });
+            git.add_worktree(name, &dest, base, upstream.is_some())
+                .map(|()| match upstream {
+                    Some(r) => format!(
+                        "creating branch '{name}' tracking '{}'",
+                        r.trim_start_matches("refs/remotes/")
+                    ),
+                    None => format!(
+                        "creating branch '{name}' from '{}'",
+                        base.or(from.as_deref()).unwrap_or("HEAD")
+                    ),
+                })
+        }
+    };
+    // A failing post-checkout hook fails `worktree add` after the worktree and branch exist.
+    let message = result.inspect_err(|_| {
+        if git.remove_worktree(&dest, true).is_ok() && new_branch {
+            let _ = git.delete_branch(name);
+        }
+        layout::cleanup_dest(&dest);
+    })?;
 
-    let primary_path = worktree::find_primary(&worktrees, &repo_root)
-        .map_or(repo_root.as_path(), |wt| wt.path.as_path());
-    link::auto_link(&repo_root, &dest, primary_path);
-
+    eprintln!("{message}");
+    link::auto_link(
+        git,
+        &Worktree {
+            path: dest.clone(),
+            branch: Some(name.to_owned()),
+            ..Worktree::default()
+        },
+    );
     println!("{}", dest.display());
-
-    terminal::print_cd_hint(name);
+    terminal::print_cd_hint(&dest);
     Ok(())
+}
+
+fn start_label(git: &Git, name: &str) -> Result<String, String> {
+    let sha = git.short_sha("HEAD").ok_or_else(|| {
+        format!("cannot create branch '{name}': the repository has no commits yet")
+    })?;
+    Ok(git
+        .head_ref()
+        .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_owned))
+        .unwrap_or(sha))
 }

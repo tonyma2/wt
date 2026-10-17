@@ -138,7 +138,7 @@ pub fn setup_with_origin() -> (TempDir, PathBuf, PathBuf) {
 
 pub fn init_bare_repo(path: &Path) {
     let status = Command::new("git")
-        .args(["init", "--bare"])
+        .args(["init", "--bare", "--initial-branch=main"])
         .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -149,11 +149,11 @@ pub fn init_bare_repo(path: &Path) {
 
 pub fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
     let output = run_wt(home, |cmd| {
-        cmd.args(["new", "-c", branch, "--repo"]).arg(repo);
+        cmd.args(["switch", "-c", branch]).current_dir(repo);
     });
     assert!(
         output.status.success(),
-        "wt new {branch} failed: {}",
+        "wt switch -c {branch} failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     parse_wt_new_path(&output)
@@ -161,11 +161,11 @@ pub fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
 
 pub fn wt_checkout(home: &Path, repo: &Path, name: &str) -> PathBuf {
     let output = run_wt(home, |cmd| {
-        cmd.args(["new", name, "--repo"]).arg(repo);
+        cmd.args(["switch", name]).current_dir(repo);
     });
     assert!(
         output.status.success(),
-        "wt new {name} failed: {}",
+        "wt switch {name} failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     parse_wt_new_path(&output)
@@ -177,14 +177,14 @@ pub fn parse_wt_new_path(output: &Output) -> PathBuf {
     assert_eq!(
         lines.len(),
         1,
-        "wt new should print exactly one path line, got: {stdout:?}"
+        "wt should print exactly one path line, got: {stdout:?}"
     );
     let path_str = lines[0].trim();
-    assert!(!path_str.is_empty(), "wt new should print a non-empty path");
+    assert!(!path_str.is_empty(), "wt should print a non-empty path");
     let path = PathBuf::from(path_str);
     assert!(
         path.exists(),
-        "wt new path should exist: {}",
+        "worktree path should exist: {}",
         path.display()
     );
     path
@@ -192,6 +192,14 @@ pub fn parse_wt_new_path(output: &Output) -> PathBuf {
 
 pub fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub fn tilde(home: &Path, path: &Path) -> String {
+    let rel = canonical(path)
+        .strip_prefix(canonical(home))
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| panic!("{} is not under {}", path.display(), home.display()));
+    format!("~/{}", rel.display())
 }
 
 pub fn normalize_home_paths(output: &str, home: &Path) -> String {
