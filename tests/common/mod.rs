@@ -149,7 +149,7 @@ pub fn init_bare_repo(path: &Path) {
 
 pub fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
     let output = run_wt(home, |cmd| {
-        cmd.args(["switch", "-c", branch, "--repo"]).arg(repo);
+        cmd.args(["switch", "-c", branch]).current_dir(repo);
     });
     assert!(
         output.status.success(),
@@ -161,7 +161,7 @@ pub fn wt_new(home: &Path, repo: &Path, branch: &str) -> PathBuf {
 
 pub fn wt_checkout(home: &Path, repo: &Path, name: &str) -> PathBuf {
     let output = run_wt(home, |cmd| {
-        cmd.args(["switch", name, "--repo"]).arg(repo);
+        cmd.args(["switch", name]).current_dir(repo);
     });
     assert!(
         output.status.success(),

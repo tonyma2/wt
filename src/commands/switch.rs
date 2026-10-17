@@ -12,13 +12,8 @@ enum Start<'a> {
     NewBranch(Option<&'a str>),
 }
 
-pub fn run(
-    name: &str,
-    base: Option<&str>,
-    create: bool,
-    repo: Option<&Path>,
-) -> Result<(), String> {
-    let repo_root = Git::find_repo(repo)?;
+pub fn run(name: &str, base: Option<&str>, create: bool) -> Result<(), String> {
+    let repo_root = Git::find_repo(None)?;
     let git = Git::new(&repo_root);
     let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
 
@@ -114,7 +109,7 @@ fn create_worktree(
         .any(|wt| wt.prunable && wt.branch.as_deref() == Some(name))
     {
         eprintln!("pruning stale worktree metadata");
-        git.prune_worktrees(false)?;
+        git.prune_worktrees()?;
     }
 
     let new_branch = matches!(start, Start::NewBranch(_));

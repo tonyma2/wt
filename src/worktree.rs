@@ -183,6 +183,14 @@ pub fn find_by_path<'a>(worktrees: &'a [Worktree], path: &Path) -> Option<&'a Wo
         .find(|wt| canonicalize_or_self(&wt.path) == canonical)
 }
 
+pub fn contains_other_worktree(worktrees: &[Worktree], wt: &Worktree) -> bool {
+    let root = canonicalize_or_self(&wt.path);
+    worktrees.iter().filter(|other| other.live()).any(|other| {
+        let path = canonicalize_or_self(&other.path);
+        path != root && path.starts_with(&root)
+    })
+}
+
 pub fn branch_checked_out_elsewhere(
     worktrees: &[Worktree],
     branch: &str,

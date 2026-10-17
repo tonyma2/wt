@@ -82,30 +82,6 @@ fn complete_zsh(
         .ok()
 }
 
-#[test]
-fn zsh_completion_expands_tilde_in_repo_flag() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "feat");
-
-    for words in [
-        ["wt", "path", "--repo", "~/repo", ""].as_slice(),
-        ["wt", "path", "--repo=~/repo", ""].as_slice(),
-    ] {
-        let Some(output) = complete_zsh(home.path(), home.path(), "_wt_path_branches", words)
-        else {
-            eprintln!("zsh not installed, skipping");
-            return;
-        };
-        assert!(output.status.success(), "{words:?}");
-        let offered = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(
-            offered.lines().collect::<Vec<_>>(),
-            ["main", "feat"],
-            "{words:?}"
-        );
-    }
-}
-
 fn offered(output: &std::process::Output) -> Vec<String> {
     assert!(
         output.status.success(),
@@ -182,6 +158,24 @@ fn bash_completes_branches_and_worktrees() {
     assert_eq!(complete("wt s ''"), "feat/a\nfeat/b\nmain\n");
     assert_eq!(complete("wt s -c f"), "feat/a\nfeat/b\n");
     assert_eq!(complete("wt s x ''"), "feat/a\nfeat/b\nmain\nv1.0\n");
-    assert_eq!(complete("wt rm ''"), "main\nfeat/b\n");
+    assert_eq!(complete("wt rm ''"), "feat/b\n");
+    assert_eq!(complete("wt rm feat/b ''"), "\n");
     assert!(complete("wt s --").contains("--create"));
+}
+
+#[test]
+fn bash_completes_link_paths_from_the_worktree_root() {
+    let (home, repo) = setup();
+    std::fs::create_dir_all(repo.join("sub/deep")).unwrap();
+    std::fs::write(repo.join("sub/deep/local.txt"), "x").unwrap();
+
+    let script = "COMP_WORDS=(wt ln sub/deep/l); COMP_CWORD=2\n\
+                  _wt_complete wt sub/deep/l ln\n\
+                  printf '%s\\n' \"${COMPREPLY[@]}\"";
+    let output = run_wrapper(home.path(), &repo.join("sub"), script);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "sub/deep/local.txt\n"
+    );
 }

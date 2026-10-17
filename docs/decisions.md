@@ -16,7 +16,7 @@ All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status
 
 ## Do not check out tags or SHAs as detached worktrees
 
-`wt switch v1.0` errors and suggests `wt switch <branch> v1.0`. A detached worktree has no name to look it up by, so supporting them meant a second resolution path (ref → SHA → matching detached `HEAD`) in `path`, `rm`, and zsh completion. Starting a branch from the ref covers the use case; `git worktree add --detach` still works for a one-off, and `wt rm <path>` removes it. Worktrees that become detached (mid-rebase, `git checkout --detach`) are still listed and removable by path.
+`wt switch v1.0` errors and suggests `wt switch <branch> v1.0`. A detached worktree has no name to look it up by, so supporting them meant a second resolution path (ref → SHA → matching detached `HEAD`) in `rm` and zsh completion. Starting a branch from the ref covers the use case; `git worktree add --detach` still works for a one-off, and `wt rm <path>` removes it. Worktrees that become detached (mid-rebase, `git checkout --detach`) are still listed and removable by path.
 
 ## Do not print human-readable messages to stdout
 
@@ -26,7 +26,7 @@ Shell wrappers depend on `cd "$(wt switch ...)"` capturing stdout as a path. Any
 
 Zsh completions inject custom functions via string replacement on clap_complete's generated script. A custom clap completer would pull in more of clap's internals for the same result. Keep the complexity in shell, not Rust.
 
-**Caveat:** the replacement strings (the `COMPLETERS` table in `init.rs`) are coupled to the `///` help text on `name`, `names`, `base`, and `files` args in `cli.rs`. Each subcommand's `name` arg needs a unique doc comment so the replacement targets don't collide (`"Branch checked out in the worktree"` for path, `"Branch name"` for switch). Changing those docstrings silently degrades completion. `render()` errors when a target is missing, and the `zsh_wires_each_completer_into_its_subcommands` unit test catches collisions — run `cargo test init` after editing `cli.rs` arg help text.
+**Caveat:** the replacement strings (the `COMPLETERS` table in `init.rs`) are coupled to the `///` help text on `name`, `names`, `base`, and `files` args in `cli.rs`. A new positional arg needs a doc comment that differs from these, or a replacement target collides with it. Changing those docstrings silently degrades completion. `render()` errors when a target is missing, and the `zsh_wires_each_completer_into_its_subcommands` unit test catches collisions — run `cargo test init` after editing `cli.rs` arg help text.
 
 ## Do not add doc comments outside `cli.rs`
 
@@ -34,15 +34,13 @@ Zsh completions inject custom functions via string replacement on clap_complete'
 
 ## Do not give shared files a source worktree
 
-`wt link .env` moves the file into `<git-common-dir>/wt/links/` (listed in `wt/manifest`) and symlinks it into every worktree, including the one it came from. Previously one worktree held the real file and the others linked to it; removing that worktree (`wt rm`, or `git worktree remove`, which deletes gitignored files) destroyed the only copy and left every link dangling. With the store, no worktree is special: `rm` and `prune` need no link checks, and every worktree resolves the same store via `--git-common-dir`.
+`wt link .env` moves the file into `<git-common-dir>/wt/links/` and symlinks it into every worktree, including the one it came from. Previously one worktree held the real file and the others linked to it; removing that worktree (`wt rm`, or `git worktree remove`, which deletes gitignored files) destroyed the only copy and left every link dangling. With the store, no worktree is special: `rm` and `prune` need no link checks, and every worktree resolves the same store via `--git-common-dir`.
 
-- The store lives with the repo, not in `~/.wt/`: a per-repo store under `~/.wt/` needs a repo → id mapping (config again) and leaks when the repo is deleted. Inside the git directory it never shows up in the working tree, isn't copied by `git clone`, and goes away with the repo. `prune` keeps a bare clone whose store still holds files
-- Only untracked paths can be shared: a symlink over a tracked file shows as a change in every worktree
-- `link` records the manifest entry before moving the file, so an interrupted run is completed by running `wt link` again
-- `unlink` means "stop sharing", not "delete": each link becomes a copy before the store entry is removed, and if no worktree links to it the store copy is kept
+- The store lives with the repo, not in `~/.wt/`: a per-repo store under `~/.wt/` needs a repo → id mapping (config again) and leaks when the repo is deleted. Inside the git directory it never shows up in the working tree, isn't copied by `git clone`, and goes away with the repo
+- Only untracked files can be shared, never directories. With files only, the store's contents are the whole record of what is shared: there is no manifest to keep in step with it, and a run interrupted after the move is finished by running `wt link` again. A linked directory would need that record to tell itself apart from a directory that merely holds linked files
+- Moving a file into the store never replaces an existing entry (hard link, or a create-only copy across filesystems): on a case-insensitive filesystem `.Env` is the shared `.env`, and two runs linking the same file at once would otherwise both move theirs in. This is why no lock is needed
 - Symlinks are absolute: relative links break when only one side moves. Re-running `wt link` replaces links left dangling by a move
-- `link` and `unlink` hold `wt/lock` while they read and rewrite the manifest
-- `~/.wt/config` (links keyed by source worktree) is migrated by `links::migrate_legacy_config()`, which `main` runs before every command so a source is moved into the store before `rm` or `prune` can delete it. It holds `~/.wt/config.lock`, since every shell running `wt init` at once would otherwise migrate the same file. Entries that fail stay in the file and are retried, as do entries whose worktree is missing (it may be on an unmounted volume); entries whose path is no longer a git worktree are dropped
+- There is no `unlink`: stopping sharing is rare enough to do by hand (replace each link with a copy, then delete the store file)
 
 ## Do not change cd hint TTY detection to check stderr
 
@@ -50,7 +48,7 @@ After creating a worktree, `switch` and `clone` print a `cd '<path>'` hint to **
 
 - In `cd "$(wt switch ...)"`, stdout is captured by the command substitution while stderr remains attached to the terminal
 - Checking stdout-is-TTY (not stderr-is-TTY) correctly suppresses the hint for wrapper users (stdout piped) and shows it for bare invocations (stdout is the terminal)
-- The hint uses the literal path, not `wt path <name>`: a name lookup fails after `clone` (cwd is outside the repo) and with `--repo`. The path is single-quoted with `'` escaped as `'\''`
+- The hint uses the literal path rather than a lookup by branch name, which fails after `clone` (cwd is outside the repo). The path is single-quoted with `'` escaped as `'\''`
 - When `wt init` wrapper is active, stdout is captured by `$()`, so `is_stdout_tty()` returns false and the hint is naturally suppressed
 
 ## Do not use stdout capture for TUI cd-back
@@ -79,18 +77,26 @@ On non-zero exit, `fetch_remote` returns only a short context error (`cannot fet
 
 `prune` runs unattended over every repo, so it only removes what is provably recoverable:
 
-- Merged detection requires the branch to have been pushed (an upstream, or a same-named branch on a remote) unless `--base` or `--stale` opts in, because a fresh branch is trivially an ancestor of the base. Keep the `--base` opt-in: without a remote the base can't be auto-detected and nothing can be pushed, so `--base` is the only way to prune locally merged branches without `--stale`, which also deletes unmerged ones. The cost is that a fresh branch with no commits of its own is removed too
-- The base branch, the remote's default branch, and the branch the repo's `HEAD` points at are never removed. `HEAD` covers bare repos with no remote, where no base can be resolved
-- `--gone` removes a branch only if its changes reached the base: merged, or squash-merged (`git merge-tree --write-tree <base> <branch>` yields the base's own tree). A remote branch deleted unmerged, or new commits after a squash-merge, are skipped as `not merged`. There is no reliable record of what was pushed once the remote-tracking ref is pruned, so "content landed in base" is the only safe test
-- Renamed worktree directories are repaired before `git worktree prune`, which would otherwise detach them and turn them into orphans
-- Orphans (a `.git` file pointing at a missing repo) are only reported unless `--orphans` is passed: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work
-- Bare clones under `~/.wt/repos/` are removed once every worktree entry is prunable (a locked worktree may be on an unmounted volume, so it keeps its clone), and only if `git rev-list --all --not --remotes` is empty and its link store is empty: stashes, local tags, and shared files live in the clone, not the worktree. A clone with no remote-tracking refs is skipped: it may be a `wt clone` still fetching
+- "Merged" means the branch's changes are in the default branch: `git merge-tree --write-tree <base> <branch>` yields the base's own tree. That covers plain merges and squash merges, and fails for a branch with new commits after a squash merge or one deleted from the remote unmerged
+- The branch must have been pushed (an upstream, or a same-named branch on a remote), because a fresh branch is trivially merged right after it is created. Tracking the base itself doesn't count. Repos without a remote are never pruned; `wt rm` handles them
+- `origin` is fetched first so a merge made on the remote counts. If the fetch fails, local refs are used, which can only make prune miss a branch, never remove one it shouldn't
+- The default branch and the branch the repo's `HEAD` points at are never removed. `HEAD` covers bare repos
+- Orphans (a `.git` file pointing at a missing repo) are only reported: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work. A worktree that contains another worktree (e.g. Claude Code's `.claude/worktrees/`) is kept, since removing it deletes the inner one; `rm` refuses it even with `--force`
+- `prune` doesn't run `git worktree prune`: it would drop the metadata of a worktree renamed by hand or on an unmounted volume, after which `git worktree repair` can't reconnect it. git's gc expires stale entries on its own, `switch` prunes one that blocks a branch, and `wt rm` removes one by branch or path
 
 Accepted gap: `git worktree remove` deletes gitignored files (build output, a hand-made `.env`). Treating them as dirty would block nearly every removal; files shared via `wt link` are symlinks in every worktree, so removal never touches the shared copy.
 
+## Do not add flags to `prune`
+
+`prune` has one rule and `--dry-run`. `--gone`, `--stale`, `--base`, `--orphans`, and `--repo` were removed, along with sweeps for empty directories and unused bare clones: each covered a case `wt rm` (or `rm -rf`) handles, and together they multiplied the classification paths and their tests. A branch `prune` won't remove is removed with `wt rm`.
+
 ## Do not give `prune --dry-run` its own classification path
 
-`prune --gone --dry-run` fetches like a real run instead of listing the remote's branches with `ls-remote`. A separate dry-run path can drift from what a real run removes. Fetching only updates remote-tracking refs; local branches and worktrees are untouched.
+`prune --dry-run` fetches like a real run instead of listing the remote's branches with `ls-remote`. A separate dry-run path can drift from what a real run removes. Fetching only updates remote-tracking refs; local branches and worktrees are untouched.
+
+## Do not add a `--repo` flag
+
+Commands act on the repository containing the current directory; `cd` into it or use the picker. `--repo` was on seven commands, used about once, and every shell completer had to parse it to know which repo to query.
 
 ## Do not split the picker back into panes
 

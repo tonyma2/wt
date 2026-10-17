@@ -9,6 +9,6 @@ fn no_args_requires_tty() {
     assert_error(
         &output,
         1,
-        "cannot launch picker, stdout is not a terminal, use `wt list` in scripts\n",
+        "cannot launch picker, not running in a terminal, use `wt list` in scripts\n",
     );
 }

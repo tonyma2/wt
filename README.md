@@ -39,11 +39,9 @@ wt init fish | source
 | `wt clone <url>` | `cl` | Clone repo, create first worktree |
 | `wt switch <branch> [base]` | `s` | Find or create a worktree for a branch |
 | `wt list [--all]` | `ls` | List worktrees (across all repos with `--all`) |
-| `wt remove <branch>` | `rm` | Remove worktree and delete branch |
-| `wt path <branch>` | `p` | Print worktree path |
-| `wt prune [--gone]` | | Remove merged (and upstream-gone) worktrees |
+| `wt remove <branch>` | `rm` | Remove worktree, and its branch if merged |
+| `wt prune` | | Remove worktrees whose pushed branches were merged or squash-merged |
 | `wt link <file>` | `ln` | Share untracked files (e.g. `.env`) across worktrees |
-| `wt unlink <file>` | | Stop sharing, leaving a copy in each worktree |
 
 ## Highlights
 

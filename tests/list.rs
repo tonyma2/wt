@@ -7,13 +7,9 @@ pub mod common;
 
 use common::*;
 
-fn run_list(home: &Path, repo: &Path, columns: &str, cwd: Option<&Path>) -> Output {
+fn run_list(home: &Path, cwd: &Path, columns: &str) -> Output {
     run_wt(home, |cmd| {
-        cmd.args(["list", "--repo"]).arg(repo);
-        cmd.env("COLUMNS", columns);
-        if let Some(dir) = cwd {
-            cmd.current_dir(dir);
-        }
+        cmd.args(["list"]).current_dir(cwd).env("COLUMNS", columns);
     })
 }
 
@@ -31,7 +27,7 @@ fn list_human_output_matches_golden() {
     let zeta = wt_new(home.path(), &repo, "zeta");
     let alpha = wt_new(home.path(), &repo, "alpha");
 
-    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    let output = run_list(home.path(), &repo, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -39,8 +35,8 @@ fn list_human_output_matches_golden() {
     );
 
     let expected = format!(
-        "  BRANCH   STATUS   PATH\n  \
-         main     -        ~/repo\n  \
+        "  BRANCH   STATUS   PATH\n\
+         * main     -        ~/repo\n  \
          alpha    -        {}\n  \
          zeta     -        {}\n",
         tilde(home.path(), &alpha),
@@ -54,12 +50,12 @@ fn aligns_columns_for_wide_branch_names() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "feat/日本語");
 
-    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    let output = run_list(home.path(), &repo, "200");
     assert!(output.status.success());
 
     let expected = format!(
-        "  BRANCH        STATUS   PATH\n  \
-         main          -        ~/repo\n  \
+        "  BRANCH        STATUS   PATH\n\
+         * main          -        ~/repo\n  \
          feat/日本語   -        {}\n",
         tilde(home.path(), &wt_path),
     );
@@ -70,12 +66,11 @@ fn aligns_columns_for_wide_branch_names() {
 fn hides_bare_repo_entry() {
     let (home, _repo, origin) = setup_with_origin();
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "-c", "from-bare", "--repo"])
-            .arg(&origin);
+        cmd.args(["switch", "-c", "from-bare"]).current_dir(&origin);
     });
     assert!(output.status.success());
 
-    let output = run_list(home.path(), &origin, "200", Some(home.path()));
+    let output = run_list(home.path(), &origin, "200");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("(bare)"), "{stdout}");
     assert!(stdout.contains("from-bare"), "{stdout}");
@@ -88,7 +83,7 @@ fn marks_current_worktree_when_cwd_is_inside_linked_worktree() {
     let nested = wt_path.join("nested");
     std::fs::create_dir(&nested).unwrap();
 
-    let output = run_list(home.path(), &repo, "200", Some(&nested));
+    let output = run_list(home.path(), &nested, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -109,7 +104,7 @@ fn shows_dirty_status_for_dirty_worktree() {
     let wt_path = wt_new(home.path(), &repo, "dirty-status");
     std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
 
-    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    let output = run_list(home.path(), &repo, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -144,7 +139,7 @@ fn shows_ahead_behind_arrows_for_diverged_branch() {
 
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
-    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    let output = run_list(home.path(), &repo, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -176,7 +171,7 @@ fn shows_detached_locked_and_prunable_as_badges() {
     assert_git_success(&wt_detached, &["checkout", "--detach"]);
     std::fs::remove_dir_all(&wt_prunable).unwrap();
 
-    let output = run_list(home.path(), &repo, "200", Some(home.path()));
+    let output = run_list(home.path(), &repo, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -216,7 +211,7 @@ fn does_not_mark_main_as_current_when_cwd_is_nested_worktree_inside_repo() {
             .arg(&inside);
     });
 
-    let output = run_list(home.path(), &repo, "200", Some(&inside));
+    let output = run_list(home.path(), &inside, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -241,7 +236,7 @@ fn paths_use_tilde_for_home_directory() {
     let (home, repo) = setup();
     wt_new(home.path(), &repo, "tilde-check");
 
-    let output = run_list(home.path(), &repo, "200", None);
+    let output = run_list(home.path(), &repo, "200");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -350,15 +345,6 @@ fn list_all_marks_current_worktree() {
 }
 
 #[test]
-fn list_all_and_repo_are_mutually_exclusive() {
-    let (home, repo) = setup();
-    let output = run_wt(home.path(), |cmd| {
-        cmd.args(["list", "--all", "--repo"]).arg(&repo);
-    });
-    assert_exit_code(&output, 2);
-}
-
-#[test]
 fn list_all_empty_when_no_managed_worktrees() {
     let home = TempDir::new().unwrap();
 
@@ -375,7 +361,7 @@ fn truncates_branch_and_path_in_narrow_terminal() {
     let long_branch = "feature/very-long-branch-name-for-list-truncation";
     let wt_path = wt_new(home.path(), &repo, long_branch);
 
-    let output = run_list(home.path(), &repo, "72", Some(home.path()));
+    let output = run_list(home.path(), &repo, "72");
     assert!(
         output.status.success(),
         "wt list failed: {}",
@@ -410,7 +396,7 @@ fn columns_fit_content_instead_of_truncating() {
     let branch = "fix/session-timeout-in-login-flow";
     wt_new(home.path(), &repo, branch);
 
-    let output = run_list(home.path(), &repo, "80", Some(home.path()));
+    let output = run_list(home.path(), &repo, "80");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "fix/");
     assert!(
@@ -446,9 +432,7 @@ fn piped_output_is_not_truncated() {
     let wt_path = wt_new(home.path(), &repo, &branch);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["list", "--repo"])
-            .arg(&repo)
-            .env_remove("COLUMNS");
+        cmd.args(["list"]).current_dir(&repo).env_remove("COLUMNS");
     });
     let stdout = String::from_utf8_lossy(&output.stdout);
     let row = find_row(&stdout, "feat/");

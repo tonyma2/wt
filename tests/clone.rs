@@ -108,7 +108,7 @@ fn clone_tracks_default_branch_without_stale_local_copies() {
     );
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "other", "--repo"]).arg(&wt_path);
+        cmd.args(["switch", "other"]).current_dir(&wt_path);
     });
     assert!(output.status.success());
     let other = parse_wt_new_path(&output);
@@ -218,8 +218,7 @@ fn wt_new_works_from_cloned_worktree() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "-c", "feature", "--repo"])
-            .arg(&wt_path);
+        cmd.args(["switch", "-c", "feature"]).current_dir(&wt_path);
     });
     assert!(
         output.status.success(),
@@ -241,7 +240,7 @@ fn list_from_cloned_worktree() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["list", "--repo"]).arg(&wt_path);
+        cmd.args(["list"]).current_dir(&wt_path);
     });
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -277,8 +276,8 @@ fn prune_discovers_bare_repo_worktrees() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "-c", "stale-branch", "--repo"])
-            .arg(&wt_path);
+        cmd.args(["switch", "-c", "stale-branch"])
+            .current_dir(&wt_path);
     });
     assert!(output.status.success());
     let stale_path = parse_wt_new_path(&output);
@@ -304,13 +303,13 @@ fn rm_works_from_cloned_worktree() {
     let wt_path = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "-c", "to-remove", "--repo"])
-            .arg(&wt_path);
+        cmd.args(["switch", "-c", "to-remove"])
+            .current_dir(&wt_path);
     });
     assert!(output.status.success());
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "to-remove", "--repo"]).arg(&wt_path);
+        cmd.args(["rm", "to-remove"]).current_dir(&wt_path);
     });
     assert!(
         output.status.success(),
@@ -331,14 +330,14 @@ fn link_skips_bare_entry_as_primary() {
     std::fs::write(primary_wt.join(".env"), "SECRET=1").unwrap();
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "-c", "feature", "--repo"])
-            .arg(&primary_wt);
+        cmd.args(["switch", "-c", "feature"])
+            .current_dir(&primary_wt);
     });
     assert!(output.status.success());
     let feature_wt = parse_wt_new_path(&output);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["link", ".env", "--repo"]).arg(&primary_wt);
+        cmd.args(["link", ".env"]).current_dir(&primary_wt);
     });
     assert!(
         output.status.success(),
@@ -424,7 +423,7 @@ fn clone_empty_repo_fails_and_cleans_up() {
     assert!(
         stderr.ends_with(&format!(
             "cannot clone {}: repository is empty\n",
-            origin.display()
+            canonical(&origin).display()
         )),
         "stderr: {stderr}"
     );
@@ -460,42 +459,22 @@ fn clone_resolves_relative_path_against_cwd() {
 }
 
 #[test]
-fn clone_of_already_cloned_url_reuses_existing_worktree() {
+fn clone_of_already_cloned_url_makes_a_separate_clone() {
     let (home, origin) = setup_origin();
-    let first = run_wt(home.path(), |cmd| {
-        cmd.args(["clone"]).arg(&origin);
-    });
-    let first_path = parse_wt_new_path(&first);
+    let clone = || {
+        let output = run_wt(home.path(), |cmd| {
+            cmd.args(["clone"]).arg(&origin);
+        });
+        assert!(
+            output.status.success(),
+            "wt clone failed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        parse_wt_new_path(&output)
+    };
 
-    let second = run_wt(home.path(), |cmd| {
-        cmd.args(["clone"]).arg(&origin);
-    });
-    assert_exit_code(&second, 0);
-    assert_stderr_exact(&second, "already cloned, switching to 'main'\n");
-    assert_eq!(parse_wt_new_path(&second), first_path);
-    find_repo_under(&repos_dir(home.path()));
-}
-
-#[test]
-fn clone_of_already_cloned_url_without_default_worktree_errors() {
-    let (home, origin) = setup_origin();
-    let first = run_wt(home.path(), |cmd| {
-        cmd.args(["clone"]).arg(&origin);
-    });
-    let first_path = parse_wt_new_path(&first);
-    std::fs::remove_dir_all(&first_path).unwrap();
-    let bare = find_repo_under(&repos_dir(home.path()));
-
-    let second = run_wt(home.path(), |cmd| {
-        cmd.args(["clone"]).arg(&origin);
-    });
-    let bare = tilde(home.path(), &bare);
-    assert_error(
-        &second,
-        1,
-        &format!(
-            "{} is already cloned into {bare}, use `wt switch <branch> --repo {bare}`\n",
-            canonical(&origin).display()
-        ),
-    );
+    let first = clone();
+    let second = clone();
+    assert_ne!(first, second);
+    assert_eq!(find_subdirs(&repos_dir(home.path())).len(), 2);
 }

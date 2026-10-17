@@ -122,7 +122,7 @@ impl Git {
         }
         Err(match path {
             Some(p) => format!("not a git repository: {}", p.display()),
-            None => "not a git repository, use --repo or run inside one".into(),
+            None => "not a git repository, run inside one".into(),
         })
     }
 
@@ -149,10 +149,6 @@ impl Git {
 
     pub fn remote_url(&self, remote: &str) -> Option<String> {
         query(self.cmd(["remote", "get-url", remote]))
-    }
-
-    pub fn has_remote(&self, remote: &str) -> bool {
-        self.remote_url(remote).is_some()
     }
 
     pub fn base_ref(&self) -> Result<String, String> {
@@ -276,13 +272,12 @@ impl Git {
         .map(drop)
     }
 
-    pub fn prune_worktrees(&self, dry_run: bool) -> Result<String, String> {
-        let mut cmd = self.cmd(["worktree", "prune", "--verbose"]);
-        if dry_run {
-            cmd.arg("--dry-run");
-        }
-        let output = run(cmd, "cannot prune worktree metadata")?;
-        Ok(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    pub fn prune_worktrees(&self) -> Result<(), String> {
+        run(
+            self.cmd(["worktree", "prune"]),
+            "cannot prune worktree metadata",
+        )
+        .map(drop)
     }
 
     pub fn worktree_status(worktree_path: &Path) -> Option<String> {
@@ -315,8 +310,6 @@ impl Git {
         .map(|output| !output.stdout.is_empty())
     }
 
-    // Agrees with `prune`: reachable from the upstream, HEAD, or the remote's default branch,
-    // or squash-merged into the default branch. `git branch -d` checks only one of these.
     pub fn is_ignored(worktree_path: &Path, path: &str) -> bool {
         succeeds(git_in(
             worktree_path,
@@ -324,6 +317,8 @@ impl Git {
         ))
     }
 
+    // Reachable from the upstream, HEAD, or the remote's default branch, or squash-merged into
+    // the default branch. `git branch -d` checks only one of these.
     pub fn is_branch_merged(&self, branch: &str) -> bool {
         let branch_ref = format!("refs/heads/{branch}");
         let base = self.base_ref().ok();
@@ -367,11 +362,6 @@ impl Git {
         merged_tree.is_some_and(|tree| self.rev_parse(&format!("{base}^{{tree}}")) == Some(tree))
     }
 
-    pub fn has_unpushed_commits(&self) -> bool {
-        query(self.cmd(["rev-list", "--count", "--all", "--not", "--remotes"]))
-            .is_none_or(|count| count != "0")
-    }
-
     pub fn upstream(&self, branch: &str) -> Option<String> {
         query(self.cmd([
             "for-each-ref",
@@ -398,18 +388,6 @@ impl Git {
     pub fn common_dir(&self) -> Option<PathBuf> {
         query(self.cmd(["rev-parse", "--path-format=absolute", "--git-common-dir"]))
             .map(PathBuf::from)
-    }
-
-    pub fn repair_worktree(worktree_path: &Path) -> Result<(), String> {
-        run(
-            git_in(worktree_path, ["worktree", "repair"]),
-            format!("cannot repair worktree: {}", worktree_path.display()),
-        )
-        .map(drop)
-    }
-
-    pub fn upstream_remote(&self, branch: &str) -> Option<String> {
-        query(self.cmd(["config", "--get", &format!("branch.{branch}.remote")]))
     }
 
     pub fn set_remote_head(&self, remote: &str) -> Result<(), String> {

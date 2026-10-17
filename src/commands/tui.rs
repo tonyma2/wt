@@ -575,9 +575,9 @@ fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::R
 }
 
 pub fn run() -> Result<(), String> {
-    if !term::is_stdout_tty() {
+    if !term::is_stdin_tty() || !term::is_stdout_tty() {
         return Err(
-            "cannot launch picker, stdout is not a terminal, use `wt list` in scripts".into(),
+            "cannot launch picker, not running in a terminal, use `wt list` in scripts".into(),
         );
     }
 

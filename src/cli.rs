@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -27,7 +25,7 @@ pub enum Command {
             Use --create to skip the typo check and force creation.\n\
             Provide [base] to create the branch from a specific start point (branch, tag, or commit).\n\
             Worktrees are created under ~/.wt/worktrees/<id>/<repo>/.",
-        after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  wt switch -c feat/logn\n  wt switch feat/login develop\n  wt switch hotfix v1.0\n  wt switch feat/login --repo /path/to/repo\n  cd \"$(wt switch feat/login)\""
+        after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  wt switch -c feat/logn\n  wt switch feat/login develop\n  wt switch hotfix v1.0\n  cd \"$(wt switch feat/login)\""
     )]
     Switch {
         /// Branch name
@@ -37,9 +35,6 @@ pub enum Command {
         /// Create a new branch, skipping the similar-name check
         #[arg(short = 'c', long = "create")]
         create: bool,
-        /// Repository path
-        #[arg(long)]
-        repo: Option<PathBuf>,
     },
     /// List worktrees
     #[command(
@@ -48,12 +43,9 @@ pub enum Command {
             The leading '*' marks the current worktree.\n\
             STATUS: '*' uncommitted changes, '↑N' ahead of upstream, '↓N' behind upstream.\n\
             Use --all to list worktrees across all repositories managed under ~/.wt/worktrees/.",
-        after_help = "Examples:\n  wt ls\n  wt ls --repo /path/to/repo\n  wt ls --all"
+        after_help = "Examples:\n  wt ls\n  wt ls --all"
     )]
     List {
-        /// Repository path
-        #[arg(long, conflicts_with = "all")]
-        repo: Option<PathBuf>,
         /// List worktrees across all discovered repositories
         #[arg(short, long)]
         all: bool,
@@ -62,49 +54,36 @@ pub enum Command {
     #[command(
         visible_alias = "rm",
         long_about = "Remove worktrees by branch name or worktree root path.\n\
-            Name lookup requires repository context (current repo or --repo).\n\
-            Also deletes the local branch by default.\n\
-            Use --force to remove dirty worktrees and force-delete the branch.",
+            Name lookup requires running inside the repository.\n\
+            Also deletes the local branch if it is merged.\n\
+            Use --force to remove dirty worktrees and force-delete unmerged branches.",
         after_help = "Examples:\n  wt rm feat/login\n  wt rm feat/a feat/b feat/c\n  wt rm /Users/me/.wt/worktrees/a3f2/my-repo\n  wt rm feat/login --force"
     )]
     Remove {
         /// Branch names or worktree paths
         #[arg(required = true)]
         names: Vec<String>,
-        /// Repository path
-        #[arg(long)]
-        repo: Option<PathBuf>,
         /// Force removal
         #[arg(short, long)]
         force: bool,
-        /// Remove the worktree but keep the branch
-        #[arg(long)]
-        keep_branch: bool,
     },
-    /// Clean up merged, stale, and orphaned worktrees
+    /// Clean up worktrees whose branches have been merged
     #[command(
-        long_about = "Clean up merged, stale, and orphaned worktrees.\n\n\
-            Removes clean worktrees whose branch is fully merged into the base branch, \
-            along with the branch. The base branch, the remote's default branch, and the \
-            repo's HEAD branch are never removed. Also repairs worktree directories that were renamed, prunes \
-            stale worktree metadata, and removes bare clones under ~/.wt/repos/ that have \
-            no worktrees and no unpushed commits.\n\n\
-            Use --gone to also remove worktrees whose upstream branch no longer exists, \
-            as long as their changes landed in the base (e.g. after a squash-merge \
-            deleted the remote branch).\n\n\
-            Use --stale to also remove worktrees whose branch was never pushed. \
-            Commits on those branches that never reached the base are lost.\n\n\
-            Use --orphans to also delete worktree directories whose repository no longer \
-            exists. Their contents, including uncommitted files, are lost.\n\n\
-            Use --base to override the auto-detected default branch for merged detection \
-            (useful when the base branch is not main/master, or there is no remote). \
-            With --base, branches that were never pushed also count as merged, including \
-            new branches with no commits of their own.\n\n\
-            By default, discovers all repos from ~/.wt/worktrees/ and prunes each one. \
-            Use --repo to target a single repository.",
-        after_help = "Examples:\n  wt prune\n  wt prune --gone\n  wt prune --stale\n  wt prune --orphans\n  wt prune --base develop\n  wt prune --dry-run\n  wt prune --repo /path/to/repo"
+        long_about = "Clean up worktrees whose branches have been merged.\n\n\
+            Fetches origin, then removes each clean worktree whose branch was pushed and \
+            whose changes are in the default branch (merged or squash-merged), along with \
+            the branch. The default branch and the repo's HEAD branch are never removed, \
+            nor are locked worktrees, the current one, or one holding another worktree. \
+            Repos without an origin remote are skipped. Also reports worktree directories \
+            that are no longer registered with a repository.\n\n\
+            Covers every repo with a worktree under ~/.wt/worktrees/.",
+        after_help = "Examples:\n  wt prune\n  wt prune --dry-run"
     )]
-    Prune(PruneArgs),
+    Prune {
+        /// Show what would be done without doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
     /// Set up shell integration (completions + directory switching)
     #[command(
         long_about = "Set up shell integration.\n\
@@ -116,19 +95,6 @@ pub enum Command {
         /// Shell to generate integration for
         shell: clap_complete::Shell,
     },
-    /// Print the path to a worktree
-    #[command(
-        visible_alias = "p",
-        long_about = "Print the path to the worktree that has a branch checked out.",
-        after_help = "Examples:\n  wt path feat/login\n  cd \"$(wt p feat/login)\""
-    )]
-    Path {
-        /// Branch checked out in the worktree
-        name: String,
-        /// Repository path
-        #[arg(long)]
-        repo: Option<PathBuf>,
-    },
     /// Share untracked files across all worktrees of a repository
     #[command(
         visible_alias = "ln",
@@ -136,24 +102,18 @@ pub enum Command {
             The file moves from the current worktree into the repository's git directory \
             (.git/wt/links/) and every worktree, including the current one, gets a symlink to it, \
             so removing any worktree never removes the file. New worktrees are linked automatically.\n\
-            Paths are relative to the worktree root. \
+            Paths are relative to the worktree root. Directories cannot be shared; link the files inside them. \
             Running it again for a shared file repairs missing links. \
             Existing files in other worktrees are skipped unless --force is used.",
-        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force\n  wt link --list"
+        after_help = "Examples:\n  wt link .env .env.local\n  wt link config/.env\n  wt link .env --force"
     )]
     Link {
-        /// Files or directories to link
-        #[arg(required_unless_present = "list", conflicts_with = "list")]
+        /// Files to link
+        #[arg(required = true)]
         files: Vec<String>,
-        /// Repository path
-        #[arg(long)]
-        repo: Option<PathBuf>,
         /// Replace existing destinations that are not correct symlinks
         #[arg(short, long)]
         force: bool,
-        /// List currently configured links for this repository
-        #[arg(long)]
-        list: bool,
     },
     /// Clone a repository and create the first worktree
     #[command(
@@ -167,45 +127,4 @@ pub enum Command {
         /// Repository URL
         url: String,
     },
-    /// Stop sharing files, leaving a copy in each worktree
-    #[command(
-        long_about = "Stop sharing previously linked files.\n\
-            Each worktree's symlink is replaced with a copy of the file, then the shared copy is removed. \
-            Anything that is not a symlink to the shared file is skipped.\n\
-            Use --all to stop sharing every linked file.",
-        after_help = "Examples:\n  wt unlink .env\n  wt unlink .env .env.local\n  wt unlink --all"
-    )]
-    Unlink {
-        /// Files or directories to unlink
-        #[arg(required_unless_present = "all", conflicts_with = "all")]
-        files: Vec<String>,
-        /// Repository path
-        #[arg(long)]
-        repo: Option<PathBuf>,
-        /// Unlink all previously linked files
-        #[arg(short, long)]
-        all: bool,
-    },
-}
-
-#[derive(Args)]
-pub struct PruneArgs {
-    /// Show what would be done without doing it
-    #[arg(long, short = 'n')]
-    pub dry_run: bool,
-    /// Also remove worktrees whose upstream branch is gone and whose changes landed in the base
-    #[arg(long)]
-    pub gone: bool,
-    /// Also remove worktrees whose branch was never pushed
-    #[arg(long)]
-    pub stale: bool,
-    /// Also delete orphaned worktree directories whose repository is gone
-    #[arg(long)]
-    pub orphans: bool,
-    /// Repository path (prune only this repo, skip orphan cleanup)
-    #[arg(long, conflicts_with = "orphans")]
-    pub repo: Option<PathBuf>,
-    /// Base branch for merged detection (e.g. develop, trunk)
-    #[arg(long)]
-    pub base: Option<String>,
 }

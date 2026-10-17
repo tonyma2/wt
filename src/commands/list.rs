@@ -1,16 +1,14 @@
-use std::path::Path;
-
 use crate::git::Git;
 use crate::layout;
 use crate::terminal::{self, Colors, display_width, pad, trunc, trunc_tail};
 use crate::worktree::{self, WorktreeInfo};
 
-pub fn run(repo: Option<&Path>, all: bool) -> Result<(), String> {
+pub fn run(all: bool) -> Result<(), String> {
     if all {
         return run_all();
     }
 
-    let repo_root = Git::find_repo(repo)?;
+    let repo_root = Git::find_repo(None)?;
     let worktrees = worktree::parse_porcelain(&Git::new(&repo_root).list_worktrees()?);
     let mut infos = worktree::enrich_worktrees(&worktrees);
     if let Some(cwd) = layout::current_dir() {

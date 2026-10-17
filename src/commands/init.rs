@@ -50,18 +50,14 @@ end
 
 const BASH_COMPLETER: &str = r#"
 _wt_complete() {
-    local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
+    local cur=${COMP_WORDS[COMP_CWORD]}
     local i pos=0 words
-    if [[ $COMP_CWORD -lt 2 || $cur == -* || $prev == --repo ]]; then
+    if [[ $COMP_CWORD -lt 2 || $cur == -* ]]; then
         _wt "$@"
         return
     fi
     for (( i = 2; i < COMP_CWORD; i++ )); do
-        if [[ ${COMP_WORDS[i]} == --repo ]]; then
-            (( i++ ))
-        elif [[ ${COMP_WORDS[i]} != -* ]]; then
-            (( pos++ ))
-        fi
+        [[ ${COMP_WORDS[i]} == -* ]] || (( pos++ ))
     done
     case ${COMP_WORDS[1]},$pos in
         switch,0|s,0)
@@ -70,10 +66,18 @@ _wt_complete() {
         switch,1|s,1)
             words=$(git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ refs/remotes/ refs/tags/ |
                 grep -v '/HEAD$') ;;
-        path,0|p,0|remove,*|rm,*)
-            words=$(git worktree list --porcelain | sed -n 's|^branch refs/heads/||p') ;;
-        unlink,*)
-            words=$(command wt link --list) ;;
+        remove,*|rm,*)
+            # n>1 skips the first record, the main worktree (or bare repo)
+            words=$(git worktree list --porcelain |
+                awk '/^worktree /{n++} n>1 && sub(/^branch refs\/heads\//, "")')
+            for (( i = 2; i < COMP_CWORD; i++ )); do
+                words=$(grep -vxF -- "${COMP_WORDS[i]}" <<< "$words")
+            done ;;
+        link,*|ln,*)
+            local root
+            root=$(git rev-parse --show-toplevel) || return
+            COMPREPLY=($(cd "$root" && compgen -f -- "$cur"))
+            return ;;
         *)
             _wt "$@"
             return ;;
@@ -88,22 +92,20 @@ function __fish_wt_branches
     git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null | string match -v HEAD
 end
 
-function __fish_wt_worktree_branches
-    git worktree list --porcelain 2>/dev/null | string replace -rf '^branch refs/heads/' ''
+function __fish_wt_remove_targets
+    set -l typed (commandline -opc)
+    for branch in (git worktree list --porcelain 2>/dev/null | awk '/^worktree /{n++} n>1 && sub(/^branch refs\/heads\//, "")')
+        contains -- $branch $typed; or echo $branch
+    end
 end
 
 complete -c wt -n "__fish_wt_using_subcommand switch s" -f -a "(__fish_wt_branches)"
-complete -c wt -n "__fish_wt_using_subcommand path p remove rm" -f -a "(__fish_wt_worktree_branches)"
-complete -c wt -n "__fish_wt_using_subcommand unlink" -f -a "(command wt link --list 2>/dev/null)"
+complete -c wt -n "__fish_wt_using_subcommand remove rm" -f -a "(__fish_wt_remove_targets)"
 "#;
 
 const BASH_REGISTRATION: &str = "complete -F _wt ";
 
-const COMPLETERS: [(&str, &str); 7] = [
-    (
-        ":name -- Branch checked out in the worktree:",
-        "_wt_path_branches",
-    ),
+const COMPLETERS: [(&str, &str); 4] = [
     (":name -- Branch name:", "_wt_switch_targets"),
     (
         "::base -- Start point for a new branch:",
@@ -113,18 +115,7 @@ const COMPLETERS: [(&str, &str); 7] = [
         "*::names -- Branch names or worktree paths:",
         "_wt_remove_targets",
     ),
-    (
-        "--base=[Base branch for merged detection (e.g. develop, trunk)]:BASE:",
-        "_wt_local_branch_names",
-    ),
-    (
-        "*::files -- Files or directories to link:",
-        "_wt_link_files",
-    ),
-    (
-        "*::files -- Files or directories to unlink:",
-        "_wt_unlink_files",
-    ),
+    ("*::files -- Files to link:", "_wt_link_files"),
 ];
 
 const DISPATCH_MARKER: &str = "if [ \"$funcstack[1]\" = \"_wt\" ]; then";
@@ -147,36 +138,6 @@ fn render(shell: clap_complete::Shell) -> Result<String, String> {
 
         let helper = r#"
 
-_wt_extract_repo_args() {
-    local i repo_arg
-    typeset -ga _wt_repo_args
-    typeset -g _wt_repo_path
-    _wt_repo_args=()
-    _wt_repo_path=""
-    for (( i = 1; i <= ${#words[@]}; i++ )); do
-        if [[ ${words[i]} == --repo=* ]]; then
-            repo_arg=${words[i]#--repo=}
-        elif [[ ${words[i]} == --repo && -n ${words[i+1]:-} ]]; then
-            repo_arg=${words[i+1]}
-        else
-            continue
-        fi
-        [[ $repo_arg == "~" || $repo_arg == "~/"* ]] && repo_arg="$HOME${repo_arg:1}"
-        _wt_repo_args=(--repo "$repo_arg")
-        _wt_repo_path=$repo_arg
-        return
-    done
-}
-
-_wt_git() {
-    _wt_extract_repo_args
-    if [[ -n $_wt_repo_path ]]; then
-        git -C "$_wt_repo_path" "$@" 2>/dev/null
-    else
-        git "$@" 2>/dev/null
-    fi
-}
-
 _wt_collect_worktree_rows() {
     local line wt_path="" branch=""
     typeset -ga _wt_completion_branches _wt_completion_paths
@@ -193,23 +154,23 @@ _wt_collect_worktree_rows() {
                 fi
                 wt_path="" branch="" ;;
         esac
-    done < <(_wt_git worktree list --porcelain; echo)
+    done < <(git worktree list --porcelain 2>/dev/null; echo)
     (( ${#_wt_completion_paths[@]} > 0 ))
 }
 
 _wt_collect_local_branches() {
     typeset -ga _wt_local_branches
-    _wt_local_branches=(${(f)"$(_wt_git for-each-ref --format='%(refname:short)' refs/heads/)"})
+    _wt_local_branches=(${(f)"$(git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)"})
 }
 
 # remote branches by short name ("origin/feat/x" -> "feat/x"), deduplicated across remotes
 _wt_collect_remote_branches() {
     typeset -ga _wt_remote_branches
-    _wt_remote_branches=(${(f)"$(_wt_git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/)"})
+    _wt_remote_branches=(${(f)"$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null)"})
     _wt_remote_branches=(${(u)_wt_remote_branches:#HEAD})
 }
 
-# operands already typed, minus the subcommand names passed as arguments, flags, and --repo's value
+# operands already typed, minus the subcommand names passed as arguments and flags
 _wt_collect_typed() {
     local -a skip=(wt "$@")
     local i w
@@ -218,20 +179,10 @@ _wt_collect_typed() {
     for (( i = 1; i <= ${#words[@]}; i++ )); do
         (( i == CURRENT )) && continue
         w=${words[i]}
-        [[ -z $w ]] && continue
+        [[ -z $w || $w == -* ]] && continue
         (( ${skip[(Ie)$w]} )) && continue
-        if [[ $w == -* ]]; then
-            [[ $w == --repo ]] && (( i++ ))
-            continue
-        fi
         _wt_seen[$w]=1
     done
-}
-
-_wt_path_branches() {
-    _wt_collect_worktree_rows || return 1
-    local -a branches=(${_wt_completion_branches:#})
-    (( ${#branches} > 0 )) && compadd -- "${branches[@]}"
 }
 
 # starts at 2: git lists the main worktree (or bare repo) first, and it can't be removed
@@ -263,31 +214,15 @@ _wt_switch_targets() {
 }
 
 _wt_start_points() {
-    local -a refs=(${(f)"$(_wt_git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ refs/remotes/ refs/tags/)"})
+    local -a refs=(${(f)"$(git for-each-ref --format='%(refname:lstrip=2)' refs/heads/ refs/remotes/ refs/tags/ 2>/dev/null)"})
     refs=(${refs:#*/HEAD})
     (( ${#refs} > 0 )) && compadd -- "${refs[@]}"
 }
 
-_wt_local_branch_names() {
-    _wt_collect_local_branches
-    (( ${#_wt_local_branches[@]} > 0 )) && compadd -- "${_wt_local_branches[@]}"
-}
-
 _wt_link_files() {
     local root
-    root=$(_wt_git rev-parse --show-toplevel) || return 1
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
     _path_files -W "$root"
-}
-
-_wt_unlink_files() {
-    local -a results
-    local item
-    _wt_collect_typed unlink
-    _wt_extract_repo_args
-    for item in ${(f)"$(command wt link --list "${_wt_repo_args[@]}" 2>/dev/null)"}; do
-        (( ${+_wt_seen[$item]} )) || results+=("$item")
-    done
-    (( ${#results[@]} > 0 )) && compadd -- "${results[@]}"
 }
 "#;
         if let Some(idx) = script.find(DISPATCH_MARKER) {
@@ -303,8 +238,6 @@ _wt_unlink_files() {
                      ({completer} target not found), please report this bug"
                 ));
             }
-            // `*::` narrows $words to the operands, hiding --repo from the completer
-            let spec = spec.replacen("*::", "*:", 1);
             script = script.replace(&target, &format!("{spec}{completer}"));
         }
     }
@@ -346,26 +279,16 @@ mod tests {
         // One use per subcommand name and alias; extra uses mean another arg's help text
         // collides with a replacement target.
         for (completer, uses) in [
-            ("_wt_path_branches", 2),
             ("_wt_switch_targets", 2),
             ("_wt_start_points", 2),
-            ("_wt_local_branch_names", 1),
             ("_wt_remove_targets", 2),
             ("_wt_link_files", 2),
-            ("_wt_unlink_files", 1),
         ] {
             let used = script.matches(&format!(":{completer}'")).count();
             assert_eq!(used, uses, "{completer}");
         }
         let dispatch = script.find(DISPATCH_MARKER).unwrap();
-        assert!(script.find("_wt_path_branches() {").unwrap() < dispatch);
-    }
-
-    #[test]
-    fn zsh_operand_completers_see_repo_flag() {
-        let script = render(Shell::Zsh).unwrap();
-        assert!(!script.contains("*::names"));
-        assert!(script.contains("'*:names -- Branch names or worktree paths:_wt_remove_targets'"));
+        assert!(script.find("_wt_switch_targets() {").unwrap() < dispatch);
     }
 
     #[test]

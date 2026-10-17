@@ -1,51 +1,110 @@
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::symlink;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use crate::git::Git;
 use crate::layout;
-use crate::links::{Store, normalize_path, normalize_paths};
 use crate::terminal;
 use crate::worktree::{self, Worktree};
 
-pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Result<(), String> {
-    let repo_root = Git::find_repo(repo)?;
+struct Store {
+    dir: PathBuf,
+}
+
+impl Store {
+    fn of(git: &Git) -> Result<Self, String> {
+        let common_dir = git
+            .common_dir()
+            .ok_or("cannot locate the repository's git directory")?;
+        Ok(Self {
+            dir: layout::canonicalize_or_self(&common_dir).join("wt/links"),
+        })
+    }
+
+    fn path(&self, file: &str) -> PathBuf {
+        self.dir.join(file)
+    }
+
+    fn files(&self) -> Result<Vec<String>, String> {
+        let mut paths = Vec::new();
+        collect_files(&self.dir, &mut paths)
+            .map_err(|e| format!("cannot read {}: {e}", self.dir.display()))?;
+        let mut files: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.strip_prefix(&self.dir).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        Ok(files)
+    }
+
+    fn add(&self, file: &str, src: &Path) -> Result<(), String> {
+        let dest = self.path(file);
+        dest.parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| move_file(src, &dest))
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::AlreadyExists => format!(
+                    "cannot link {file}: {} already exists",
+                    terminal::tilde_path(&dest)
+                ),
+                _ => format!(
+                    "cannot move {file} into {}: {e}",
+                    terminal::tilde_path(&dest)
+                ),
+            })?;
+        symlink(&dest, src).map_err(|e| {
+            format!(
+                "moved {file} into {} but cannot link it back: {e}",
+                terminal::tilde_path(&dest)
+            )
+        })
+    }
+}
+
+fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        entries => entries?,
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            collect_files(&entry.path(), files)?;
+        } else {
+            files.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+// Unlike rename, hard_link and create_new fail if the entry exists (e.g. `.Env` vs `.env`).
+fn move_file(src: &Path, dest: &Path) -> io::Result<()> {
+    match fs::hard_link(src, dest) {
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+            File::create_new(dest)?;
+            fs::copy(src, dest).inspect_err(|_| {
+                let _ = fs::remove_file(dest);
+            })?;
+        }
+        result => result?,
+    }
+    fs::remove_file(src)
+}
+
+pub fn run(files: &[String], force: bool) -> Result<(), String> {
+    let repo_root = Git::find_repo(None)?;
     let git = Git::new(&repo_root);
     let store = Store::of(&git)?;
-
-    if list {
-        let shared = store.list()?;
-        if shared.is_empty() {
-            eprintln!("no links configured");
-        }
-        for file in &shared {
-            println!("{file}");
-        }
-        return Ok(());
-    }
-
     let files = normalize_paths(files)?;
-    for file in &files {
-        if let Some(dir) = files
-            .iter()
-            .find(|dir| *dir != file && Path::new(file).starts_with(dir))
-        {
-            return Err(format!(
-                "cannot link {file}: inside {dir}, which is also being linked"
-            ));
-        }
-    }
-    let _lock = store.lock()?;
-    let shared = store.list()?;
+    let shared = store.files()?;
     let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
     let current = worktree::find_by_path(&worktrees, &repo_root).filter(|wt| !wt.bare);
 
-    let mut linkable = Vec::new();
     let mut to_store = Vec::new();
     for file in &files {
-        if shared.contains(file) && store.path(file).symlink_metadata().is_ok() {
-            linkable.push(file);
+        if shared.contains(file) {
             continue;
         }
         let Some(current) = current else {
@@ -54,15 +113,16 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
             ));
         };
         let src = current.path.join(file);
-        if in_linked_dir(&current.path, &src) {
-            eprintln!("skipped {file}: inside a linked directory");
-            continue;
-        }
         let meta = src
             .symlink_metadata()
             .map_err(|_| not_found_error(file, &current.path))?;
         if meta.is_symlink() {
             return Err(format!("cannot link {file}: is a symlink"));
+        }
+        if meta.is_dir() {
+            return Err(format!(
+                "cannot link {file}: is a directory, link the files inside it"
+            ));
         }
         if Git::tracks(&current.path, file)? {
             return Err(format!(
@@ -76,7 +136,6 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
             );
         }
         to_store.push((file, src));
-        linkable.push(file);
     }
 
     for (file, src) in to_store {
@@ -89,7 +148,7 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
 
     let mut errors = 0usize;
     for wt in worktrees.iter().filter(|wt| !wt.bare && wt.live()) {
-        for file in &linkable {
+        for file in &files {
             if let Err(e) = link_into(&store.path(file), wt, file, force) {
                 eprintln!("{e}");
                 errors += 1;
@@ -109,13 +168,11 @@ pub fn run(files: &[String], repo: Option<&Path>, force: bool, list: bool) -> Re
 fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<(), String> {
     let label = wt.label();
     let dest = wt.path.join(file);
-    if in_linked_dir(&wt.path, &dest) {
-        eprintln!("skipped {file} in {label}: inside a linked directory");
-        return Ok(());
-    }
     let mut replaced = false;
     if dest.symlink_metadata().is_ok() {
-        if is_expected_link(&dest, source) {
+        if fs::read_link(&dest).is_ok_and(|target| target == source)
+            || dest.canonicalize().is_ok_and(|real| real == source)
+        {
             return Ok(());
         }
         let dangling = !dest.exists();
@@ -141,6 +198,16 @@ fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<()
     Ok(())
 }
 
+fn remove_dest(dest: &Path) -> io::Result<()> {
+    if dest.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination is a directory, remove it manually",
+        ));
+    }
+    fs::remove_file(dest)
+}
+
 fn not_found_error(file: &str, root: &Path) -> String {
     let root_display = terminal::tilde_path(root);
     let from_cwd = layout::current_dir()
@@ -160,51 +227,46 @@ fn not_found_error(file: &str, root: &Path) -> String {
     }
 }
 
-pub fn auto_link(git: &Git, wt: &Worktree) {
-    let (store, files) = match Store::of(git).and_then(|store| {
-        let files = store.list()?;
-        Ok((store, files))
-    }) {
-        Ok(shared) => shared,
-        Err(e) => {
-            eprintln!("cannot auto-link: {e}");
-            return;
+fn normalize_paths(files: &[String]) -> Result<Vec<String>, String> {
+    let mut unique = Vec::new();
+    for file in files {
+        let file = normalize_path(file)?;
+        if !unique.contains(&file) {
+            unique.push(file);
         }
-    };
-    for entry in &files {
-        let file = match normalize_path(entry) {
-            Ok(file) => file,
-            Err(e) => {
-                eprintln!("cannot auto-link {entry}: {e}");
-                continue;
+    }
+    Ok(unique)
+}
+
+fn normalize_path(file: &str) -> Result<String, String> {
+    let mut parts = Vec::new();
+    for component in Path::new(file).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy()),
+            Component::CurDir => {}
+            Component::ParentDir => return Err(format!("path must not contain '..': {file}")),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("path must be relative: {file}"));
             }
-        };
-        let source = store.path(&file);
-        if source.symlink_metadata().is_ok()
-            && let Err(e) = link_into(&source, wt, &file, false)
-        {
-            eprintln!("{e}");
         }
     }
-}
-
-pub(crate) fn in_linked_dir(wt: &Path, dest: &Path) -> bool {
-    dest.ancestors()
-        .skip(1)
-        .take_while(|dir| *dir != wt)
-        .any(Path::is_symlink)
-}
-
-pub(crate) fn is_expected_link(dest: &Path, source: &Path) -> bool {
-    fs::read_link(dest).is_ok_and(|target| target == source)
-}
-
-fn remove_dest(dest: &Path) -> io::Result<()> {
-    if dest.symlink_metadata().is_ok_and(|m| m.is_dir()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "destination is a directory, remove it manually",
-        ));
+    match parts.first().map(|p| p.as_ref()) {
+        None => Err(format!("path must name a file: '{file}'")),
+        Some(".git") => Err(format!("cannot link git metadata: {file}")),
+        Some(_) => Ok(parts.join("/")),
     }
-    fs::remove_file(dest)
+}
+
+pub fn auto_link(git: &Git, wt: &Worktree) {
+    let linked = Store::of(git).and_then(|store| {
+        for file in store.files()? {
+            if let Err(e) = link_into(&store.path(&file), wt, &file, false) {
+                eprintln!("{e}");
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = linked {
+        eprintln!("cannot auto-link: {e}");
+    }
 }

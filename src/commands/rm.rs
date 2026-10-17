@@ -5,18 +5,13 @@ use crate::layout;
 use crate::terminal;
 use crate::worktree::{self, Status, Worktree};
 
-pub fn run(
-    names: &[String],
-    repo: Option<&Path>,
-    force: bool,
-    keep_branch: bool,
-) -> Result<(), String> {
+pub fn run(names: &[String], force: bool) -> Result<(), String> {
     if let [name] = names {
-        return remove_one(name, repo, force, keep_branch);
+        return remove_one(name, force);
     }
     let mut errors = 0usize;
     for name in names {
-        if let Err(e) = remove_one(name, repo, force, keep_branch) {
+        if let Err(e) = remove_one(name, force) {
             eprintln!("{e}");
             errors += 1;
         }
@@ -36,17 +31,12 @@ struct Target {
     worktrees: Vec<Worktree>,
 }
 
-fn remove_one(
-    name_or_path: &str,
-    repo: Option<&Path>,
-    force: bool,
-    keep_branch: bool,
-) -> Result<(), String> {
+fn remove_one(name_or_path: &str, force: bool) -> Result<(), String> {
     let Target {
         path: target,
         admin,
         worktrees,
-    } = resolve_target(name_or_path, repo)?;
+    } = resolve_target(name_or_path)?;
     let git = Git::new(&admin);
 
     let wt = worktree::find_by_path(&worktrees, &target)
@@ -71,6 +61,12 @@ fn remove_one(
         ));
     }
 
+    if worktree::contains_other_worktree(&worktrees, wt) {
+        return Err(format!(
+            "cannot remove {label}: another worktree is inside it, remove that one first"
+        ));
+    }
+
     if wt.locked && !force {
         return Err(format!(
             "cannot remove {label}: worktree is locked, use --force to remove"
@@ -88,7 +84,7 @@ fn remove_one(
         } else if repo_head == Some(format!("refs/heads/{b}")) {
             Some(" (the repository's HEAD)")
         } else {
-            keep_branch.then_some("")
+            None
         }
     });
     let delete_branch = branch.filter(|_| kept.is_none());
@@ -103,8 +99,7 @@ fn remove_one(
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
-                "cannot remove {label}: branch is not fully merged, \
-                 use --keep-branch to keep it or --force to delete it"
+                "cannot remove {label}: branch is not fully merged, use --force to delete it"
             ));
         }
     }
@@ -126,9 +121,9 @@ fn remove_one(
     Ok(())
 }
 
-fn resolve_target(name_or_path: &str, repo: Option<&Path>) -> Result<Target, String> {
+fn resolve_target(name_or_path: &str) -> Result<Target, String> {
     let input = Path::new(name_or_path);
-    let repo_root = match Git::find_repo(repo) {
+    let repo_root = match Git::find_repo(None) {
         Ok(root) => root,
         Err(_) if input.exists() => return resolve_path(input),
         Err(e) => return Err(e),
@@ -137,10 +132,13 @@ fn resolve_target(name_or_path: &str, repo: Option<&Path>) -> Result<Target, Str
     let git = Git::new(&repo_root);
     let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
 
+    let absolute = std::path::absolute(input).ok();
     let found = worktree::resolve_worktree(&worktrees, name_or_path)?.or_else(|| {
-        worktrees
-            .iter()
-            .find(|wt| wt.prunable && wt.branch.as_deref() == Some(name_or_path))
+        worktrees.iter().find(|wt| {
+            wt.prunable
+                && (wt.branch.as_deref() == Some(name_or_path)
+                    || absolute.as_ref() == Some(&wt.path))
+        })
     });
     if let Some(wt) = found {
         return Ok(Target {
