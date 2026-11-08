@@ -1,5 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -8,15 +10,19 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::commands::pull::{self, Outcome};
+use crate::commands::rm;
 use crate::fuzzy;
+use crate::git::Git;
 use crate::layout;
 use crate::terminal::{self as term, display_width, trunc, trunc_tail};
-use crate::worktree;
+use crate::worktree::{self, Status};
 
 const EMPTY_HINT: &str = "no matches · backspace to edit";
 const LOCK_BADGE: &str = "lock";
 const SEP: &str = " · ";
 const MAX_ROWS: usize = 8;
+const PULL_SUMMARY_TTL: Duration = Duration::from_secs(3);
 const REPO_MIN: usize = 8;
 // branch columns include the 2-column gap before the next column
 const BRANCH_MIN: usize = 16 + 2;
@@ -37,6 +43,52 @@ struct WorktreeData {
     detached: bool,
     locked: bool,
     current: bool,
+    pull: Option<PullState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PullState {
+    Pending,
+    Updated,
+    Skipped(&'static str),
+    FetchFailed,
+    Failed,
+}
+
+impl PullState {
+    fn from_outcome(outcome: &Outcome) -> Option<Self> {
+        match outcome {
+            Outcome::Updated(_) => Some(Self::Updated),
+            Outcome::UpToDate => None,
+            Outcome::Skipped(reason) => Some(Self::Skipped(reason)),
+            Outcome::FetchFailed => Some(Self::FetchFailed),
+            Outcome::Failed(_) => Some(Self::Failed),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pulling…",
+            Self::Updated => "updated",
+            Self::Skipped(reason) => reason,
+            Self::FetchFailed => "fetch failed",
+            Self::Failed => "pull failed",
+        }
+    }
+
+    fn failed(self) -> bool {
+        matches!(self, Self::FetchFailed | Self::Failed)
+    }
+}
+
+enum Action {
+    Remove(usize),
+    Pull,
+}
+
+struct PullDone {
+    repo: usize,
+    result: Result<Vec<(PathBuf, Outcome, Status)>, String>,
 }
 
 impl WorktreeData {
@@ -56,7 +108,22 @@ impl WorktreeData {
             detached: wt.detached,
             locked: wt.locked,
             current: info.current,
+            pull: None,
         }
+    }
+
+    fn status_text(&self) -> String {
+        match self.pull.map(PullState::label) {
+            Some(note) if self.status.is_empty() => note.to_owned(),
+            Some(note) => format!("{} {note}", self.status),
+            None => self.status.clone(),
+        }
+    }
+
+    fn label(&self) -> String {
+        self.branch
+            .as_ref()
+            .map_or_else(|| self.display_path.clone(), |b| format!("'{b}'"))
     }
 
     fn display_branch(&self) -> &str {
@@ -81,6 +148,12 @@ struct App {
     quit: bool,
     selected_path: Option<PathBuf>,
     color: bool,
+    message: Option<String>,
+    message_expires: Option<Instant>,
+    confirm_remove: Option<usize>,
+    action: Option<Action>,
+    pulling: usize,
+    pull_rx: Option<Receiver<PullDone>>,
 }
 
 impl App {
@@ -101,6 +174,12 @@ impl App {
             quit: false,
             selected_path: None,
             color: term::color_enabled(term::is_stdout_tty()),
+            message: None,
+            message_expires: None,
+            confirm_remove: None,
+            action: None,
+            pulling: 0,
+            pull_rx: None,
         };
         app.refilter();
         app
@@ -231,10 +310,118 @@ impl App {
         self.cursor = Some(target);
         self.snap();
     }
+
+    fn request_remove(&mut self) {
+        let Some(cursor) = self.cursor else { return };
+        if self.pulling > 0 {
+            self.message = Some("cannot remove while pulling".into());
+            return;
+        }
+        let idx = self.filtered[cursor];
+        self.confirm_remove = Some(idx);
+        self.message = Some(format!(
+            "remove {}? ^x again to confirm",
+            self.rows[idx].wt.label()
+        ));
+    }
+
+    fn confirm_remove(&mut self, idx: usize) {
+        self.message = Some(format!("removing {}…", self.rows[idx].wt.label()));
+        self.action = Some(Action::Remove(idx));
+    }
+
+    fn finish_remove(&mut self, idx: usize, result: Result<String, String>) {
+        match result {
+            Ok(message) => {
+                self.message = Some(message);
+                let pos = self.cursor.unwrap_or(0);
+                self.rows.remove(idx);
+                self.cursor = None;
+                self.refilter();
+                if !self.filtered.is_empty() {
+                    self.cursor = Some(pos.min(self.filtered.len() - 1));
+                    self.scroll();
+                }
+            }
+            Err(e) => self.message = Some(e),
+        }
+    }
+
+    fn request_pull(&mut self) {
+        if self.pulling > 0 {
+            self.message = Some("already pulling".into());
+        } else {
+            self.action = Some(Action::Pull);
+        }
+    }
+
+    fn finish_pull(&mut self, done: PullDone) {
+        self.pulling -= 1;
+        for row in self.rows.iter_mut().filter(|row| row.repo == done.repo) {
+            row.wt.pull = match &done.result {
+                Err(_) => Some(PullState::Failed),
+                Ok(results) => results
+                    .iter()
+                    .find(|(path, ..)| *path == row.wt.path)
+                    .and_then(|(_, outcome, status)| {
+                        row.wt.status = status.summary().unwrap_or_default();
+                        row.wt.dirty = status.dirty;
+                        PullState::from_outcome(outcome)
+                    }),
+            };
+        }
+        if self.pulling == 0 {
+            self.pull_rx = None;
+            self.message = Some(self.pull_summary());
+            self.message_expires = Some(Instant::now() + PULL_SUMMARY_TTL);
+        }
+    }
+
+    fn expire_message(&mut self, now: Instant) -> bool {
+        if self.message_expires.is_none_or(|at| now < at) {
+            return false;
+        }
+        self.message = None;
+        self.message_expires = None;
+        true
+    }
+
+    fn pull_summary(&self) -> String {
+        let states: Vec<PullState> = self.rows.iter().filter_map(|row| row.wt.pull).collect();
+        let count = |f: fn(PullState) -> bool| states.iter().filter(|&&s| f(s)).count();
+        let updated = count(|s| s == PullState::Updated);
+        let skipped = count(|s| matches!(s, PullState::Skipped(_)));
+        let failed = count(PullState::failed);
+        let mut parts = Vec::new();
+        if updated > 0 {
+            parts.push(format!("{updated} updated"));
+        }
+        if skipped > 0 {
+            parts.push(format!("{skipped} skipped"));
+        }
+        if failed > 0 {
+            parts.push(format!("{failed} failed, run wt pull for details"));
+        }
+        if parts.is_empty() {
+            "pull: nothing to pull".into()
+        } else {
+            format!("pull: {}", parts.join(", "))
+        }
+    }
 }
 
 fn handle_key(app: &mut App, key: event::KeyEvent) {
     if key.kind != KeyEventKind::Press {
+        return;
+    }
+    app.message = None;
+    app.message_expires = None;
+    let remove_key =
+        key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('x');
+    if let Some(idx) = app.confirm_remove.take() {
+        if remove_key {
+            app.confirm_remove(idx);
+        }
         return;
     }
 
@@ -248,6 +435,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             KeyCode::Char('d') => app.quit = true,
             KeyCode::Char('n') => app.move_cursor(1),
             KeyCode::Char('p') => app.move_cursor(-1),
+            KeyCode::Char('x') => app.request_remove(),
+            KeyCode::Char('r') => app.request_pull(),
             _ => {}
         }
         return;
@@ -289,7 +478,7 @@ fn worktree_column_widths<'a>(
     let (mut max_branch, mut max_status, mut badge_w) = (0usize, 0usize, 0usize);
     for wt in wts {
         max_branch = max_branch.max(display_width(wt.display_branch()));
-        max_status = max_status.max(display_width(&wt.status));
+        max_status = max_status.max(display_width(&wt.status_text()));
         if wt.locked {
             badge_w = LOCK_BADGE.len();
         }
@@ -439,7 +628,19 @@ fn row_lines(app: &App, width: u16, height: usize) -> Vec<Line<'static>> {
                 } else {
                     Style::new().dim()
                 };
-                spans.push(Span::styled(term::pad(&row.wt.status, c.status), style));
+                spans.push(Span::styled(row.wt.status.clone(), style));
+                if let Some(pull) = row.wt.pull {
+                    let note_style = match pull {
+                        PullState::Pending => Style::new().dim(),
+                        PullState::Updated => app.fg(Color::Green),
+                        PullState::Skipped(_) => app.fg(Color::Yellow),
+                        PullState::FetchFailed | PullState::Failed => app.fg(Color::Red),
+                    };
+                    let sep = if row.wt.status.is_empty() { "" } else { " " };
+                    spans.push(Span::styled(format!("{sep}{}", pull.label()), note_style));
+                }
+                let used = display_width(&row.wt.status_text());
+                spans.push(Span::raw(" ".repeat(c.status.saturating_sub(used))));
             }
             if c.badge > 0 && row.wt.locked {
                 spans.push(Span::styled(LOCK_BADGE, app.fg(Color::Yellow)));
@@ -484,6 +685,10 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
     let spans_w =
         |spans: &[Span]| -> usize { spans.iter().map(|s| display_width(&s.content)).sum() };
 
+    if let Some(message) = &app.message {
+        return Line::raw(trunc(message, w));
+    }
+
     if !app.filter.is_empty() {
         let prefix = "/ ";
         let count = match app.filtered.len() {
@@ -497,6 +702,11 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         }
         let query = trunc_tail(&app.filter, w.saturating_sub(display_width(prefix)));
         return Line::from(vec![prefix.dim(), Span::raw(query)]);
+    }
+
+    if app.pulling > 0 {
+        let repos = if app.pulling == 1 { "repo" } else { "repos" };
+        return Line::from(format!("pulling {} {repos}…", app.pulling).dim());
     }
 
     let base = vec![
@@ -515,6 +725,14 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
         Vec::new()
     };
     let filter_tier = vec![SEP.dim(), "type to filter".dim()];
+    let action_tier = vec![
+        SEP.dim(),
+        Span::raw("^r"),
+        " pull".dim(),
+        SEP.dim(),
+        Span::raw("^x"),
+        " remove".dim(),
+    ];
     let position_tier = match app.cursor {
         Some(i) if app.filtered.len() > usize::from(visible_rows) => {
             vec![SEP.dim(), format!("{}/{}", i + 1, app.filtered.len()).dim()]
@@ -523,7 +741,7 @@ fn footer_line(app: &App, width: u16, visible_rows: u16) -> Line<'static> {
     };
 
     let mut spans = base;
-    for tier in [repo_tier, filter_tier, position_tier] {
+    for tier in [repo_tier, filter_tier, action_tier, position_tier] {
         if !tier.is_empty() && w >= spans_w(&spans) + spans_w(&tier) {
             spans.extend(tier);
         }
@@ -557,21 +775,84 @@ fn build_repos(infos: Vec<worktree::RepoInfo>) -> Vec<RepoData> {
 fn event_loop(terminal: &mut crate::tui::StdoutTerminal, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|frame| render(frame, app))?;
-        loop {
-            match event::read()? {
-                Event::Key(key) => {
-                    handle_key(app, key);
-                    break;
-                }
-                Event::Resize(..) => break,
-                _ => {}
+        match app.action.take() {
+            Some(Action::Remove(idx)) => {
+                let result = rm::remove_unforced(&app.rows[idx].wt.path);
+                app.finish_remove(idx, result);
             }
+            Some(Action::Pull) => start_pull(app),
+            None => wait_for_event(app)?,
         }
         if app.quit {
             break;
         }
     }
     Ok(())
+}
+
+// Returns after anything that needs a redraw: a key, a resize, a repo finishing its pull,
+// or the footer message expiring.
+fn wait_for_event(app: &mut App) -> io::Result<()> {
+    loop {
+        if let Some(rx) = &app.pull_rx
+            && let Ok(done) = rx.try_recv()
+        {
+            app.finish_pull(done);
+            return Ok(());
+        }
+        if app.expire_message(Instant::now()) {
+            return Ok(());
+        }
+        let timeout = if app.pull_rx.is_some() {
+            Some(Duration::from_millis(50))
+        } else {
+            app.message_expires
+                .map(|at| at.saturating_duration_since(Instant::now()))
+        };
+        if let Some(timeout) = timeout
+            && !event::poll(timeout)?
+        {
+            continue;
+        }
+        match event::read()? {
+            Event::Key(key) => {
+                handle_key(app, key);
+                return Ok(());
+            }
+            Event::Resize(..) => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
+// One thread per repo. Quitting mid-pull leaves the git processes to finish on their own.
+fn start_pull(app: &mut App) {
+    let (tx, rx) = mpsc::channel();
+    let mut started = vec![false; app.repos.len()];
+    for row in &mut app.rows {
+        row.wt.pull = Some(PullState::Pending);
+        if std::mem::replace(&mut started[row.repo], true) {
+            continue;
+        }
+        let (tx, repo, path) = (tx.clone(), row.repo, row.wt.path.clone());
+        app.pulling += 1;
+        std::thread::spawn(move || {
+            let git = Git::new(path);
+            let result = pull::pull_repo(&git, |remote| git.fetch_remote_unattended(remote)).map(
+                |results| {
+                    results
+                        .into_iter()
+                        .map(|(wt, outcome)| {
+                            let status = Status::of(&wt);
+                            (wt.path, outcome, status)
+                        })
+                        .collect()
+                },
+            );
+            let _ = tx.send(PullDone { repo, result });
+        });
+    }
+    app.pull_rx = Some(rx);
 }
 
 pub fn run() -> Result<(), String> {
@@ -1215,7 +1496,203 @@ mod tests {
     fn footer_full_width_shows_all_hints() {
         let app = App::new(test_repos());
         let text = line_text(&footer_line(&app, 80, 3));
-        assert_eq!(text, "enter select · esc quit · ←→ repo · type to filter");
+        assert_eq!(
+            text,
+            "enter select · esc quit · ←→ repo · type to filter · ^r pull · ^x remove"
+        );
+    }
+
+    #[test]
+    fn remove_needs_a_second_press() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Down);
+        ctrl(&mut app, 'x');
+        assert!(app.action.is_none());
+        assert_eq!(
+            line_text(&footer_line(&app, 80, 3)),
+            "remove 'feat/login'? ^x again to confirm"
+        );
+        ctrl(&mut app, 'x');
+        assert!(matches!(app.action, Some(Action::Remove(1))));
+    }
+
+    #[test]
+    fn any_other_key_cancels_remove() {
+        let mut app = App::new(test_repos());
+        ctrl(&mut app, 'x');
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.action.is_none());
+        assert!(app.filter.is_empty());
+        assert_eq!(app.message, None);
+        ctrl(&mut app, 'x');
+        assert!(app.action.is_none(), "a fresh press asks again");
+    }
+
+    #[test]
+    fn finished_remove_drops_the_row_and_keeps_the_cursor_in_place() {
+        let mut app = App::new(test_repos());
+        press(&mut app, KeyCode::Down);
+        app.finish_remove(1, Ok("removed worktree".into()));
+        assert_eq!(app.rows.len(), 2);
+        assert_eq!(selected_repo(&app), "other-repo");
+        assert_eq!(app.message.as_deref(), Some("removed worktree"));
+    }
+
+    #[test]
+    fn failed_remove_keeps_the_row_and_shows_why() {
+        let mut app = App::new(test_repos());
+        app.finish_remove(
+            0,
+            Err("cannot remove 'main': worktree has local changes".into()),
+        );
+        assert_eq!(app.rows.len(), 3);
+        assert_eq!(
+            line_text(&footer_line(&app, 80, 3)),
+            "cannot remove 'main': worktree has local changes"
+        );
+    }
+
+    fn pulling(app: &mut App) {
+        ctrl(app, 'r');
+        assert!(matches!(app.action.take(), Some(Action::Pull)));
+        for row in &mut app.rows {
+            row.wt.pull = Some(PullState::Pending);
+        }
+        app.pulling = app.repos.len();
+    }
+
+    #[test]
+    fn pull_blocks_remove_and_a_second_pull() {
+        let mut app = App::new(test_repos());
+        pulling(&mut app);
+        ctrl(&mut app, 'x');
+        assert_eq!(app.message.as_deref(), Some("cannot remove while pulling"));
+        ctrl(&mut app, 'r');
+        assert_eq!(app.message.as_deref(), Some("already pulling"));
+        assert!(app.action.is_none());
+        press(&mut app, KeyCode::Down);
+        assert_eq!(line_text(&footer_line(&app, 80, 3)), "pulling 2 repos…");
+    }
+
+    #[test]
+    fn finished_pull_marks_rows_and_summarizes() {
+        let mut app = App::new(test_repos());
+        pulling(&mut app);
+        let clean = Status {
+            ahead: Some(0),
+            behind: Some(0),
+            ..Status::default()
+        };
+        app.finish_pull(PullDone {
+            repo: 0,
+            result: Ok(vec![
+                (PathBuf::from("/wt/my-app/main"), Outcome::Updated(2), clean),
+                (
+                    PathBuf::from("/wt/my-app/feat/login"),
+                    Outcome::Skipped("dirty"),
+                    Status {
+                        dirty: true,
+                        ..clean
+                    },
+                ),
+            ]),
+        });
+        assert_eq!(app.rows[0].wt.pull, Some(PullState::Updated));
+        assert_eq!(app.rows[1].wt.status_text(), "* dirty");
+        assert_eq!(app.rows[2].wt.pull, Some(PullState::Pending));
+        assert_eq!(app.message, None);
+
+        app.finish_pull(PullDone {
+            repo: 1,
+            result: Ok(vec![]),
+        });
+        assert_eq!(app.rows[2].wt.pull, None, "no upstream clears pending");
+        assert!(app.pull_rx.is_none());
+        assert_eq!(app.message.as_deref(), Some("pull: 1 updated, 1 skipped"));
+    }
+
+    #[test]
+    fn pull_summary_expires_but_row_results_stay() {
+        let mut app = App::new(test_repos());
+        pulling(&mut app);
+        for repo in 0..2 {
+            app.finish_pull(PullDone {
+                repo,
+                result: Ok(vec![(
+                    PathBuf::from("/wt/other-repo/main"),
+                    Outcome::Updated(1),
+                    Status::default(),
+                )]),
+            });
+        }
+        let expires = app.message_expires.expect("summary has a deadline");
+        assert!(!app.expire_message(expires - Duration::from_millis(1)));
+        assert_eq!(app.message.as_deref(), Some("pull: 1 updated"));
+        assert!(app.expire_message(expires));
+        assert_eq!(app.message, None);
+        assert_eq!(app.rows[2].wt.pull, Some(PullState::Updated));
+    }
+
+    #[test]
+    fn other_messages_do_not_expire() {
+        let mut app = App::new(test_repos());
+        ctrl(&mut app, 'x');
+        assert!(!app.expire_message(Instant::now() + Duration::from_secs(3600)));
+        assert!(app.message.is_some());
+    }
+
+    #[test]
+    fn dirty_row_with_nothing_to_pull_keeps_only_its_dirty_marker() {
+        let mut app = App::new(test_repos());
+        pulling(&mut app);
+        let dirty_in_sync = Status {
+            dirty: true,
+            ahead: Some(0),
+            behind: Some(0),
+        };
+        app.finish_pull(PullDone {
+            repo: 0,
+            result: Ok(vec![(
+                PathBuf::from("/wt/my-app/feat/login"),
+                Outcome::UpToDate,
+                dirty_in_sync,
+            )]),
+        });
+        app.finish_pull(PullDone {
+            repo: 1,
+            result: Ok(vec![]),
+        });
+        assert_eq!(app.rows[1].wt.status_text(), "*");
+        assert_eq!(app.message.as_deref(), Some("pull: nothing to pull"));
+    }
+
+    #[test]
+    fn failed_repo_pull_suggests_the_cli() {
+        let mut app = App::new(test_repos());
+        pulling(&mut app);
+        app.finish_pull(PullDone {
+            repo: 0,
+            result: Err("cannot list worktrees".into()),
+        });
+        app.finish_pull(PullDone {
+            repo: 1,
+            result: Ok(vec![]),
+        });
+        assert_eq!(app.rows[0].wt.pull, Some(PullState::Failed));
+        assert_eq!(
+            app.message.as_deref(),
+            Some("pull: 2 failed, run wt pull for details")
+        );
+    }
+
+    #[test]
+    fn render_shows_pull_result_in_status_column() {
+        let mut app = App::new(test_repos());
+        app.rows[0].wt.pull = Some(PullState::Updated);
+        app.rows[2].wt.pull = Some(PullState::Skipped("diverged"));
+        let lines = screen(&app, 80, 5);
+        assert!(lines[0].ends_with("main        updated"), "{lines:?}");
+        assert!(lines[2].ends_with("main        ↓1 diverged"), "{lines:?}");
     }
 
     #[test]

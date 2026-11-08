@@ -3,6 +3,7 @@ mod commands;
 mod fuzzy;
 mod git;
 mod layout;
+mod report;
 mod terminal;
 mod tui;
 mod worktree;
@@ -40,6 +41,7 @@ fn main() -> ExitCode {
         Some(Command::List { all }) => commands::list::run(all),
         Some(Command::Remove { names, force }) => commands::rm::run(&names, force),
         Some(Command::Prune { dry_run }) => commands::prune::run(dry_run),
+        Some(Command::Pull) => commands::pull::run(),
         Some(Command::Link { files, force }) => commands::link::run(&files, force),
     };
 

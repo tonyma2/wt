@@ -3,79 +3,14 @@ use std::path::Path;
 
 use crate::git::{self, Git};
 use crate::layout;
-use crate::terminal::{self, Colors};
+use crate::report::{Group, Msg, Printer};
+use crate::terminal;
 use crate::worktree::{self, Status, Worktree};
-
-enum Msg {
-    Removed(String, String),
-    WouldRemove(String, String),
-    Skipping(String, String),
-    Note(String),
-    Error(String),
-}
-
-impl Msg {
-    fn render(&self, clr: &Colors) -> String {
-        let (color, verb, target, reason) = match self {
-            Msg::Removed(target, reason) => (clr.green, "removed", target, reason),
-            Msg::WouldRemove(target, reason) => (clr.yellow, "would remove", target, reason),
-            Msg::Skipping(target, reason) => (clr.yellow, "skipping", target, reason),
-            Msg::Note(text) => return format!("{}{text}{}", clr.dim, clr.reset),
-            Msg::Error(text) => return format!("{}{text}{}", clr.red, clr.reset),
-        };
-        format!(
-            "{color}{verb}{} {target} {}({reason}){}",
-            clr.reset, clr.dim, clr.reset
-        )
-    }
-}
-
-struct Printer {
-    clr: Colors,
-    started: bool,
-}
-
-impl Printer {
-    fn group(&mut self, header: Option<String>) -> Group<'_> {
-        Group {
-            printer: self,
-            header,
-            opened: false,
-        }
-    }
-}
-
-struct Group<'a> {
-    printer: &'a mut Printer,
-    header: Option<String>,
-    opened: bool,
-}
-
-impl Group<'_> {
-    fn emit(&mut self, msg: Msg) {
-        let clr = &self.printer.clr;
-        if !self.opened {
-            if self.printer.started {
-                eprintln!();
-            }
-            if let Some(header) = &self.header {
-                eprintln!("{}{header}:{}", clr.bold, clr.reset);
-            }
-            self.printer.started = true;
-            self.opened = true;
-        }
-        let indent = if self.header.is_some() { "  " } else { "" };
-        eprintln!("{indent}{}", msg.render(clr));
-    }
-}
 
 pub fn run(dry_run: bool) -> Result<(), String> {
     let cwd = layout::current_dir();
     let wt_root = layout::canonicalize_or_self(&layout::worktrees_root()?);
-    let mut printer = Printer {
-        clr: terminal::stderr_colors(),
-        started: false,
-    };
+    let mut printer = Printer::new();
 
     let mut failed = 0usize;
     let managed = layout::managed_worktrees(&wt_root);
@@ -169,12 +104,12 @@ fn prune_repo(
         if let Some(blocker) = blocker {
             out.emit(Msg::Skipping(target, format!("merged, {blocker}")));
         } else if dry_run {
-            out.emit(Msg::WouldRemove(target, "merged".into()));
+            out.emit(Msg::Planned("would remove", target, "merged".into()));
         } else if let Err(e) = remove(git, wt, branch, cwd) {
             out.emit(Msg::Error(e));
             failures += 1;
         } else {
-            out.emit(Msg::Removed(target, "merged".into()));
+            out.emit(Msg::Done("removed", target, "merged".into()));
         }
     }
 

@@ -147,6 +147,17 @@ impl Git {
         )
     }
 
+    // For the picker: no credential prompt may reach the terminal it holds in raw mode.
+    // SSH_ASKPASS_REQUIRE=force makes ssh ask SSH_ASKPASS instead of /dev/tty, and `false` declines.
+    pub fn fetch_remote_unattended(&self, remote: &str) -> Result<(), String> {
+        let mut cmd = self.cmd(["fetch", "--prune", remote]);
+        cmd.stdin(Stdio::null())
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", "false");
+        run(cmd, format!("cannot fetch from '{remote}'")).map(drop)
+    }
+
     pub fn remote_url(&self, remote: &str) -> Option<String> {
         query(self.cmd(["remote", "get-url", remote]))
     }
@@ -305,6 +316,17 @@ impl Git {
             .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
+    pub fn fast_forward(worktree_path: &Path) -> Result<(), String> {
+        run(
+            git_in(
+                worktree_path,
+                ["merge", "--ff-only", "--quiet", "@{upstream}"],
+            ),
+            "cannot fast-forward",
+        )
+        .map(drop)
+    }
+
     pub fn tracks(worktree_path: &Path, path: &str) -> Result<bool, String> {
         run(
             git_in(
@@ -372,6 +394,14 @@ impl Git {
         query(self.cmd([
             "for-each-ref",
             "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ]))
+    }
+
+    pub fn upstream_remote(&self, branch: &str) -> Option<String> {
+        query(self.cmd([
+            "for-each-ref",
+            "--format=%(upstream:remotename)",
             &format!("refs/heads/{branch}"),
         ]))
     }

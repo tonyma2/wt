@@ -84,6 +84,17 @@ pub enum Command {
         #[arg(long, short = 'n')]
         dry_run: bool,
     },
+    /// Fast-forward every worktree to its upstream
+    #[command(
+        long_about = "Fast-forward every worktree to its upstream.\n\n\
+            Fetches each remote that a checked-out branch tracks, once per repo, then \
+            fast-forwards each clean worktree that is behind its upstream. Never merges or \
+            rebases: worktrees with local changes, a diverged branch, or a deleted upstream \
+            are skipped and reported. Worktrees without an upstream are left alone.\n\n\
+            Covers every repo with a worktree under ~/.wt/worktrees/.",
+        after_help = "Examples:\n  wt pull"
+    )]
+    Pull,
     /// Set up shell integration (completions + directory switching)
     #[command(
         long_about = "Set up shell integration.\n\

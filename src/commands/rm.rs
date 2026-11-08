@@ -32,11 +32,24 @@ struct Target {
 }
 
 fn remove_one(name_or_path: &str, force: bool) -> Result<(), String> {
-    let Target {
+    let message = remove(resolve_target(name_or_path)?, force, "--force")?;
+    eprintln!("{message}");
+    Ok(())
+}
+
+pub fn remove_unforced(path: &Path) -> Result<String, String> {
+    remove(resolve_path(path)?, false, "wt rm --force")
+}
+
+fn remove(
+    Target {
         path: target,
         admin,
         worktrees,
-    } = resolve_target(name_or_path)?;
+    }: Target,
+    force: bool,
+    force_hint: &str,
+) -> Result<String, String> {
     let git = Git::new(&admin);
 
     let wt = worktree::find_by_path(&worktrees, &target)
@@ -69,7 +82,7 @@ fn remove_one(name_or_path: &str, force: bool) -> Result<(), String> {
 
     if wt.locked && !force {
         return Err(format!(
-            "cannot remove {label}: worktree is locked, use --force to remove"
+            "cannot remove {label}: worktree is locked, use {force_hint} to remove"
         ));
     }
 
@@ -92,14 +105,14 @@ fn remove_one(name_or_path: &str, force: bool) -> Result<(), String> {
     if !force {
         if Status::of(wt).dirty {
             return Err(format!(
-                "cannot remove {label}: worktree has local changes, use --force to remove"
+                "cannot remove {label}: worktree has local changes, use {force_hint} to remove"
             ));
         }
         if let Some(branch) = delete_branch
             && !git.is_branch_merged(branch)
         {
             return Err(format!(
-                "cannot remove {label}: branch is not fully merged, use --force to delete it"
+                "cannot remove {label}: branch is not fully merged, use {force_hint} to delete it"
             ));
         }
     }
@@ -109,16 +122,15 @@ fn remove_one(name_or_path: &str, force: bool) -> Result<(), String> {
     layout::cleanup_empty_parent(&target, cwd.as_deref());
 
     let path_display = terminal::tilde_path(&target);
-    if let Some(branch) = delete_branch {
+    Ok(if let Some(branch) = delete_branch {
         git.delete_branch(branch)?;
         let was = sha.map(|sha| format!(", was {sha}")).unwrap_or_default();
-        eprintln!("removed worktree and branch '{branch}' ({path_display}{was})");
+        format!("removed worktree and branch '{branch}' ({path_display}{was})")
     } else if let (Some(branch), Some(reason)) = (branch, kept) {
-        eprintln!("removed worktree ({path_display}), kept branch '{branch}'{reason}");
+        format!("removed worktree ({path_display}), kept branch '{branch}'{reason}")
     } else {
-        eprintln!("removed worktree ({path_display})");
-    }
-    Ok(())
+        format!("removed worktree ({path_display})")
+    })
 }
 
 fn resolve_target(name_or_path: &str) -> Result<Target, String> {
@@ -174,4 +186,59 @@ fn resolve_path(input: &Path) -> Result<Target, String> {
         admin,
         worktrees,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::{Command, Stdio};
+
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "git {args:?} failed");
+    }
+
+    #[test]
+    fn picker_removal_points_at_the_cli_to_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let feat = tmp.path().join("feat");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        );
+        git(
+            &repo,
+            &["worktree", "add", "-b", "feat", feat.to_str().unwrap()],
+        );
+        std::fs::write(feat.join("wip.txt"), "wip").unwrap();
+
+        assert_eq!(
+            remove_unforced(&feat),
+            Err(
+                "cannot remove 'feat': worktree has local changes, use wt rm --force to remove"
+                    .into()
+            )
+        );
+        assert!(feat.exists());
+    }
 }

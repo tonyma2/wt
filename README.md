@@ -8,6 +8,7 @@ wt clone <url>              # clone a repo and create the first worktree
 wt switch my-feature        # cd into the branch's worktree, creating branch and worktree if needed
 wt switch hotfix v1.0       # start a new branch from a branch, tag, or commit
 wt prune                    # clean up worktrees for merged branches
+wt pull                     # fast-forward every worktree to its upstream
 ```
 
 ## Install
@@ -41,11 +42,12 @@ wt init fish | source
 | `wt list [--all]` | `ls` | List worktrees (across all repos with `--all`) |
 | `wt remove <branch>` | `rm` | Remove worktree, and its branch if merged |
 | `wt prune` | | Remove worktrees whose pushed branches were merged or squash-merged |
+| `wt pull` | | Fast-forward every clean worktree that is behind its upstream, across all repos |
 | `wt link <file>` | `ln` | Share untracked files (e.g. `.env`) across worktrees |
 
 ## Highlights
 
-- **Interactive picker** — run bare `wt` to browse all repos and worktrees with fuzzy search, status indicators, and keyboard navigation
+- **Interactive picker** — run bare `wt` to browse all repos and worktrees with fuzzy search, status indicators, and keyboard navigation; `^x` (twice) removes the highlighted worktree, `^r` pulls everything in the background
 - **Typo detection** — misspell a branch name and `wt` suggests the closest match before creating anything
 - **Shared files** — `wt link .env` moves the file into the repo's git directory and symlinks it into every worktree, including new ones, so removing a worktree never loses it
 - **Script-friendly** — stdout is always data (paths); messages go to stderr

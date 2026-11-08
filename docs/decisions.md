@@ -6,9 +6,9 @@ Intentional choices that look like they could be "improved." Read the rationale 
 
 No `anyhow`, `thiserror`, or custom error enums. Every error is a `String` that exits 1. Typed error recovery adds complexity with no benefit — the binary never catches and branches on error variants.
 
-## Do not "fix" `worktree_status()`, `tracks()`, or `is_ignored()` to match other `Git` methods
+## Do not "fix" `worktree_status()`, `fast_forward()`, `tracks()`, or `is_ignored()` to match other `Git` methods
 
-All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check), `tracks()` (the tracked-file check in `link`), and `is_ignored()` (`link`'s not-gitignored warning) run `git -C <worktree_path>` instead. This is correct: `git status`, `git ls-files`, and `git check-ignore` report the tree and index they're pointed at, so running them against the admin repo silently gives the wrong answer (or fails, for a bare repo).
+All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status::of()`, the only dirty check), `fast_forward()` (`pull`'s `merge --ff-only`), `tracks()` (the tracked-file check in `link`), and `is_ignored()` (`link`'s not-gitignored warning) run `git -C <worktree_path>` instead. This is correct: `git status`, `git merge`, `git ls-files`, and `git check-ignore` act on the tree and index they're pointed at, so running them against the admin repo silently gives the wrong answer (or fails, for a bare repo).
 
 ## Do not split `switch` into separate checkout and create commands
 
@@ -92,6 +92,24 @@ Renaming a main checkout breaks the `.git` file of every linked worktree, and no
 
 - Plain `git worktree repair` also rewrites links that point at a *different, valid* repo. Run in a `cp -R` copy of a checkout, it repoints the original's worktrees at the copy. A link is only touched when its target is gone
 - The check costs one `git worktree list` per invocation; `init` and `clone` skip it because `init` runs on every shell startup and `clone` never runs inside the repo it acts on
+
+## Do not let `pull` merge, rebase, or touch local changes
+
+`pull` runs over every worktree of every repo at once, so it only does what needs no decision: fast-forward a clean worktree that is behind its upstream and not ahead of it. Everything else is skipped and reported, never attempted:
+
+- Dirty worktrees (including untracked files, and a stopped merge or cherry-pick) that are behind are skipped, though `merge --ff-only` would refuse an overlapping change anyway: files changing under an open editor or a running dev server mid-work is the surprise to avoid. A dirty worktree with nothing to pull is just up to date; diverged and gone upstreams are reported as such, since local changes aren't what stops them
+- Diverged branches are skipped rather than merged or rebased; a deleted upstream is reported as "upstream gone"
+- Detached worktrees (including mid-rebase) and branches without an upstream are left out silently
+- Each remote a checked-out branch tracks is fetched once per repo, not just `origin` and not `--all`: a branch tracking `upstream/main` updates, and a dead extra remote can't fail the run. If a fetch fails, the worktrees tracking that remote are skipped rather than fast-forwarded to stale refs, and the run exits 1
+- Branches without a worktree are not updated: nothing reads them, since new branches start from `origin/<default>`
+
+## Do not let the picker prompt for credentials
+
+The picker holds the terminal in raw mode, so a credential or SSH passphrase prompt would hang or garble it, and parallel fetches would interleave their output. Its pull fetches with stdin closed, output captured, `GIT_TERMINAL_PROMPT=0`, and `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false`, which makes ssh decline passphrase and unknown-host-key prompts instead of reading `/dev/tty`. A repo that needs a prompt shows "fetch failed", and the summary points at `wt pull`, which streams git's output and can prompt. Quitting mid-pull doesn't wait: the captured git processes write nothing more and finish on their own.
+
+## Do not drop the picker's remove confirmation
+
+^x asks for a second ^x; any other key cancels and is swallowed. Removal uses `wt rm`'s checks without `--force`, so only clean, merged worktrees go, but `git worktree remove` still deletes gitignored files (`node_modules`, build output, a hand-made `.env`), and a stray key shouldn't cost those. There is no force from the picker; `wt rm --force` is the deliberate path. Remove is refused while a pull is running, since a pull may be fast-forwarding that worktree.
 
 ## Do not add flags to `prune`
 
