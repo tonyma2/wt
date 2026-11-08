@@ -182,6 +182,28 @@ fn fetch_failure_skips_the_repo_and_fails() {
 }
 
 #[test]
+fn unreadable_status_fails_instead_of_skipping() {
+    let (home, repo, origin) = setup_with_origin();
+    let feat = pushed_worktree(home.path(), &repo, "feat");
+    push_from_clone(home.path(), &origin, "feat", 1);
+    let index = assert_git_stdout_success(
+        &feat,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    );
+    std::fs::write(index.trim(), "corrupt").unwrap();
+
+    let output = pull(home.path());
+    assert_exit_code(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("  cannot pull 'feat': cannot read git status\n"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("upstream gone"), "{stderr}");
+    assert!(stderr.ends_with("cannot pull 1 repo\n"), "{stderr}");
+}
+
+#[test]
 fn fetches_each_tracked_remote() {
     let (home, repo, origin) = setup_with_origin();
     let upstream = home.path().join("upstream.git");
@@ -213,4 +235,19 @@ fn nothing_to_pull_prints_nothing() {
     assert_exit_code(&output, 0);
     assert_stdout_empty(&output);
     assert_stderr_empty(&output);
+}
+
+#[test]
+fn explains_missing_repo() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat");
+    std::fs::rename(&repo, home.path().join("moved")).unwrap();
+
+    let output = pull(home.path());
+    assert_exit_code(&output, 0);
+    assert_stdout_empty(&output);
+    assert_stderr_exact(
+        &output,
+        "cannot find ~/repo: if the repo moved, run wt inside it to reconnect its worktrees\n",
+    );
 }

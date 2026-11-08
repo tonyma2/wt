@@ -214,7 +214,7 @@ fn warns_when_regular_file_exists() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "moved .env into ~/repo/.git/wt/links/.env\n\
-         skipped .env in 'feat-conflict': already exists, use --force to replace\n"
+         skipped .env in 'feat-conflict': already exists, use `wt link --force .env` to replace\n"
     );
 
     assert!(
@@ -422,6 +422,29 @@ fn auto_links_on_switch_creation() {
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false),
         ".env should be auto-linked in switch-created worktree"
+    );
+}
+
+#[test]
+fn auto_link_skip_on_switch_points_at_wt_link() {
+    let (home, repo) = setup();
+    assert_git_success(&repo, &["switch", "-c", "env-tracked"]);
+    std::fs::write(repo.join(".env"), "COMMITTED=1").unwrap();
+    assert_git_success(&repo, &["add", ".env"]);
+    assert_git_success(&repo, &["commit", "-m", "track env"]);
+    assert_git_success(&repo, &["switch", "main"]);
+    std::fs::write(repo.join(".env"), "SECRET=abc").unwrap();
+    assert!(wt_link(home.path(), &repo, &[".env"]).status.success());
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "env-tracked"]).current_dir(&repo);
+    });
+
+    assert!(output.status.success());
+    assert_stderr_exact(
+        &output,
+        "checking out 'env-tracked'\n\
+         skipped .env in 'env-tracked': already exists, use `wt link --force .env` to replace\n",
     );
 }
 

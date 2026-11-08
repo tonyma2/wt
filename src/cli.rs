@@ -22,7 +22,7 @@ pub enum Command {
             If the branch exists (local or remote) but has no worktree, checks it out into a new one.\n\
             If no branch with this name exists and no similar branch exists, creates one from HEAD.\n\
             If a similar branch name exists (possible typo), errors with a suggestion.\n\
-            Use --create to skip the typo check and force creation.\n\
+            Use --create to skip the typo and not-a-branch checks and force creation.\n\
             Provide [base] to create the branch from a specific start point (branch, tag, or commit).\n\
             Worktrees are created under ~/.wt/worktrees/<id>/<repo>/.",
         after_help = "Examples:\n  wt switch feat/login\n  wt s feat/login\n  wt switch -c feat/logn\n  wt switch feat/login develop\n  wt switch hotfix v1.0\n  cd \"$(wt switch feat/login)\""
@@ -32,7 +32,7 @@ pub enum Command {
         name: String,
         /// Start point for a new branch
         base: Option<String>,
-        /// Create a new branch, skipping the similar-name check
+        /// Create a new branch, skipping the similar-name and not-a-branch checks
         #[arg(short = 'c', long = "create")]
         create: bool,
     },

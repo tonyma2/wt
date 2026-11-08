@@ -209,6 +209,7 @@ fn switch_alias_works() {
 fn switch_skips_prunable_worktree() {
     let (home, repo) = setup();
     let path = wt_new(home.path(), &repo, "feat/prunable");
+    let shown = tilde(home.path(), &path);
 
     std::fs::remove_dir_all(&path).unwrap();
     if let Some(parent) = path.parent() {
@@ -222,7 +223,7 @@ fn switch_skips_prunable_worktree() {
     assert!(output.status.success());
     assert_stderr_exact(
         &output,
-        "pruning stale worktree metadata\nchecking out 'feat/prunable'\n",
+        &format!("removing stale worktree metadata ({shown})\nchecking out 'feat/prunable'\n"),
     );
 
     let new_path = parse_wt_new_path(&output);
@@ -231,6 +232,23 @@ fn switch_skips_prunable_worktree() {
         canonical(&new_path),
         canonical(&path),
         "should create a new worktree, not return the stale path"
+    );
+}
+
+#[test]
+fn switch_keeps_metadata_of_other_missing_worktrees() {
+    let (home, repo) = setup();
+    let blocking = wt_new(home.path(), &repo, "feat/blocking");
+    let unmounted = wt_new(home.path(), &repo, "feat/unmounted");
+    std::fs::remove_dir_all(&blocking).unwrap();
+    std::fs::remove_dir_all(&unmounted).unwrap();
+
+    wt_switch(home.path(), &repo, "feat/blocking");
+
+    let listed = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains("branch refs/heads/feat/unmounted"),
+        "metadata of an unrelated missing worktree should be kept: {listed}"
     );
 }
 
@@ -293,9 +311,35 @@ fn switch_rejects_sha() {
     assert_stderr_exact(
         &output,
         &format!(
-            "'{sha}' is not a branch, use `wt switch <branch> {sha}` to start a branch from it\n"
+            "'{sha}' is not a branch, use `wt switch <branch> {sha}` to start a branch from it, or `wt switch -c {sha}` to create a branch named '{sha}'\n"
         ),
     );
+}
+
+#[test]
+fn switch_create_flag_allows_name_matching_short_sha() {
+    let (home, repo) = setup();
+    let sha = assert_git_stdout_success(&repo, &["rev-parse", "--short=7", "HEAD"]);
+    let name = sha.trim();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", name]).current_dir(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        &format!(
+            "'{name}' is not a branch, use `wt switch <branch> {name}` to start a branch from it, or `wt switch -c {name}` to create a branch named '{name}'\n"
+        ),
+    );
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["switch", "-c", name]).current_dir(&repo);
+    });
+    assert!(output.status.success());
+    assert_stderr_exact(&output, &format!("creating branch '{name}' from 'main'\n"));
+    assert!(parse_wt_new_path(&output).exists());
+    assert_branch_present(&repo, name);
 }
 
 #[test]

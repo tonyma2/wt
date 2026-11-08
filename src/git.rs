@@ -289,14 +289,6 @@ impl Git {
         run(cmd, "cannot reconnect worktrees").map(drop)
     }
 
-    pub fn prune_worktrees(&self) -> Result<(), String> {
-        run(
-            self.cmd(["worktree", "prune"]),
-            "cannot prune worktree metadata",
-        )
-        .map(drop)
-    }
-
     pub fn worktree_status(worktree_path: &Path) -> Option<String> {
         let output = git_in(
             worktree_path,

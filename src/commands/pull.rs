@@ -15,12 +15,10 @@ pub enum Outcome {
 }
 
 pub fn run() -> Result<(), String> {
-    let wt_root = layout::canonicalize_or_self(&layout::worktrees_root()?);
-    let managed = layout::managed_worktrees(&wt_root);
     let mut printer = Printer::new();
 
     let mut failed = 0usize;
-    for repo_path in layout::admin_repos(&managed).iter().filter(|p| p.exists()) {
+    for repo_path in &worktree::reachable_admin_repos(&layout::worktrees_root()?) {
         let mut out = printer.group(Some(terminal::tilde_path(repo_path)));
         let git = Git::new(repo_path);
         let results = pull_repo(&git, |remote| {
@@ -121,7 +119,9 @@ pub fn pull_repo(
 }
 
 fn fast_forward(wt: &Worktree) -> Outcome {
-    let status = Status::of(wt);
+    let Some(status) = Status::read(wt) else {
+        return Outcome::Failed("cannot read git status".into());
+    };
     match (status.ahead, status.behind) {
         (_, None) => Outcome::Skipped("upstream gone"),
         (_, Some(0)) => Outcome::UpToDate,

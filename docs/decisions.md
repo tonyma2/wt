@@ -16,7 +16,7 @@ All `Git` methods run `git -C <admin_repo>`. `worktree_status()` (behind `Status
 
 ## Do not check out tags or SHAs as detached worktrees
 
-`wt switch v1.0` errors and suggests `wt switch <branch> v1.0`. A detached worktree has no name to look it up by, so supporting them meant a second resolution path (ref → SHA → matching detached `HEAD`) in `rm` and zsh completion. Starting a branch from the ref covers the use case; `git worktree add --detach` still works for a one-off, and `wt rm <path>` removes it. Worktrees that become detached (mid-rebase, `git checkout --detach`) are still listed and removable by path.
+`wt switch v1.0` errors and suggests `wt switch <branch> v1.0`. A name that only matches an abbreviated commit hash (a ticket number like `1234`) also suggests `-c`, which skips this check and creates a branch with that name. A detached worktree has no name to look it up by, so supporting them meant a second resolution path (ref → SHA → matching detached `HEAD`) in `rm` and zsh completion. Starting a branch from the ref covers the use case; `git worktree add --detach` still works for a one-off, and `wt rm <path>` removes it. Worktrees that become detached (mid-rebase, `git checkout --detach`) are still listed and removable by path.
 
 ## Do not print human-readable messages to stdout
 
@@ -82,7 +82,7 @@ On non-zero exit, `fetch_remote` returns only a short context error (`cannot fet
 - `origin` is fetched first so a merge made on the remote counts. If the fetch fails, local refs are used, which can only make prune miss a branch, never remove one it shouldn't
 - The default branch and the branch the repo's `HEAD` points at are never removed. `HEAD` covers bare repos
 - Orphans (a `.git` file pointing at a missing repo) are only reported: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work. The report says to run `wt` inside a moved repo to reconnect it. A worktree that contains another worktree (e.g. Claude Code's `.claude/worktrees/`) is kept, since removing it deletes the inner one; `rm` refuses it even with `--force`
-- `prune` doesn't run `git worktree prune`: it would drop the metadata of a worktree renamed by hand or on an unmounted volume, after which `git worktree repair` can't reconnect it. git's gc expires stale entries on its own, `switch` prunes one that blocks a branch, and `wt rm` removes one by branch or path
+- `prune` doesn't run `git worktree prune`: it would drop the metadata of a worktree renamed by hand or on an unmounted volume, after which `git worktree repair` can't reconnect it. git's gc expires stale entries on its own, `switch` removes only the stale entry that blocks its branch, and `wt rm` removes one by branch or path
 
 Accepted gap: `git worktree remove` deletes gitignored files (build output, a hand-made `.env`). Treating them as dirty would block nearly every removal; files shared via `wt link` are symlinks in every worktree, so removal never touches the shared copy.
 

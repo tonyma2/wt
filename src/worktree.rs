@@ -49,13 +49,14 @@ impl Status {
         if wt.bare || wt.prunable {
             return Self::default();
         }
-        Git::worktree_status(&wt.path).map_or(
-            Self {
-                dirty: true,
-                ..Self::default()
-            },
-            |text| Self::parse(&text),
-        )
+        Self::read(wt).unwrap_or(Self {
+            dirty: true,
+            ..Self::default()
+        })
+    }
+
+    pub fn read(wt: &Worktree) -> Option<Self> {
+        Git::worktree_status(&wt.path).map(|text| Self::parse(&text))
     }
 
     fn parse(porcelain_v2: &str) -> Self {
@@ -135,6 +136,7 @@ fn parse_record(record: &str) -> Option<Worktree> {
 pub fn resolve_worktree<'a>(
     worktrees: &'a [Worktree],
     name: &str,
+    ambiguous_hint: &str,
 ) -> Result<Option<&'a Worktree>, String> {
     let matches: Vec<_> = worktrees
         .iter()
@@ -142,12 +144,12 @@ pub fn resolve_worktree<'a>(
         .collect();
     match matches.as_slice() {
         [one] => Ok(Some(one)),
-        [_, _, ..] => Err(ambiguous_error(name, &matches, "specify a path instead")),
+        [_, _, ..] => Err(ambiguous_error(name, &matches, ambiguous_hint)),
         [] => Ok(None),
     }
 }
 
-pub fn ambiguous_error(name: &str, matches: &[&Worktree], hint: &str) -> String {
+fn ambiguous_error(name: &str, matches: &[&Worktree], hint: &str) -> String {
     let mut msg = format!("ambiguous name '{name}'; matches:\n");
     for m in matches {
         let _ = writeln!(msg, "  - {}", terminal::tilde_path(&m.path));
@@ -267,7 +269,7 @@ pub(crate) fn reconnect_moved_repo(dir: &Path) {
     }
 }
 
-pub(crate) fn load_all(wt_root: &Path) -> Vec<RepoInfo> {
+pub(crate) fn reachable_admin_repos(wt_root: &Path) -> Vec<PathBuf> {
     let (admin_repos, missing): (Vec<_>, Vec<_>) =
         layout::admin_repos(&layout::managed_worktrees(&canonicalize_or_self(wt_root)))
             .into_iter()
@@ -281,7 +283,11 @@ pub(crate) fn load_all(wt_root: &Path) -> Vec<RepoInfo> {
             clr.reset
         );
     }
+    admin_repos
+}
 
+pub(crate) fn load_all(wt_root: &Path) -> Vec<RepoInfo> {
+    let admin_repos = reachable_admin_repos(wt_root);
     let mut repos: Vec<RepoInfo> = std::thread::scope(|s| {
         let handles: Vec<_> = admin_repos
             .iter()
@@ -642,7 +648,9 @@ prunable gitdir file points to non-existent location
         fs::create_dir(&dir).unwrap();
         let wts = [make_worktree(dir.clone(), Some("feat"))];
 
-        let found = resolve_worktree(&wts, "feat").unwrap().unwrap();
+        let found = resolve_worktree(&wts, "feat", "specify a path instead")
+            .unwrap()
+            .unwrap();
         assert_eq!(found.path, dir);
     }
 
@@ -658,7 +666,7 @@ prunable gitdir file points to non-existent location
             make_worktree(b.clone(), Some("feat")),
         ];
 
-        let err = resolve_worktree(&wts, "feat").unwrap_err();
+        let err = resolve_worktree(&wts, "feat", "specify a path instead").unwrap_err();
         assert_eq!(
             err,
             format!(
@@ -676,7 +684,11 @@ prunable gitdir file points to non-existent location
         fs::create_dir(&dir).unwrap();
         let wts = [make_worktree(dir, Some("main"))];
 
-        assert!(resolve_worktree(&wts, "other").unwrap().is_none());
+        assert!(
+            resolve_worktree(&wts, "other", "specify a path instead")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

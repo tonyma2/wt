@@ -26,25 +26,12 @@ pub fn run(name: &str, base: Option<&str>, create: bool) -> Result<(), String> {
         return create_worktree(&git, &repo_root, &worktrees, name, Start::NewBranch(base));
     }
 
-    let live: Vec<_> = worktrees
-        .iter()
-        .filter(|wt| wt.branch.as_deref() == Some(name) && wt.live())
-        .collect();
-
-    match live.as_slice() {
-        [one] => {
-            println!("{}", one.path.display());
-            terminal::print_cd_hint(&one.path);
-            return Ok(());
-        }
-        [_, _, ..] => {
-            return Err(worktree::ambiguous_error(
-                name,
-                &live,
-                "remove duplicates with `wt rm`",
-            ));
-        }
-        [] => {}
+    if let Some(existing) =
+        worktree::resolve_worktree(&worktrees, name, "remove duplicates with `wt rm`")?
+    {
+        println!("{}", existing.path.display());
+        terminal::print_cd_hint(&existing.path);
+        return Ok(());
     }
 
     let is_local = git.has_local_branch(name);
@@ -61,9 +48,15 @@ pub fn run(name: &str, base: Option<&str>, create: bool) -> Result<(), String> {
     }
 
     let is_branch = is_local || !remotes.is_empty();
-    if !is_branch && git.rev_parse(name).is_some() {
+    if !is_branch && !create && git.rev_parse(name).is_some() {
+        // Not a ref, so it only matched as an abbreviated commit hash, e.g. a ticket number.
+        let create_hint = if git.full_ref(name).is_none() {
+            format!(", or `wt switch -c {name}` to create a branch named '{name}'")
+        } else {
+            String::new()
+        };
         return Err(format!(
-            "'{name}' is not a branch, use `wt switch <branch> {name}` to start a branch from it"
+            "'{name}' is not a branch, use `wt switch <branch> {name}` to start a branch from it{create_hint}"
         ));
     }
 
@@ -104,12 +97,17 @@ fn create_worktree(
     name: &str,
     start: Start,
 ) -> Result<(), String> {
-    if worktrees
+    // Only the entries blocking this branch: `git worktree prune` would also drop worktrees
+    // that were renamed or sit on an unmounted volume.
+    for stale in worktrees
         .iter()
-        .any(|wt| wt.prunable && wt.branch.as_deref() == Some(name))
+        .filter(|wt| wt.prunable && wt.branch.as_deref() == Some(name))
     {
-        eprintln!("pruning stale worktree metadata");
-        git.prune_worktrees()?;
+        eprintln!(
+            "removing stale worktree metadata ({})",
+            terminal::tilde_path(&stale.path)
+        );
+        git.remove_worktree(&stale.path, false)?;
     }
 
     let new_branch = matches!(start, Start::NewBranch(_));

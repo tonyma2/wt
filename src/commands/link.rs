@@ -177,7 +177,9 @@ fn link_into(source: &Path, wt: &Worktree, file: &str, force: bool) -> Result<()
         }
         let dangling = !dest.exists();
         if !force && !dangling {
-            eprintln!("skipped {file} in {label}: already exists, use --force to replace");
+            eprintln!(
+                "skipped {file} in {label}: already exists, use `wt link --force {file}` to replace"
+            );
             return Ok(());
         }
         remove_dest(&dest).map_err(|e| format!("cannot remove {file} in {label}: {e}"))?;

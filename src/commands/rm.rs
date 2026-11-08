@@ -145,13 +145,14 @@ fn resolve_target(name_or_path: &str) -> Result<Target, String> {
     let worktrees = worktree::parse_porcelain(&git.list_worktrees()?);
 
     let absolute = std::path::absolute(input).ok();
-    let found = worktree::resolve_worktree(&worktrees, name_or_path)?.or_else(|| {
-        worktrees.iter().find(|wt| {
-            wt.prunable
-                && (wt.branch.as_deref() == Some(name_or_path)
-                    || absolute.as_ref() == Some(&wt.path))
-        })
-    });
+    let found = worktree::resolve_worktree(&worktrees, name_or_path, "specify a path instead")?
+        .or_else(|| {
+            worktrees.iter().find(|wt| {
+                wt.prunable
+                    && (wt.branch.as_deref() == Some(name_or_path)
+                        || absolute.as_ref() == Some(&wt.path))
+            })
+        });
     if let Some(wt) = found {
         return Ok(Target {
             path: wt.path.clone(),
