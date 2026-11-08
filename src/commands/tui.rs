@@ -4,11 +4,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::text::{Line, Span, Text};
 
 use crate::commands::pull::{self, Outcome};
 use crate::commands::rm;
@@ -411,9 +410,6 @@ impl App {
 }
 
 fn handle_key(app: &mut App, key: event::KeyEvent) {
-    if key.kind != KeyEventKind::Press {
-        return;
-    }
     app.message = None;
     app.message_expires = None;
     let remove_key =
@@ -668,7 +664,7 @@ fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(EMPTY_HINT.dim(), rows_area);
     } else {
         let lines = row_lines(app, rows_area.width, rows_area.height.into());
-        frame.render_widget(Paragraph::new(lines), rows_area);
+        frame.render_widget(Text::from(lines), rows_area);
     }
     if let Some(row) = app.selected_row() {
         let path = trunc_tail(&row.wt.display_path, detail_area.width.into());
@@ -814,13 +810,13 @@ fn wait_for_event(app: &mut App) -> io::Result<()> {
         {
             continue;
         }
-        match event::read()? {
-            Event::Key(key) => {
-                handle_key(app, key);
-                return Ok(());
-            }
-            Event::Resize(..) => return Ok(()),
-            _ => {}
+        let event = event::read()?;
+        if let Some(key) = event.as_key_press_event() {
+            handle_key(app, key);
+            return Ok(());
+        }
+        if matches!(event, Event::Resize(..)) {
+            return Ok(());
         }
     }
 }

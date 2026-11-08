@@ -5,6 +5,8 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 
 pub type StdoutTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
+// Not ratatui::try_init_with_options: its restore leaves the alternate screen, which an inline
+// viewport never entered, and some terminals then restore a cursor position that was never saved.
 fn init(height: u16) -> io::Result<StdoutTerminal> {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

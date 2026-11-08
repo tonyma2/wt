@@ -145,9 +145,9 @@ pub fn width() -> usize {
         return usize::MAX;
     }
     width_from(columns.or_else(|| {
-        terminal::window_size()
+        terminal::size()
             .ok()
-            .map(|ws| ws.columns)
+            .map(|(cols, _)| cols)
             .filter(|&cols| cols > 0)
     }))
 }
