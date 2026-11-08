@@ -1,194 +1,147 @@
-use std::path::{Path, PathBuf};
-
-use serde::Serialize;
-
 use crate::git::Git;
-use crate::terminal::{self, Colors, trunc, trunc_tail};
+use crate::layout;
+use crate::terminal::{self, Colors, display_width, pad, trunc, trunc_tail};
 use crate::worktree::{self, WorktreeInfo};
 
-#[derive(Serialize)]
-struct WorktreeEntry {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    repo: Option<String>,
-    name: String,
-    path: String,
-    branch: Option<String>,
-    head: String,
-    bare: bool,
-    detached: bool,
-    locked: bool,
-    prunable: bool,
-    dirty: bool,
-    ahead: Option<u64>,
-    behind: Option<u64>,
-    current: bool,
-}
-
-pub fn run(repo: Option<&Path>, json: bool, all: bool) -> Result<(), String> {
+pub fn run(all: bool) -> Result<(), String> {
     if all {
-        return run_all(json);
+        return run_all();
     }
 
-    let repo_root = Git::find_repo(repo)?;
-
-    let output = Git::new(&repo_root).list_worktrees()?;
-    let worktrees = worktree::parse_porcelain(&output);
-    let cwd = resolve_cwd();
-    let current_path = worktree::find_current_worktree(&worktrees, cwd.as_deref());
-
-    let infos = worktree::enrich_worktrees(&worktrees, current_path.as_deref());
-
-    if json {
-        let entries = build_json_entries(&infos, None);
-        let json_str =
-            serde_json::to_string(&entries).map_err(|e| format!("cannot serialize json: {e}"))?;
-        println!("{json_str}");
-        return Ok(());
+    let repo_root = Git::find_repo(None)?;
+    let worktrees = worktree::parse_porcelain(&Git::new(&repo_root).list_worktrees()?);
+    let mut infos = worktree::enrich_worktrees(&worktrees);
+    if let Some(cwd) = layout::current_dir() {
+        worktree::mark_current(&mut infos, &cwd);
     }
 
-    let cols = terminal::width();
     let clr = terminal::colors();
-    print_table(&infos, cols, &clr, "");
-
+    let rows = table_rows(&infos, &clr);
+    let widths = Widths::fit(&rows, terminal::width(), 0);
+    print_table(&rows, &widths, &clr, "");
     Ok(())
 }
 
-fn run_all(json: bool) -> Result<(), String> {
-    let repos = worktree::load_all(&worktree::worktrees_root()?)?;
-    if repos.is_empty() {
-        if json {
-            println!("[]");
-        }
-        return Ok(());
-    }
-
-    if json {
-        let entries: Vec<_> = repos
-            .iter()
-            .flat_map(|repo| build_json_entries(&repo.worktrees, Some(&repo.name)))
-            .collect();
-        let json_str =
-            serde_json::to_string(&entries).map_err(|e| format!("cannot serialize json: {e}"))?;
-        println!("{json_str}");
-    } else {
-        let cols = terminal::width();
-        let clr = terminal::colors();
-        for (i, repo) in repos.iter().enumerate() {
-            if i > 0 {
-                println!();
-            }
-            println!("{}{}:{}", clr.bold, repo.name, clr.reset);
-            print_table(&repo.worktrees, cols, &clr, "  ");
-        }
-    }
-
-    Ok(())
-}
-
-fn resolve_cwd() -> Option<PathBuf> {
-    std::env::current_dir()
-        .ok()
-        .and_then(|p| p.canonicalize().ok())
-}
-
-fn build_json_entries(worktrees: &[WorktreeInfo], repo_name: Option<&str>) -> Vec<WorktreeEntry> {
-    worktrees
+fn run_all() -> Result<(), String> {
+    let repos = worktree::load_all(&layout::worktrees_root()?);
+    let clr = terminal::colors();
+    let tables: Vec<_> = repos
         .iter()
-        .map(|wt| {
-            let path = wt.path.to_string_lossy().into_owned();
-            let branch = wt.branch.clone();
-            let name = branch.clone().unwrap_or_else(|| path.clone());
-            WorktreeEntry {
-                repo: repo_name.map(|s| s.to_string()),
-                name,
-                path,
-                branch,
-                head: wt.head.clone(),
-                bare: wt.bare,
-                detached: wt.detached,
-                locked: wt.locked,
-                prunable: wt.prunable,
-                dirty: wt.dirty,
-                ahead: wt.ahead,
-                behind: wt.behind,
-                current: wt.current,
+        .map(|repo| (&repo.name, table_rows(&repo.worktrees, &clr)))
+        .collect();
+    let widths = Widths::fit(
+        tables.iter().flat_map(|(_, rows)| rows),
+        terminal::width(),
+        GROUP_INDENT.len(),
+    );
+    for (i, (name, rows)) in tables.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        println!("{}{name}:{}", clr.bold, clr.reset);
+        print_table(rows, &widths, &clr, GROUP_INDENT);
+    }
+    Ok(())
+}
+
+const GROUP_INDENT: &str = "  ";
+const BRANCH_MIN: usize = 10;
+const PATH_MIN: usize = 20;
+// "* " marker plus two 3-space column gaps
+const FIXED_W: usize = 2 + 3 + 3;
+
+struct Row<'a> {
+    current: bool,
+    branch: &'a str,
+    status: String,
+    path: String,
+    badges: Vec<(&'static str, &'static str)>,
+}
+
+impl Row<'_> {
+    fn badges_width(&self) -> usize {
+        self.badges.iter().map(|(text, _)| text.len() + 2).sum()
+    }
+}
+
+fn table_rows<'a>(worktrees: &'a [WorktreeInfo], clr: &Colors) -> Vec<Row<'a>> {
+    let mut infos: Vec<&WorktreeInfo> = worktrees.iter().filter(|i| !i.worktree.bare).collect();
+    infos.sort_by(|a, b| a.worktree.display_order().cmp(&b.worktree.display_order()));
+    infos
+        .into_iter()
+        .map(|info| {
+            let wt = &info.worktree;
+            let badges = [
+                (wt.detached, "[detached]", clr.dim),
+                (wt.locked, "[locked]", clr.bold_yellow),
+                (wt.prunable, "[prunable]", clr.red),
+            ]
+            .into_iter()
+            .filter_map(|(on, text, color)| on.then_some((text, color)))
+            .collect();
+            Row {
+                current: info.current,
+                branch: wt.branch.as_deref().unwrap_or("(detached)"),
+                status: info.status.summary().unwrap_or_else(|| "-".into()),
+                path: terminal::tilde_path(&wt.path),
+                badges,
             }
         })
         .collect()
 }
 
-fn print_table(worktrees: &[WorktreeInfo], cols: usize, clr: &Colors, indent: &str) {
-    let cur_w: usize = 1;
-    let branch_min: usize = 14;
-    let branch_max: usize = 24;
-    let status_w: usize = 10;
-    let path_min: usize = 24;
-    let indent_w = indent.len();
-    let avail = cols.saturating_sub(indent_w + cur_w + status_w + 7);
+struct Widths {
+    branch: usize,
+    status: usize,
+    path: usize,
+}
 
-    let extra = avail.saturating_sub(path_min + branch_min);
-    let branch_w = (branch_min + extra / 8).min(branch_max);
-    let path_w = avail.saturating_sub(branch_w);
-
-    println!(
-        "{indent}{:<cur_w$} {:<branch_w$}   {:<status_w$}   PATH",
-        "", "BRANCH", "STATUS",
-    );
-
-    for wt in worktrees {
-        let branch = wt
-            .branch
-            .as_deref()
-            .unwrap_or(if wt.bare { "(bare)" } else { "(detached)" });
-        let branch_trunc = trunc(branch, branch_w);
-
-        let status = worktree::format_status(wt.bare, wt.dirty, wt.ahead, wt.behind)
-            .unwrap_or_else(|| "-".into());
-        let status_trunc = trunc(&status, status_w);
-
-        let path_str = terminal::tilde_path(&wt.path);
-        let path_trunc = trunc_tail(&path_str, path_w);
-
-        let badges = worktree_badges(wt, clr);
-
-        let branch_pad = branch_w.saturating_sub(branch_trunc.chars().count());
-        let branch_color = if wt.current { clr.green } else { "" };
-        let branch_col = format!(
-            "{}{}{}{}",
-            branch_color,
-            branch_trunc,
-            clr.reset,
-            " ".repeat(branch_pad)
-        );
-
-        let cur_col = if wt.current { "*" } else { " " };
-
-        let row_suffix = if badges.is_empty() {
-            path_trunc
-        } else {
-            format!("{path_trunc}  {badges}")
-        };
-
-        println!(
-            "{indent}{cur_col} {branch_col}   {:<status_w$}   {row_suffix}",
-            status_trunc,
-        );
+impl Widths {
+    fn fit<'a>(rows: impl IntoIterator<Item = &'a Row<'a>>, cols: usize, indent: usize) -> Self {
+        let (mut branch, mut status, mut path) = ("BRANCH".len(), "STATUS".len(), "PATH".len());
+        for row in rows {
+            branch = branch.max(display_width(row.branch));
+            status = status.max(display_width(&row.status));
+            path = path.max(display_width(&row.path) + row.badges_width());
+        }
+        let avail = cols.saturating_sub(indent + FIXED_W + status);
+        let branch = branch.min(avail.saturating_sub(path.min(PATH_MIN)).max(BRANCH_MIN));
+        Self {
+            branch,
+            status,
+            path: avail.saturating_sub(branch),
+        }
     }
 }
 
-fn worktree_badges(wt: &WorktreeInfo, clr: &Colors) -> String {
-    if wt.bare {
-        return String::new();
+fn print_table(rows: &[Row], widths: &Widths, clr: &Colors, indent: &str) {
+    let Widths {
+        branch: branch_w,
+        status: status_w,
+        path: path_w,
+    } = *widths;
+    println!(
+        "{indent}  {:<branch_w$}   {:<status_w$}   PATH",
+        "BRANCH", "STATUS"
+    );
+    for row in rows {
+        let branch = trunc(row.branch, branch_w);
+        let branch_pad = " ".repeat(branch_w.saturating_sub(display_width(&branch)));
+        let (marker, branch_color) = if row.current {
+            ("*", clr.green)
+        } else {
+            (" ", "")
+        };
+        let path = trunc_tail(&row.path, path_w.saturating_sub(row.badges_width()));
+        let badges: String = row
+            .badges
+            .iter()
+            .map(|(text, color)| format!("  {color}{text}{}", clr.reset))
+            .collect();
+        println!(
+            "{indent}{marker} {branch_color}{branch}{}{branch_pad}   {}   {path}{badges}",
+            clr.reset,
+            pad(&trunc(&row.status, status_w), status_w),
+        );
     }
-    let mut badges = Vec::new();
-    if wt.detached {
-        badges.push(format!("{}[detached]{}", clr.dim, clr.reset));
-    }
-    if wt.locked {
-        badges.push(format!("{}[locked]{}", clr.bold_yellow, clr.reset));
-    }
-    if wt.prunable {
-        badges.push(format!("{}[prunable]{}", clr.red, clr.reset));
-    }
-    badges.join(" ")
 }

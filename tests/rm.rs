@@ -10,8 +10,7 @@ fn success_message_uses_tilde_for_path() {
     wt_new(home.path(), &repo, "tilde-msg");
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "tilde-msg", "--force", "--repo"])
-            .arg(&repo);
+        cmd.args(["rm", "tilde-msg", "--force"]).current_dir(&repo);
     });
     assert!(
         output.status.success(),
@@ -36,8 +35,8 @@ fn removes_worktree_and_branch() {
     let wt_path = wt_new(home.path(), &repo, "test-branch");
 
     let output = wt_bin()
-        .args(["rm", "test-branch", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "test-branch", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -57,8 +56,8 @@ fn resolves_branch_when_local_dir_exists() {
     std::fs::create_dir(repo.join("docs")).unwrap();
 
     let output = wt_bin()
-        .args(["rm", "docs", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "docs", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -78,12 +77,12 @@ fn refuses_dirty_without_force() {
     std::fs::write(wt_path.join("uncommitted.txt"), "changes").unwrap();
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "dirty-branch", "--repo"]).arg(&repo);
+        cmd.args(["rm", "dirty-branch"]).current_dir(&repo);
     });
     assert_error(
         &output,
         1,
-        "worktree has local changes, use --force to remove\n",
+        "cannot remove 'dirty-branch': worktree has local changes, use --force to remove\n",
     );
     assert!(wt_path.exists());
 }
@@ -94,8 +93,8 @@ fn removes_branch_without_remote() {
     let wt_path = wt_new(home.path(), &repo, "no-remote-branch");
 
     let output = wt_bin()
-        .args(["rm", "no-remote-branch", "--repo"])
-        .arg(&repo)
+        .args(["rm", "no-remote-branch"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -117,14 +116,14 @@ fn refuses_unmerged_branch_without_remote() {
     assert_git_success(&wt_path, &["commit", "-m", "local change"]);
 
     let output = wt_bin()
-        .args(["rm", "local-unmerged", "--repo"])
-        .arg(&repo)
+        .args(["rm", "local-unmerged"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged' is not fully merged, use --force to remove\n",
+        "cannot remove 'local-unmerged': branch is not fully merged, use --force to delete it\n",
     );
     assert!(wt_path.exists());
 }
@@ -147,14 +146,14 @@ fn refuses_unmerged_branch_even_if_other_local_branch_contains_it() {
     });
 
     let output = wt_bin()
-        .args(["rm", "local-unmerged-contained", "--repo"])
-        .arg(&repo)
+        .args(["rm", "local-unmerged-contained"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_error(
         &output,
         1,
-        "branch 'local-unmerged-contained' is not fully merged, use --force to remove\n",
+        "cannot remove 'local-unmerged-contained': branch is not fully merged, use --force to delete it\n",
     );
     assert!(wt_path.exists());
 }
@@ -178,8 +177,8 @@ fn removes_branch_when_remote_upstream_was_deleted() {
     assert_git_success(&repo, &["fetch", "--prune", "origin"]);
 
     let output = wt_bin()
-        .args(["rm", "stale-clean", "--repo"])
-        .arg(&repo)
+        .args(["rm", "stale-clean"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -197,8 +196,8 @@ fn removing_multiple_targets_reports_failures_and_removes_successes() {
     let wt_path = wt_new(home.path(), &repo, "remove-me");
 
     let output = wt_bin()
-        .args(["rm", "remove-me", "missing-branch", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "remove-me", "missing-branch", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_exit_code(&output, 1);
@@ -225,11 +224,8 @@ fn rejects_ambiguous_branch_name() {
     assert_git_success(&repo, &["symbolic-ref", "HEAD", "refs/heads/shared"]);
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "shared", "--force", "--repo"]).arg(&repo);
+        cmd.args(["rm", "shared", "--force"]).current_dir(&repo);
     });
-
-    let repo_canon = canonical(&repo);
-    let wt_canon = canonical(&wt_path);
 
     assert_exit_code(&output, 1);
     assert_stdout_empty(&output);
@@ -239,11 +235,11 @@ fn rejects_ambiguous_branch_name() {
         "expected ambiguity header, got: {stderr}",
     );
     assert!(
-        stderr.contains(&format!("  - {}\n", repo_canon.display())),
+        stderr.contains(&format!("  - {}\n", tilde(home.path(), &repo))),
         "expected primary worktree path, got: {stderr}",
     );
     assert!(
-        stderr.contains(&format!("  - {}\n", wt_canon.display())),
+        stderr.contains(&format!("  - {}\n", tilde(home.path(), &wt_path))),
         "expected linked worktree path, got: {stderr}",
     );
     assert!(
@@ -272,29 +268,6 @@ fn removes_worktree_by_path() {
     );
     assert!(!wt_path.exists());
     assert_branch_absent(&repo, "remove-by-path");
-}
-
-#[test]
-fn removes_worktree_by_path_with_repo_flag() {
-    let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "remove-by-path-repo");
-
-    let output = wt_bin()
-        .arg("rm")
-        .arg(&wt_path)
-        .arg("--force")
-        .arg("--repo")
-        .arg(&repo)
-        .current_dir(home.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt rm should remove a worktree by path with --repo: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(!wt_path.exists());
-    assert_branch_absent(&repo, "remove-by-path-repo");
 }
 
 #[test]
@@ -328,8 +301,8 @@ fn cannot_remove_primary_worktree_by_branch() {
     let (_home, repo) = setup();
 
     let output = wt_bin()
-        .args(["rm", "main", "--repo"])
-        .arg(&repo)
+        .args(["rm", "main"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -373,8 +346,7 @@ fn refuses_when_current_directory_is_inside_target_worktree() {
     let wt_path = wt_new(home.path(), &repo, "cwd-guard");
 
     let output = wt_bin()
-        .args(["rm", "cwd-guard", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "cwd-guard", "--force"])
         .current_dir(&wt_path)
         .output()
         .unwrap();
@@ -397,8 +369,9 @@ fn preserves_managed_parent_when_cwd_is_inside_parent() {
     let parent_dir = wt_path.parent().unwrap().to_path_buf();
 
     let output = wt_bin()
-        .args(["rm", "cwd-parent-guard", "--force", "--repo"])
-        .arg(&repo)
+        .arg("rm")
+        .arg(&wt_path)
+        .arg("--force")
         .env("HOME", home.path())
         .current_dir(&parent_dir)
         .output()
@@ -439,8 +412,8 @@ fn removes_managed_parent_when_home_is_symlinked() {
     let parent_dir = wt_path.parent().unwrap().to_path_buf();
 
     let output = wt_bin()
-        .args(["rm", "symlink-home-rm", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "symlink-home-rm", "--force"])
+        .current_dir(&repo)
         .env("HOME", &home_link)
         .output()
         .unwrap();
@@ -468,8 +441,8 @@ fn preserves_user_files_in_managed_parent() {
     std::fs::create_dir(&user_dir).unwrap();
 
     let output = wt_bin()
-        .args(["rm", "managed-parent-data", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "managed-parent-data", "--force"])
+        .current_dir(&repo)
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -515,8 +488,7 @@ fn preserves_unmanaged_parent_and_siblings_when_removing_by_path() {
         .arg("rm")
         .arg(&unmanaged_wt)
         .arg("--force")
-        .arg("--repo")
-        .arg(&repo)
+        .current_dir(&repo)
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -561,8 +533,7 @@ fn preserves_empty_unmanaged_parent_when_removing_by_path() {
         .arg("rm")
         .arg(&unmanaged_wt)
         .arg("--force")
-        .arg("--repo")
-        .arg(&repo)
+        .current_dir(&repo)
         .env("HOME", home.path())
         .output()
         .unwrap();
@@ -589,8 +560,8 @@ fn force_removes_dirty_worktree() {
     std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
 
     let output = wt_bin()
-        .args(["rm", "dirty-force", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "dirty-force", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -611,8 +582,8 @@ fn force_removes_unmerged_branch() {
     assert_git_success(&wt_path, &["commit", "-m", "local change"]);
 
     let output = wt_bin()
-        .args(["rm", "unmerged-force", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "unmerged-force", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -634,8 +605,7 @@ fn removes_detached_head_worktree() {
     let output = wt_bin()
         .arg("rm")
         .arg(&wt_path)
-        .arg("--repo")
-        .arg(&repo)
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
@@ -648,7 +618,7 @@ fn removes_detached_head_worktree() {
 }
 
 #[test]
-fn refuses_branch_checked_out_in_another_worktree() {
+fn keeps_branch_checked_out_in_another_worktree() {
     let (home, repo) = setup();
     let wt_path = wt_new(home.path(), &repo, "shared-branch");
 
@@ -657,166 +627,50 @@ fn refuses_branch_checked_out_in_another_worktree() {
     let output = wt_bin()
         .arg("rm")
         .arg(&wt_path)
-        .arg("--force")
-        .arg("--repo")
-        .arg(&repo)
-        .output()
-        .unwrap();
-    assert!(
-        !output.status.success(),
-        "wt rm should refuse when branch is checked out elsewhere"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("checked out in another worktree"),
-        "expected checked-out-elsewhere error, got: {stderr}",
-    );
-    assert!(wt_path.exists());
-}
-
-#[test]
-fn removes_detached_head_worktree_by_tag() {
-    let (home, repo) = setup();
-    assert_git_success(&repo, &["tag", "v1.0"]);
-
-    let wt_path = wt_checkout(home.path(), &repo, "v1.0");
-
-    let output = wt_bin()
-        .args(["rm", "v1.0", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "wt rm v1.0 should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!wt_path.exists(), "worktree directory should be removed");
-}
-
-#[test]
-fn errors_when_ref_matches_multiple_detached_worktrees() {
-    let (home, repo) = setup();
-    assert_git_success(&repo, &["tag", "v1.0"]);
-    assert_git_success(&repo, &["tag", "v1.0-alias"]);
-
-    let wt1 = wt_checkout(home.path(), &repo, "v1.0");
-    let wt2 = wt_checkout(home.path(), &repo, "v1.0-alias");
-
-    let output = wt_bin()
-        .args(["rm", "v1.0", "--repo"])
-        .arg(&repo)
-        .env("HOME", home.path())
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("ambiguous ref 'v1.0'"),
-        "expected ambiguous ref error, got: {stderr}",
-    );
-    assert!(wt1.exists(), "worktree should not be removed on ambiguity");
-    assert!(wt2.exists(), "worktree should not be removed on ambiguity");
-}
-
-#[test]
-fn keep_branch_removes_worktree_but_preserves_branch() {
-    let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "keep-me");
-
-    let output = wt_bin()
-        .args(["rm", "keep-me", "--keep-branch", "--repo"])
-        .arg(&repo)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt rm --keep-branch should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
+        stderr.contains("kept branch 'shared-branch' (checked out in another worktree)"),
+        "got: {stderr}",
     );
     assert!(!wt_path.exists());
-    assert_branch_present(&repo, "keep-me");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("removed worktree ("),
-        "should print worktree-only message, got: {stderr}",
-    );
-    assert!(
-        !stderr.contains("removed worktree and branch"),
-        "should not mention branch deletion, got: {stderr}",
-    );
+    assert_branch_present(&repo, "shared-branch");
 }
 
 #[test]
-fn keep_branch_with_force_removes_dirty_worktree_but_preserves_branch() {
+fn locked_worktree_requires_force() {
     let (home, repo) = setup();
-    let wt_path = wt_new(home.path(), &repo, "keep-dirty");
-    std::fs::write(wt_path.join("dirty.txt"), "dirty").unwrap();
-
-    let output = wt_bin()
-        .args(["rm", "keep-dirty", "--keep-branch", "--force", "--repo"])
-        .arg(&repo)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt rm --keep-branch --force should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(!wt_path.exists());
-    assert_branch_present(&repo, "keep-dirty");
-}
-
-#[test]
-fn keep_branch_allows_switch_to_recreate_worktree() {
-    let (home, repo) = setup();
-    wt_new(home.path(), &repo, "roundtrip");
-
-    let output = wt_bin()
-        .args(["rm", "roundtrip", "--keep-branch", "--repo"])
-        .arg(&repo)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert_branch_present(&repo, "roundtrip");
+    let wt_path = wt_new(home.path(), &repo, "locked-branch");
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "lock"]).arg(&wt_path);
+    });
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["switch", "roundtrip", "--repo"]).arg(&repo);
+        cmd.args(["rm", "locked-branch"]).current_dir(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot remove 'locked-branch': worktree is locked, use --force to remove\n",
+    );
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "locked-branch", "--force"])
+            .current_dir(&repo);
     });
     assert!(
         output.status.success(),
-        "wt switch should recreate worktree for kept branch: {}",
-        String::from_utf8_lossy(&output.stderr),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    let new_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(
-        std::path::Path::new(&new_path).exists(),
-        "recreated worktree should exist",
-    );
-}
-
-#[test]
-fn keep_branch_batch_removes_worktrees_but_preserves_branches() {
-    let (home, repo) = setup();
-    let wt1 = wt_new(home.path(), &repo, "batch-a");
-    let wt2 = wt_new(home.path(), &repo, "batch-b");
-
-    let output = wt_bin()
-        .args(["rm", "batch-a", "batch-b", "--keep-branch", "--repo"])
-        .arg(&repo)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "batch rm --keep-branch should succeed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(!wt1.exists());
-    assert!(!wt2.exists());
-    assert_branch_present(&repo, "batch-a");
-    assert_branch_present(&repo, "batch-b");
+    assert!(!wt_path.exists());
 }
 
 #[test]
@@ -825,7 +679,7 @@ fn suggests_close_match_for_typo() {
     wt_new(home.path(), &repo, "feat/login");
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "feat/logni", "--repo"]).arg(&repo);
+        cmd.args(["rm", "feat/logni"]).current_dir(&repo);
     });
 
     assert_exit_code(&output, 1);
@@ -842,7 +696,7 @@ fn no_suggestion_for_distant_name() {
     wt_new(home.path(), &repo, "feat/login");
 
     let output = run_wt(home.path(), |cmd| {
-        cmd.args(["rm", "fix/something-else", "--repo"]).arg(&repo);
+        cmd.args(["rm", "fix/something-else"]).current_dir(&repo);
     });
 
     assert_error(&output, 1, "no worktree found for: fix/something-else\n");
@@ -856,8 +710,8 @@ fn removes_worktree_when_branch_deleted_externally() {
     assert_git_success(&repo, &["update-ref", "-d", "refs/heads/gone-branch"]);
 
     let output = wt_bin()
-        .args(["rm", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "--force"])
+        .current_dir(&repo)
         .arg(&wt_path)
         .output()
         .unwrap();
@@ -886,8 +740,8 @@ fn multi_target_all_succeed() {
     let path_b = wt_new(home.path(), &repo, "rm-b");
 
     let output = wt_bin()
-        .args(["rm", "rm-a", "rm-b", "--repo"])
-        .arg(&repo)
+        .args(["rm", "rm-a", "rm-b"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_exit_code(&output, 0);
@@ -907,8 +761,8 @@ fn multi_target_all_fail() {
     let (_home, repo) = setup();
 
     let output = wt_bin()
-        .args(["rm", "main", "nonexistent", "--force", "--repo"])
-        .arg(&repo)
+        .args(["rm", "main", "nonexistent", "--force"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_exit_code(&output, 1);
@@ -937,8 +791,8 @@ fn multi_target_dirty_blocks_one() {
     std::fs::write(dirty_path.join("uncommitted.txt"), "changes").unwrap();
 
     let output = wt_bin()
-        .args(["rm", "clean-wt", "dirty-wt", "--repo"])
-        .arg(&repo)
+        .args(["rm", "clean-wt", "dirty-wt"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_exit_code(&output, 1);
@@ -968,8 +822,8 @@ fn multi_target_unmerged_blocks_one() {
     assert_git_success(&unmerged_path, &["commit", "-m", "local change"]);
 
     let output = wt_bin()
-        .args(["rm", "unmerged-wt", "merged-wt", "--repo"])
-        .arg(&repo)
+        .args(["rm", "unmerged-wt", "merged-wt"])
+        .current_dir(&repo)
         .output()
         .unwrap();
     assert_exit_code(&output, 1);
@@ -986,4 +840,131 @@ fn multi_target_unmerged_blocks_one() {
     assert_branch_absent(&repo, "merged-wt");
     assert!(unmerged_path.exists(), "unmerged worktree should remain");
     assert_branch_present(&repo, "unmerged-wt");
+}
+
+#[test]
+fn removes_worktree_whose_directory_was_deleted() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "deleted-dir");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "deleted-dir"]).current_dir(&repo);
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_branch_absent(&repo, "deleted-dir");
+    let listing = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!listing.contains("deleted-dir"), "{listing}");
+    assert!(
+        !wt_path.parent().unwrap().exists(),
+        "empty id dir should be removed"
+    );
+}
+
+#[test]
+fn removes_branch_merged_into_remote_default_when_local_main_is_behind() {
+    let (home, repo, _origin) = setup_with_origin();
+    let wt_path = wt_new(home.path(), &repo, "landed");
+    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "feature"]);
+    assert_git_success(&wt_path, &["push", "-u", "origin", "landed"]);
+    assert_git_success(&wt_path, &["push", "origin", "landed:main"]);
+    assert_git_success(&repo, &["push", "origin", "--delete", "landed"]);
+    assert_git_success(&repo, &["fetch", "--prune", "origin"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "landed"]).current_dir(&repo);
+    });
+    assert_exit_code(&output, 0);
+    assert!(!wt_path.exists());
+    assert_branch_absent(&repo, "landed");
+}
+
+#[test]
+fn reports_tip_of_deleted_branch() {
+    let (home, repo) = setup();
+    let wt_path = wt_new(home.path(), &repo, "precious");
+    assert_git_success(&wt_path, &["commit", "--allow-empty", "-m", "work"]);
+    let sha = assert_git_stdout_success(&wt_path, &["rev-parse", "--short", "HEAD"]);
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "precious", "-f"]).current_dir(&repo);
+    });
+    assert_stderr_exact(
+        &output,
+        &format!(
+            "removed worktree and branch 'precious' ({}, was {})\n",
+            tilde(home.path(), &wt_path),
+            sha.trim()
+        ),
+    );
+}
+
+#[test]
+fn keeps_branch_that_bare_repo_head_points_at() {
+    let (home, _repo, origin) = setup_with_origin();
+    let clone = run_wt(home.path(), |cmd| {
+        cmd.args(["clone"]).arg(&origin);
+    });
+    let main_wt = parse_wt_new_path(&clone);
+    let develop = wt_new(home.path(), &main_wt, "develop");
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "main"]).current_dir(&develop);
+    });
+    assert_stderr_exact(
+        &output,
+        &format!(
+            "removed worktree ({}), kept branch 'main' (the repository's HEAD)\n",
+            tilde(home.path(), &main_wt)
+        ),
+    );
+    assert_branch_present(&develop, "main");
+}
+
+#[test]
+fn refuses_worktree_holding_another_worktree_even_with_force() {
+    let (home, repo) = setup();
+    let outer = wt_new(home.path(), &repo, "outer");
+    let inner = outer.join("nested");
+    assert_git_success_with(&repo, |cmd| {
+        cmd.args(["worktree", "add", "-b", "inner"]).arg(&inner);
+    });
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["rm", "outer", "--force"]).current_dir(&repo);
+    });
+    assert_error(
+        &output,
+        1,
+        "cannot remove 'outer': another worktree is inside it, remove that one first\n",
+    );
+    assert!(inner.exists());
+}
+
+#[test]
+fn removes_deleted_worktree_by_its_listed_path() {
+    let (home, repo) = setup();
+    let named = wt_new(home.path(), &repo, "named");
+    let detached = wt_new(home.path(), &repo, "to-detach");
+    assert_git_success(&detached, &["checkout", "--detach"]);
+    std::fs::remove_dir_all(&named).unwrap();
+    std::fs::remove_dir_all(&detached).unwrap();
+
+    for path in [&named, &detached] {
+        let output = run_wt(home.path(), |cmd| {
+            cmd.arg("rm").arg(path).current_dir(&repo);
+        });
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let listing = assert_git_stdout_success(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!listing.contains("prunable"), "{listing}");
+    assert_branch_absent(&repo, "named");
 }
