@@ -1126,7 +1126,7 @@ fn reports_orphans_without_removing_them() {
     assert_stderr_exact(
         &output,
         &format!(
-            "skipping {} (orphan, not registered with a repo, remove it manually)\n",
+            "skipping {} (repo not found: if it moved, run wt inside it to reconnect, otherwise remove this manually)\n",
             tilde(home.path(), &wt_path)
         ),
     );

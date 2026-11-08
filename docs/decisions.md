@@ -81,10 +81,17 @@ On non-zero exit, `fetch_remote` returns only a short context error (`cannot fet
 - The branch must have been pushed (an upstream, or a same-named branch on a remote), because a fresh branch is trivially merged right after it is created. Tracking the base itself doesn't count. Repos without a remote are never pruned; `wt rm` handles them
 - `origin` is fetched first so a merge made on the remote counts. If the fetch fails, local refs are used, which can only make prune miss a branch, never remove one it shouldn't
 - The default branch and the branch the repo's `HEAD` points at are never removed. `HEAD` covers bare repos
-- Orphans (a `.git` file pointing at a missing repo) are only reported: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work. A worktree that contains another worktree (e.g. Claude Code's `.claude/worktrees/`) is kept, since removing it deletes the inner one; `rm` refuses it even with `--force`
+- Orphans (a `.git` file pointing at a missing repo) are only reported: a moved repo or an unmounted volume looks identical to a deleted one, and the directory may hold uncommitted work. The report says to run `wt` inside a moved repo to reconnect it. A worktree that contains another worktree (e.g. Claude Code's `.claude/worktrees/`) is kept, since removing it deletes the inner one; `rm` refuses it even with `--force`
 - `prune` doesn't run `git worktree prune`: it would drop the metadata of a worktree renamed by hand or on an unmounted volume, after which `git worktree repair` can't reconnect it. git's gc expires stale entries on its own, `switch` prunes one that blocks a branch, and `wt rm` removes one by branch or path
 
 Accepted gap: `git worktree remove` deletes gitignored files (build output, a hand-made `.env`). Treating them as dirty would block nearly every removal; files shared via `wt link` are symlinks in every worktree, so removal never touches the shared copy.
+
+## Do not replace targeted repair with a blanket `git worktree repair`
+
+Renaming a main checkout breaks the `.git` file of every linked worktree, and nothing in `~/.wt/` records where the repo went (no config, by design). So `wt` reconnects a repo when it runs inside one: before every command except `init` and `clone`, it lists the current repo's worktrees and runs `git worktree repair <paths>` only for those whose `.git` file points at a location that no longer exists. Until then, the picker and `list --all` skip the missing repo and say how to reconnect it.
+
+- Plain `git worktree repair` also rewrites links that point at a *different, valid* repo. Run in a `cp -R` copy of a checkout, it repoints the original's worktrees at the copy. A link is only touched when its target is gone
+- The check costs one `git worktree list` per invocation; `init` and `clone` skip it because `init` runs on every shell startup and `clone` never runs inside the repo it acts on
 
 ## Do not add flags to `prune`
 

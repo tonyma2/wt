@@ -7,6 +7,7 @@ mod terminal;
 mod tui;
 mod worktree;
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -23,6 +24,12 @@ fn main() -> ExitCode {
         signal(13, 0);
     }
     let cli = Cli::parse();
+    if !matches!(
+        cli.command,
+        Some(Command::Init { .. } | Command::Clone { .. })
+    ) {
+        worktree::reconnect_moved_repo(Path::new("."));
+    }
     let result = match cli.command {
         None => commands::tui::run(),
         Some(Command::Clone { url }) => commands::clone::run(&url),

@@ -439,3 +439,65 @@ fn piped_output_is_not_truncated() {
     assert!(row.contains(&branch), "got: {row}");
     assert!(row.contains(&tilde(home.path(), &wt_path)), "got: {row}");
 }
+
+#[test]
+fn reconnects_worktrees_when_run_inside_moved_repo() {
+    let (home, repo) = setup();
+    let feat = wt_new(home.path(), &repo, "feat");
+    let moved = home.path().join("moved");
+    std::fs::rename(&repo, &moved).unwrap();
+
+    let output = run_list(home.path(), &moved, "200");
+    assert_exit_code(&output, 0);
+    assert_stderr_exact(
+        &output,
+        &format!("reconnected {}\n", tilde(home.path(), &feat)),
+    );
+    assert_git_success(&feat, &["status"]);
+
+    let output = run_list(home.path(), &moved, "200");
+    assert_stderr_empty(&output);
+}
+
+#[test]
+fn list_all_explains_missing_repo() {
+    let (home, repo) = setup();
+    wt_new(home.path(), &repo, "feat");
+    std::fs::rename(&repo, home.path().join("moved")).unwrap();
+
+    let output = run_wt(home.path(), |cmd| {
+        cmd.args(["list", "--all"]).current_dir(home.path());
+    });
+    assert_exit_code(&output, 0);
+    assert_stdout_empty(&output);
+    assert_stderr_exact(
+        &output,
+        "cannot find ~/repo: if the repo moved, run wt inside it to reconnect its worktrees\n",
+    );
+}
+
+#[test]
+fn copy_of_repo_does_not_take_over_its_worktrees() {
+    let (home, repo) = setup();
+    let feat = wt_new(home.path(), &repo, "feat");
+    let copy = home.path().join("copy");
+    let status = std::process::Command::new("cp")
+        .arg("-R")
+        .arg(&repo)
+        .arg(&copy)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = run_list(home.path(), &copy, "200");
+    assert_exit_code(&output, 0);
+    assert_stderr_empty(&output);
+    let common_dir = assert_git_stdout_success(
+        &feat,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    assert_eq!(
+        canonical(Path::new(common_dir.trim())),
+        canonical(&repo.join(".git"))
+    );
+}

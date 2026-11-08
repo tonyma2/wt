@@ -5,7 +5,7 @@
 ## Module Graph
 
 ```
-main.rs                 Entry point: parse CLI, dispatch to command, handle errors
+main.rs                 Entry point: parse CLI, reconnect worktrees of a moved repo, dispatch to command, handle errors
 ├── cli.rs              Clap derive structs (Cli, Command). Only file with /// doc comments
 ├── commands.rs         Declares all subcommand modules (pub mod)
 ├── commands/
@@ -58,6 +58,8 @@ git.rs                       Subprocess execution, no business logic
 ```
 
 Most commands follow the single-repo path: `find_repo → list_worktrees → parse_porcelain → query → act`. Multi-repo commands (`list --all`, `tui`) share `load_all()`. If a new command needs all-repo status data, it should consume `load_all()`, not reimplement the pipeline.
+
+Before dispatching (except `init` and `clone`), `main` calls `reconnect_moved_repo()` on the current directory: worktrees whose `.git` file points at a missing repo location get `git worktree repair`, so renaming a main checkout heals the next time `wt` runs inside it. `load_all()` skips repos that no longer exist and says how to reconnect them.
 
 ### Exceptions and non-obvious behaviors
 

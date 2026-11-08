@@ -272,6 +272,12 @@ impl Git {
         .map(drop)
     }
 
+    pub fn repair_worktrees(&self, paths: &[PathBuf]) -> Result<(), String> {
+        let mut cmd = self.cmd(["worktree", "repair", "--"]);
+        cmd.args(paths);
+        run(cmd, "cannot reconnect worktrees").map(drop)
+    }
+
     pub fn prune_worktrees(&self) -> Result<(), String> {
         run(
             self.cmd(["worktree", "prune"]),

@@ -204,7 +204,7 @@ fn report_orphans(wt_root: &Path, out: &mut Group) {
             ))),
             Some(gitdir) if !gitdir.exists() => out.emit(Msg::Skipping(
                 terminal::tilde_path(&dir),
-                "orphan, not registered with a repo, remove it manually".into(),
+                "repo not found: if it moved, run wt inside it to reconnect, otherwise remove this manually".into(),
             )),
             Some(_) => {}
         }

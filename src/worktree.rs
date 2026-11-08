@@ -242,9 +242,45 @@ pub(crate) fn mark_current<'a>(
     }
 }
 
+// Only links whose target is gone are repaired: a blanket `git worktree repair` run in a
+// copy of a repo would repoint the original's worktrees at the copy.
+pub(crate) fn reconnect_moved_repo(dir: &Path) {
+    let git = Git::new(dir);
+    let Ok(output) = git.list_worktrees() else {
+        return;
+    };
+    let broken: Vec<PathBuf> = parse_porcelain(&output)
+        .into_iter()
+        .filter(|wt| layout::parse_gitdir(&wt.path.join(".git")).is_some_and(|g| !g.exists()))
+        .map(|wt| wt.path)
+        .collect();
+    if broken.is_empty() {
+        return;
+    }
+    match git.repair_worktrees(&broken) {
+        Ok(()) => {
+            for path in &broken {
+                eprintln!("reconnected {}", terminal::tilde_path(path));
+            }
+        }
+        Err(e) => eprintln!("{e}"),
+    }
+}
+
 pub(crate) fn load_all(wt_root: &Path) -> Vec<RepoInfo> {
-    let admin_repos =
-        layout::admin_repos(&layout::managed_worktrees(&canonicalize_or_self(wt_root)));
+    let (admin_repos, missing): (Vec<_>, Vec<_>) =
+        layout::admin_repos(&layout::managed_worktrees(&canonicalize_or_self(wt_root)))
+            .into_iter()
+            .partition(|p| p.exists());
+    let clr = terminal::stderr_colors();
+    for repo_path in missing {
+        eprintln!(
+            "{}cannot find {}: if the repo moved, run wt inside it to reconnect its worktrees{}",
+            clr.red,
+            terminal::tilde_path(&repo_path),
+            clr.reset
+        );
+    }
 
     let mut repos: Vec<RepoInfo> = std::thread::scope(|s| {
         let handles: Vec<_> = admin_repos

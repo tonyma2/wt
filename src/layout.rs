@@ -166,7 +166,7 @@ fn admin_repo_from_gitdir(gitdir: &Path) -> Option<PathBuf> {
     }
 }
 
-fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
+pub fn parse_gitdir(dot_git_file: &Path) -> Option<PathBuf> {
     let content = fs::read_to_string(dot_git_file).ok()?;
     let gitdir = content.lines().next()?.strip_prefix("gitdir: ")?.trim();
     if gitdir.is_empty() {
